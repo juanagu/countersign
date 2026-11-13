@@ -124,6 +124,7 @@ postgres 5432, redis 6379, phoenix 6006.
 
 ```
 make install     # pnpm install + uv sync (+ pre-push hook)
+make set-key     # prompt for ANTHROPIC_API_KEY (hidden), saved to .env
 make up          # docker compose up infra + all services, waits until healthy
 make down
 make logs

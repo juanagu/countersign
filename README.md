@@ -15,6 +15,7 @@ plan is [`docs/PLAN.md`](docs/PLAN.md); decisions are in [`docs/decisions/`](doc
 
 ```sh
 make install        # pnpm install + uv sync; also installs the pre-push hook
+make set-key        # paste your Anthropic API key (hidden); saved to .env
 make up             # copies .env.example to .env on first run, builds, waits until healthy
 ```
 

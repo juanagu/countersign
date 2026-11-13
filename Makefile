@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 BOT := uv run --directory services/bot
 
-.PHONY: help install up down logs contracts contracts-check seed ingest test eval lint format
+.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval lint format
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -12,6 +12,9 @@ install: ## Install Node and Python dependencies
 
 .env:
 	cp .env.example .env
+
+set-key: ## Prompt for ANTHROPIC_API_KEY (hidden) and save it to .env
+	@sh scripts/set-anthropic-key.sh
 
 up: .env ## Build and start infra + all services, waiting until healthy
 	$(COMPOSE) up -d --build --wait
