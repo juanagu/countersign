@@ -40,11 +40,16 @@ const failure = (code: PrepareTransferErrorCode, message: string): PrepareTransf
   error: { code, message },
 });
 
-function checkAmount(account: SourceAccount, args: PrepareTransferArgs, amountCents: bigint) {
+// Checked on the number, before cents: toFixed() of a huge amount (1e21) is exponent notation BigInt rejects.
+function checkLimit(args: PrepareTransferArgs) {
   const limit = TRANSFER_LIMITS[args.currency];
-  if (amountCents > BigInt(limit) * 100n) {
+  if (!(args.amount <= limit)) {
     return failure('over_limit', `El monto supera el límite por transferencia (${limit} ${args.currency}).`);
   }
+  return undefined;
+}
+
+function checkBalance(account: SourceAccount, amountCents: bigint) {
   if (amountCents + toCents(DOMESTIC_TRANSFER_FEE) > toCents(account.balance)) {
     return failure('insufficient_funds', 'El saldo disponible no alcanza para esta transferencia.');
   }
@@ -70,9 +75,11 @@ export async function prepareTransfer(
   if (account.currency !== args.currency || beneficiary.currency !== args.currency) {
     return failure('currency_mismatch', 'La moneda no coincide con la cuenta de origen o la del destinatario.');
   }
+  const overLimit = checkLimit(args);
+  if (overLimit) return overLimit;
   const amountCents = toCents(args.amount.toFixed(2));
-  const rejected = checkAmount(account, args, amountCents);
-  if (rejected) return rejected;
+  const insufficient = checkBalance(account, amountCents);
+  if (insufficient) return insufficient;
 
   const fee = DOMESTIC_TRANSFER_FEE;
   const draft: TransferDraft = {
