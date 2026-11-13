@@ -13,9 +13,11 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 
 from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier
-from app.chat.agent import BotDeps, build_agent
-from app.config import Settings
+from app.chat.agent import build_agent
+from app.chat.deps import BotDeps
+from app.config import SKILLS_DIR, Settings
 from app.main import create_app
+from app.skills.registry import SkillRegistry
 
 ISSUER = "http://idp.test"
 KID = "test-key"
@@ -71,7 +73,7 @@ def seen_user_ids() -> list[str]:
 
 @pytest.fixture
 def agent(seen_user_ids: list[str]) -> Agent[BotDeps, str]:
-    test_agent = build_agent(FunctionModel(stream_function=_stream_chunks))
+    test_agent = build_agent(FunctionModel(stream_function=_stream_chunks), skills=SkillRegistry.from_dir(SKILLS_DIR))
 
     @test_agent.instructions
     def record_user(ctx: Any) -> str:

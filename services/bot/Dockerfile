@@ -5,6 +5,7 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 COPY app ./app
+COPY skills ./skills
 RUN useradd --create-home bot
 USER bot
 EXPOSE 8000
