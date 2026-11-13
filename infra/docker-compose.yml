@@ -86,8 +86,14 @@ services:
       IDP_TOKEN_URL: http://bff:3000/token
       MCP_ACCOUNTS_URL: http://mcp-accounts:8101/mcp
       MCP_PAYMENTS_URL: http://mcp-payments:8102/mcp
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bank}:${POSTGRES_PASSWORD:-bank}@postgres:5432/${POSTGRES_DB:-bank}
+      KB_DIR: /kb
+      EMBEDDING_CACHE_DIR: /models
       OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
       OTEL_SERVICE_NAME: bot
+    volumes:
+      - ../data/kb:/kb:ro
+      - models:/models
     ports: ['127.0.0.1:${BOT_HOST_PORT:-8000}:8000']
     depends_on:
       redis: { condition: service_healthy }
@@ -117,3 +123,4 @@ services:
 
 volumes:
   pgdata:
+  models: # fastembed model cache, shared by ingest and query embedding

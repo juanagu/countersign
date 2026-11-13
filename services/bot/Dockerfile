@@ -6,7 +6,7 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 COPY app ./app
 COPY skills ./skills
-RUN useradd --create-home bot
+RUN useradd --create-home bot && mkdir /models && chown bot /models
 USER bot
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \

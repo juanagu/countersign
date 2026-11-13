@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from app.knowledge.chunker import Audience
+
 
 @dataclass
 class BotDeps:
@@ -8,3 +10,5 @@ class BotDeps:
     user_id: str
     access_token: str = field(repr=False)
     loaded_skills: set[str] = field(default_factory=set)
+    # Knowledge-base audiences this caller may read.
+    audiences: tuple[Audience, ...] = ("public", "customer")

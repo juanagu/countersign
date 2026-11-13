@@ -41,15 +41,16 @@ contracts-check: contracts ## Fail if generated contracts are out of date
 seed: ## Load mock bank data (drops and recreates the bank schema)
 	cat data/seed/*.sql | $(COMPOSE) exec -T postgres psql -q -v ON_ERROR_STOP=1 -U bank -d bank
 
-ingest: ## Chunk + embed data/kb into pgvector (Phase 3)
-	@echo "ingest: not implemented until Phase 3" && exit 1
+ingest: ## Chunk + embed data/kb into pgvector (first run downloads the embedding model)
+	$(COMPOSE) exec -T bot /opt/venv/bin/python -m app.knowledge.ingest
 
 test: ## All unit/integration tests
 	pnpm test
 	$(BOT) pytest
 
-eval: ## pydantic-evals suite (Phase 8, needs ANTHROPIC_API_KEY)
-	@echo "eval: not implemented until Phase 8" && exit 1
+eval: ## pydantic-evals suite on the real model (needs ANTHROPIC_API_KEY, make up, make seed, make ingest)
+	cd services/bot && set -a && . ../../.env && set +a && \
+		DATABASE_URL=postgresql://bank:bank@localhost:$(POSTGRES_HOST_PORT)/bank uv run python -m evals.kb_cases
 
 lint: ## Lint, format check and typecheck, TS and Python
 	pnpm lint
