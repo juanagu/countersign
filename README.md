@@ -2,7 +2,7 @@
 
 A proof of concept for a banking-grade chatbot: streamed answers over SSE, generative UI,
 RAG with citations, an agent calling domain tools over MCP, guardrails and a human-approved
-money-movement flow. All data is synthetic. The brief is [`CLAUDE.md`](CLAUDE.md); the build
+money-movement flow. All data is synthetic. The brief is [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` imports it); the build
 plan is [`docs/PLAN.md`](docs/PLAN.md); decisions are in [`docs/decisions/`](docs/decisions/).
 
 ## Prerequisites
