@@ -16,6 +16,8 @@ export const BOT_AUDIENCE = 'bot';
 export const SESSION_TTL_SECONDS = 30 * 60;
 const BOT_TOKEN_TTL_SECONDS = 5 * 60;
 const EXCHANGED_TOKEN_TTL_SECONDS = 5 * 60;
+export const STEP_UP_TTL_SECONDS = 2 * 60;
+export const STEP_UP_AUDIENCE = 'mcp-payments';
 
 export interface BotTokenClaims {
   sub: string;
@@ -31,6 +33,15 @@ export interface ExchangedTokenRequest {
   actor: string;
   /** Upper bound on expiry: never outlive the subject token. */
   notAfter: number;
+}
+
+/** RAR-shaped (RFC 9396) grant for one transfer: exactly the draft the customer confirmed. */
+export interface TransferAuthorization {
+  type: 'transfer';
+  draft_id: string;
+  amount: string;
+  currency: 'ARS' | 'USD';
+  beneficiary_id: string;
 }
 
 export interface SessionClaims {
@@ -77,6 +88,16 @@ export class TokenIssuer {
       expiresIn,
     );
     return { token, expiresIn };
+  }
+
+  /** Short-lived, single-use (by `jti`) token that authorises executing exactly one transfer draft. */
+  issueStepUp(sub: string, authorization: TransferAuthorization): Promise<string> {
+    return this.sign(
+      { token_use: 'step_up', scope: 'transfers:execute', authorization_details: [authorization] },
+      sub,
+      STEP_UP_AUDIENCE,
+      STEP_UP_TTL_SECONDS,
+    );
   }
 
   async verifyBotToken(token: string): Promise<BotTokenClaims> {

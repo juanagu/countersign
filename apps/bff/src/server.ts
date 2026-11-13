@@ -12,6 +12,7 @@ const app = createApp({
   botAgentUrl: config.botAgentUrl,
   cookieSecure: config.cookieSecure,
   clients: { bot: config.botClientSecret },
+  stepUpPin: config.stepUpPin,
 });
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {

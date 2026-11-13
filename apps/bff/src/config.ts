@@ -10,6 +10,11 @@ const configSchema = z.object({
   cookieSecure: z.stringbool().default(false),
   /** Secret the bot authenticates with at the token endpoint. */
   botClientSecret: z.string().min(16),
+  /** Mock IdP step-up PIN (synthetic; the brief fixes it at 123456). */
+  stepUpPin: z
+    .string()
+    .regex(/^[0-9]{6}$/)
+    .default('123456'),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -22,5 +27,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     botAgentUrl: env.BOT_AGENT_URL,
     cookieSecure: env.COOKIE_SECURE,
     botClientSecret: env.BOT_CLIENT_SECRET,
+    stepUpPin: env.STEP_UP_PIN,
   });
 }
