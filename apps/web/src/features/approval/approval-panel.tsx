@@ -9,6 +9,7 @@ import {
   type DecisionResult,
   type OnDecide,
 } from './lib/approval-decision';
+import { pinErrorAfter, type PinEvent } from './lib/pin-entry';
 import { requestStepUp } from './lib/step-up-api';
 import { PinDialog } from './pin-dialog';
 import './approval.css';
@@ -26,8 +27,15 @@ export function ApprovalPanel({ draft, onDecide }: ApprovalPanelProps) {
   const [error, setError] = useState<ApprovalError | null>(null);
   const inFlight = useRef(false);
 
+  const onPin = (event: PinEvent) => setError(pinErrorAfter(event));
+
   function onConfirmed(result: DecisionResult) {
-    if (result.kind === 'failed') setError(result.error);
+    if (result.kind === 'failed') onPin({ type: 'failed', error: result.error });
+  }
+
+  function openPin() {
+    onPin({ type: 'opened' });
+    setAskingPin(true);
   }
 
   async function confirm(pin: string) {
@@ -65,13 +73,14 @@ export function ApprovalPanel({ draft, onDecide }: ApprovalPanelProps) {
         <Button variant="secondary" onClick={cancel}>
           Cancelar
         </Button>
-        <Button onClick={() => setAskingPin(true)}>Confirmar</Button>
+        <Button onClick={openPin}>Confirmar</Button>
       </div>
       {askingPin && (
         <PinDialog
           pending={pending}
           error={error}
           onSubmit={(pin) => void confirm(pin)}
+          onPinChange={() => onPin({ type: 'pin_changed' })}
           onClose={() => setAskingPin(false)}
         />
       )}

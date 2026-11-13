@@ -13,6 +13,8 @@ Human approval plus step-up for money movement (security rule 3).
 - `lib/step-up-api.ts`: `requestStepUp(draft, pin)` → step-up token (`POST /api/auth/step-up`).
 - `lib/find-confirm-card.ts`: `findConfirmCard(messages, draftId)`.
 - `lib/approval-decision.ts`: `confirmTransfer(guard, draft, pin, deps)`, `cancelTransfer(guard, onDecide)`.
+- `lib/pin-entry.ts`: `pinErrorAfter(event)`, `canSubmitPin(pin, pending, error)`. A step-up error clears when the
+  dialog reopens or the PIN changes, so a 5-minute lockout can't keep the dialog disabled after it expires.
 - `lib/interrupt-answer.ts`: `withoutStepUpAnswers(messages)`, run once `resolve` settles: CopilotKit's answer
   message carries the step-up token and would otherwise ride along with every later request.
 
