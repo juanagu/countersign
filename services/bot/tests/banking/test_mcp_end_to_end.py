@@ -29,6 +29,12 @@ from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
 from app.config import SKILLS_DIR
 from app.skills.registry import SkillRegistry
+from tests.conftest import open_guard
+
+
+def _deps() -> BotDeps:
+    return BotDeps(user_id="ana", access_token=INCOMING_TOKEN, guard=open_guard())
+
 
 INCOMING_TOKEN = "incoming-aud-bot-token"
 
@@ -141,7 +147,7 @@ async def test_calls_mcp_with_the_exchanged_token_never_the_incoming_one(
     tools = banking_toolset(exchanger, accounts_url=accounts_url, payments_url=payments_url)
     agent = build_agent(_scripted_model(seen_tools), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
 
-    result = await agent.run("¿Qué cuentas tengo?", deps=BotDeps(user_id="ana", access_token=INCOMING_TOKEN))
+    result = await agent.run("¿Qué cuentas tengo?", deps=_deps())
 
     seen_auth = [header for _, header in seen]
     assert seen_auth, "the fake MCP server received no request"
@@ -173,7 +179,7 @@ async def test_domain_errors_reach_the_model_without_spending_the_retry_budget(
     tools = banking_toolset(_exchanger(), accounts_url=accounts_url, payments_url=payments_url)
     agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
 
-    result = await agent.run("¿Saldo de acc-x y acc-y?", deps=BotDeps(user_id="ana", access_token=INCOMING_TOKEN))
+    result = await agent.run("¿Saldo de acc-x y acc-y?", deps=_deps())
 
     assert result.output == "No encontré esas cuentas."
     assert sum("account_not_found" in failure for failure in failures) == 2
@@ -191,7 +197,7 @@ async def test_a_run_that_loads_no_skill_contacts_neither_the_idp_nor_any_mcp_se
         domain_tools=[tools],
     )
 
-    result = await agent.run("hola", deps=BotDeps(user_id="ana", access_token=INCOMING_TOKEN))
+    result = await agent.run("hola", deps=_deps())
 
     assert result.output == "¡Hola!"
     assert exchanged == []
@@ -214,7 +220,7 @@ async def test_loading_accounts_contacts_only_mcp_accounts_and_closes_its_sessio
     tools = banking_toolset(_exchanger(exchanged), accounts_url=accounts_url, payments_url=payments_url)
     agent = build_agent(_scripted_model([]), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
 
-    await agent.run("¿Qué cuentas tengo?", deps=BotDeps(user_id="ana", access_token=INCOMING_TOKEN))
+    await agent.run("¿Qué cuentas tengo?", deps=_deps())
 
     assert exchanged == ["mcp-accounts"]
     assert seen

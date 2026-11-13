@@ -14,6 +14,9 @@ from app.chat.routes import chat_router
 from app.config import Settings
 from app.core.logging import configure_logging
 from app.core.telemetry import setup_telemetry
+from app.guardrails.log_redaction import RedactingFilter
+from app.guardrails.pipeline import Guardrails
+from app.guardrails.span_redaction import RedactingSpanExporter
 from app.knowledge.embedder import FastEmbedEmbedder, LazyEmbedder
 from app.knowledge.search_tool import knowledge_toolset
 from app.knowledge.store import PgKnowledgeStore
@@ -44,10 +47,11 @@ def create_app(
     settings: Settings | None = None,
     agent: BotAgent | None = None,
     token_verifier: TokenVerifier | None = None,
+    guardrails: Guardrails | None = None,
 ) -> FastAPI:
     """Composition root. Served with `uvicorn app.main:create_app --factory`."""
     settings = settings or Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, filters=[RedactingFilter()])
     http = httpx.AsyncClient()
     pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=5, open=False)
     embedder = LazyEmbedder(FastEmbedEmbedder, settings.embedding_model, settings.embedding_cache_dir)
@@ -74,6 +78,8 @@ def create_app(
         return {"status": "ok", "service": SERVICE_NAME}
 
     skills = SkillRegistry.from_dir(settings.skills_dir)
-    app.include_router(chat_router(agent or _default_agent(settings, http, pool, embedder, skills), skills))
-    setup_telemetry(app, settings)
+    guardrails = guardrails or Guardrails.on_model(settings.guard_model)
+    run_agent = agent or _default_agent(settings, http, pool, embedder, skills)
+    app.include_router(chat_router(run_agent, skills, guardrails))
+    setup_telemetry(app, settings, wrap_exporter=RedactingSpanExporter)
     return app

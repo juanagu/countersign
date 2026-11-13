@@ -12,10 +12,11 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
-from app.config import SKILLS_DIR, Settings
+from app.config import SKILLS_DIR
+from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 from app.main import create_app
 from app.skills.registry import SkillRegistry
-from tests.conftest import TEST_MODEL, SigningKey
+from tests.conftest import SigningKey, make_settings, open_guardrails
 
 DRAFT: dict[str, Any] = {
     "draft_id": "drf_123",
@@ -70,8 +71,7 @@ async def test_confirm_card_comes_from_the_draft_not_the_model_text(
         skills=SkillRegistry.from_dir(SKILLS_DIR),
         domain_tools=[_fake_payments()],
     )
-    settings = Settings(bot_model=TEST_MODEL, bot_client_secret="test-client-secret-0123")
-    app = create_app(settings, agent=agent, token_verifier=verifier)
+    app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails())
     body = {
         "threadId": "t",
         "runId": "r",
@@ -94,5 +94,7 @@ async def test_confirm_card_comes_from_the_draft_not_the_model_text(
     assert card["data"]["beneficiary"]["name"] == "Ana Gómez"
     assert card["data"]["draftId"] == "drf_123"
     text = "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
-    assert "999.999" in text  # the model's lie reached the text, and only the text
+    # The card keeps the draft's figures; the model's invented amount never reaches the client (output guard).
+    assert "999.999" not in text
+    assert UNGROUNDED_FALLBACK in text
     assert "999" not in json.dumps(card)

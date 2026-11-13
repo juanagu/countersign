@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     log_level: str = "info"
     bot_model: str  # BOT_MODEL; required so no model name is hard-coded.
+    guard_model: str  # GUARD_MODEL: the input classifier and the write re-evaluation; required like bot_model.
     idp_issuer: str = "http://localhost:3000"
     idp_jwks_url: str = "http://localhost:3000/.well-known/jwks.json"
     idp_token_url: str = "http://localhost:3000/token"  # noqa: S105 (a URL)

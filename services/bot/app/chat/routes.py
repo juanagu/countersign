@@ -1,36 +1,74 @@
+from functools import cached_property
+from http import HTTPStatus
+
 from fastapi import APIRouter, Request, Response
-from pydantic_ai import DeferredToolRequests
+from pydantic import ValidationError
+from pydantic_ai import CancellationToken, DeferredToolRequests
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
+from app.guardrails.messages import customer_texts, redact_customer_turns, tools_returned_in
+from app.guardrails.pipeline import Guardrails
+from app.guardrails.stream import guarded_stream
+from app.policy.policy_toolset import THIRD_PARTY_TEXT_TOOLS
 from app.skills.history import skills_loaded_in
 from app.skills.registry import SkillRegistry
 
 
 class BankAGUIAdapter(AGUIAdapter[BotDeps, str | DeferredToolRequests]):
-    """Ignores tools declared by the client: the browser is untrusted and must not add callable tools."""
+    """Ignores tools declared by the client, and masks PII in the customer's turns before the model sees them."""
 
     @property
     def toolset(self) -> AbstractToolset[BotDeps] | None:
-        return None
+        return None  # The browser is untrusted and must not add callable tools.
+
+    @cached_property
+    def messages(self) -> list[ModelMessage]:
+        return redact_customer_turns(super().messages)
 
 
-def chat_router(agent: BotAgent, skills: SkillRegistry) -> APIRouter:
+def _invalid_body(error: ValidationError) -> Response:
+    content = error.json(include_input=False)  # Never echo the body: it may carry personal data.
+    return Response(content=content, media_type="application/json", status_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+
+
+def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails) -> APIRouter:
     router = APIRouter()
 
     @router.post("/agent")
     async def run_agent(request: Request, principal: CurrentPrincipal) -> Response:
-        body = await request.json()  # Starlette caches it; the adapter reads the same body.
-        messages = body.get("messages") if isinstance(body, dict) else None
-        restored = skills_loaded_in(messages if isinstance(messages, list) else [])
+        try:
+            adapter = await BankAGUIAdapter.from_request(request, agent=agent)
+        except ValidationError as error:
+            return _invalid_body(error)
+        body = await request.json()  # Starlette caches it; the adapter read the same body.
+        raw_messages = body.get("messages") if isinstance(body, dict) else None
+        restored = skills_loaded_in(raw_messages if isinstance(raw_messages, list) else [])
+        history = adapter.messages
+        guard = guardrails.start_run(
+            user_id=principal.user_id,
+            customer_messages=customer_texts(history),
+            third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
+        )
         deps = BotDeps(
             user_id=principal.user_id,
             access_token=principal.token,
             loaded_skills={name for name in restored if skills.get(name)},
+            session_id=adapter.run_input.thread_id,
+            guard=guard,
         )
-        return await BankAGUIAdapter.dispatch_request(request, agent=agent, deps=deps)
+        token = CancellationToken()
+        try:
+            events = adapter.run_stream(deps=deps, cancellation_token=token)
+        except BaseException:
+            guard.cancel()
+            raise
+        run = adapter.run_input
+        guarded = guarded_stream(events, guard, thread_id=run.thread_id, run_id=run.run_id, cancel_run=token.cancel)
+        return adapter.streaming_response(guarded)
 
     return router

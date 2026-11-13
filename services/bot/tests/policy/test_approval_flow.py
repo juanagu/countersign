@@ -13,10 +13,10 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import BotAgent, build_agent
 from app.chat.deps import BotDeps
-from app.config import SKILLS_DIR, Settings
+from app.config import SKILLS_DIR
 from app.main import create_app
 from app.skills.registry import SkillRegistry
-from tests.conftest import TEST_CLIENT_SECRET, TEST_MODEL, SigningKey
+from tests.conftest import SigningKey, make_settings, open_guard, open_guardrails
 
 DRAFT_ID = "drf_0b3a6f9e-4c1d-4e2a-9f7b-1a2b3c4d5e6f"
 RECEIPT: dict[str, Any] = {
@@ -65,7 +65,7 @@ def _agent(fake: FakePayments, schemas: list[dict[str, Any]], model_args: dict[s
 
 
 def _deps(*skills: str) -> BotDeps:
-    return BotDeps(user_id="juan", access_token="", loaded_skills=set(skills))
+    return BotDeps(user_id="juan", access_token="", loaded_skills=set(skills), guard=open_guard())
 
 
 async def test_pauses_for_approval_and_never_shows_the_model_the_token_argument() -> None:
@@ -154,9 +154,7 @@ async def test_the_ag_ui_run_ends_as_an_interrupt_naming_the_draft(
     agent = build_agent(
         FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
     )
-    app = create_app(
-        Settings(bot_model=TEST_MODEL, bot_client_secret=TEST_CLIENT_SECRET), agent=agent, token_verifier=verifier
-    )
+    app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails())
     body = {
         "threadId": "t",
         "runId": "r",

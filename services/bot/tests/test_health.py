@@ -15,6 +15,7 @@ async def test_health_reports_ok(client: AsyncClient) -> None:
 @pytest.fixture
 def bot_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     monkeypatch.setenv("BOT_MODEL", "anthropic:some-model")
+    monkeypatch.setenv("GUARD_MODEL", "anthropic:some-guard-model")
     monkeypatch.setenv("BOT_CLIENT_SECRET", TEST_CLIENT_SECRET)
     return monkeypatch
 
@@ -22,6 +23,12 @@ def bot_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
 def test_settings_require_bot_model(bot_env: pytest.MonkeyPatch) -> None:
     bot_env.delenv("BOT_MODEL")
     with pytest.raises(ValidationError, match="bot_model"):
+        Settings()
+
+
+def test_settings_require_guard_model(bot_env: pytest.MonkeyPatch) -> None:
+    bot_env.delenv("GUARD_MODEL")
+    with pytest.raises(ValidationError, match="guard_model"):
         Settings()
 
 

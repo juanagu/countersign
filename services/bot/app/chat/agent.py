@@ -8,6 +8,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from app.chat.deps import BotDeps
 from app.genui.render_ui import genui_toolset
 from app.genui.templates import TemplateToolset
+from app.policy.frequency_caps import FrequencyCaps
 from app.policy.policy_toolset import PolicyToolset
 from app.policy.tool_policy import ToolPolicy
 from app.skills.load_skill import skills_toolset
@@ -42,9 +43,11 @@ def build_agent(
     skills: SkillRegistry,
     domain_tools: Sequence[AbstractToolset[BotDeps]] = (),
 ) -> BotAgent:
-    policy = ToolPolicy(skills)
+    policy, caps = ToolPolicy(skills), FrequencyCaps()  # One cap counter across every domain toolset.
     toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills), genui_toolset()]
-    toolsets += [PolicyToolset(wrapped=TemplateToolset(wrapped=toolset), policy=policy) for toolset in domain_tools]
+    toolsets += [
+        PolicyToolset(wrapped=TemplateToolset(wrapped=toolset), policy=policy, caps=caps) for toolset in domain_tools
+    ]
     agent: BotAgent = Agent(
         model,
         deps_type=BotDeps,
