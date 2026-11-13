@@ -6,7 +6,7 @@ export TEST_DATABASE_URL ?= postgres://bank:bank@localhost:$(POSTGRES_HOST_PORT)
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 BOT := uv run --directory services/bot
 
-.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval lint format
+.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval redteam pii-scan lint format
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -48,9 +48,17 @@ test: ## All unit/integration tests
 	pnpm test
 	$(BOT) pytest
 
-eval: ## pydantic-evals suite on the real model (needs ANTHROPIC_API_KEY, make up, make seed, make ingest)
-	cd services/bot && set -a && . ../../.env && set +a && \
-		DATABASE_URL=postgresql://bank:bank@localhost:$(POSTGRES_HOST_PORT)/bank uv run python -m evals.kb_cases
+BOT_ENV := cd services/bot && set -a && . ../../.env && set +a &&
+
+eval: ## KB evals and the red-team set on the real model (needs ANTHROPIC_API_KEY, make up, make seed, make ingest)
+	$(BOT_ENV) DATABASE_URL=postgresql://bank:bank@localhost:$(POSTGRES_HOST_PORT)/bank uv run python -m evals.kb_cases
+	$(MAKE) redteam
+
+redteam: ## Red-team prompts through the live BFF, scored blocked/safely handled (needs make up)
+	$(BOT_ENV) uv run python -m evals.redteam $(REDTEAM_ARGS)
+
+pii-scan: ## Fail if synthetic PII appears in container logs or Phoenix traces (run after make eval)
+	$(BOT_ENV) uv run python -m evals.pii_scan
 
 lint: ## Lint, format check and typecheck, TS and Python
 	pnpm lint
