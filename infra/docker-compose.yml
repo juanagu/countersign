@@ -54,6 +54,12 @@ services:
   mcp-accounts:
     <<: *node-service
     build: { context: .., dockerfile: services/mcp-accounts/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-bank}:${POSTGRES_PASSWORD:-bank}@postgres:5432/${POSTGRES_DB:-bank}
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: mcp-accounts
     ports: ['127.0.0.1:${MCP_ACCOUNTS_HOST_PORT:-8101}:8101']
     depends_on:
       postgres: { condition: service_healthy }
@@ -61,6 +67,12 @@ services:
   mcp-payments:
     <<: *node-service
     build: { context: .., dockerfile: services/mcp-payments/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-bank}:${POSTGRES_PASSWORD:-bank}@postgres:5432/${POSTGRES_DB:-bank}
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: mcp-payments
     ports: ['127.0.0.1:${MCP_PAYMENTS_HOST_PORT:-8102}:8102']
     depends_on:
       postgres: { condition: service_healthy }
@@ -71,6 +83,9 @@ services:
     environment:
       IDP_ISSUER: http://bff:3000
       IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      IDP_TOKEN_URL: http://bff:3000/token
+      MCP_ACCOUNTS_URL: http://mcp-accounts:8101/mcp
+      MCP_PAYMENTS_URL: http://mcp-payments:8102/mcp
       OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
       OTEL_SERVICE_NAME: bot
     ports: ['127.0.0.1:${BOT_HOST_PORT:-8000}:8000']
