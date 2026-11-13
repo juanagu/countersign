@@ -15,6 +15,7 @@ from ag_ui.core import BaseEvent, EventType, RunErrorEvent, RunFinishedEvent, Ru
 from app.guardrails.input_classifier import SAFE_REPLIES
 from app.guardrails.output_guard import OutputGuard, text_message
 from app.guardrails.run_guard import RunGuard
+from app.guardrails.stream_timing import StreamTimer
 from app.guardrails.verdict import Verdict
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ async def guarded_stream(
     pump = asyncio.create_task(_pump(events, queue))
     announcer = asyncio.create_task(_announce_verdict(guard, queue))
     run = _HeldRun(guard, thread_id=thread_id, run_id=run_id)
+    timer = StreamTimer()
     ended = decided = False
     try:
         while not ((ended and decided) or run.blocked):
@@ -111,11 +113,14 @@ async def guarded_stream(
                 if verdict.blocked:
                     cancel_run()
                 for event in run.on_verdict(verdict):
+                    timer.observe(event)
                     yield event
             elif isinstance(item, BaseEvent):
                 for event in run.on_event(item):
+                    timer.observe(event)
                     yield event
     finally:
+        timer.finish()
         announcer.cancel()
         guard.cancel()
         await _stop(pump, CANCEL_GRACE_SECONDS if run.blocked else 0.0)
