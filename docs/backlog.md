@@ -12,8 +12,8 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | --- | --- | --- | --- |
 | 0 — Scaffold | in review | `feat/p0-scaffold`, PR #13 | Reviewed together with Phase 1. |
 | 1 — Streaming chat skeleton | in review | `feat/p1-streaming-chat`, PR #14 | Converged: high pass (10 fixed), medium pass (7 small fixed). |
-| 2 — Domain tools over MCP | in review | `feat/p2-mcp-tools` | Three review rounds; last two main-path fixes (bank-day time zone, category list) in progress, then a confirming medium pass and the PR. |
-| 3 — RAG with citations | in review | `feat/p3-rag` | Reviewed with Phase 2. |
+| 2 — Domain tools over MCP | in review | `feat/p2-mcp-tools`, PR #16 | Converged after a high pass and three medium passes. |
+| 3 — RAG with citations | in review | `feat/p3-rag`, PR #17 | Reviewed with Phase 2. |
 | 4 — Generative UI | in progress | `feat/p4-genui` | Built, verified at the event level; not reviewed yet. |
 | 5 — Approval and step-up | in progress | `feat/p5-approval` | Scenario 3 verified live; not reviewed yet. |
 | 6 — Guardrails | in progress | `feat/p6-guardrails` | Being built. |
@@ -37,3 +37,8 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F11 | Retrieval test skip guard: check `count > 0` (`fetchone()` is always truthy). | todo | Phase 2–3 review 3 |
 | F12 | Transfer limits: one source for the bot policy, `mcp-payments` and the KB (a contract constant). | todo | Phase 2–3 review 3 |
 | F13 | Cleanups: run hybrid search in one SQL statement (RRF in CTEs); move the MCP test client and account masking into `@poc/mcp-kit`; stop building a full `McpServer` per HTTP message. | todo | Phase 2–3 review 3 |
+| F14 | Chunker: when splitting an oversized section, don't repeat the overlap when overlap + next paragraph overflows (latent: largest section today is 215 tokens). | todo | Phase 2–3 review 4 |
+| F15 | `mcp-kit` route: answer 405 to GET/DELETE in stateless mode and close server/transport after each request. | todo | Phase 2–3 review 4 |
+| F16 | Bot: log a failed embedder warm-up (done-callback) so a missing model shows before the first question. | todo | Phase 2–3 review 4 |
+| F17 | Bot: derive which skills open which MCP server from the skill files instead of `SKILLS_BY_AUDIENCE`. | todo | Phase 2–3 review 4 |
+| F18 | Bot tests: check the fake MCP servers' tool names, args and tier meta against the real servers' `tools/list` (standards: a double is checked against the real boundary). | todo | Phase 2–3 review 4 |
