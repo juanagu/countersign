@@ -1,4 +1,7 @@
 import { CopilotChat, CopilotKitProvider } from '@copilotkit/react-core/v2';
+import { bankTemplateRenderer } from '../genui/bank-templates';
+import { bankCatalog } from '../genui/catalog';
+import { ChatActionsProvider } from '../genui/chat-actions';
 import '@copilotkit/react-core/v2/styles.css';
 import { useState } from 'react';
 import type { SessionUser } from '../auth/lib/auth-api';
@@ -8,6 +11,9 @@ import { shouldRecheckSession } from './lib/session-recheck';
 import './chat-screen.css';
 
 const RUNTIME_URL = '/api/copilotkit';
+// Stable references: the provider re-registers renderers when these change identity.
+const A2UI = { catalog: bankCatalog };
+const ACTIVITY_RENDERERS = [bankTemplateRenderer];
 
 export interface ChatScreenProps {
   user: SessionUser;
@@ -44,11 +50,15 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
           runtimeUrl={RUNTIME_URL}
           showDevConsole={false}
           enableInspector={false}
+          a2ui={A2UI}
+          renderActivityMessages={ACTIVITY_RENDERERS}
           onError={({ code }) => {
             if (shouldRecheckSession(code)) onRuntimeRequestFailed();
           }}
         >
-          <CopilotChat labels={CHAT_LABELS} />
+          <ChatActionsProvider>
+            <CopilotChat labels={CHAT_LABELS} />
+          </ChatActionsProvider>
         </CopilotKitProvider>
       </main>
     </div>

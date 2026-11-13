@@ -7,6 +7,7 @@
   --color-primary: #0b5cad;
   --color-primary-hover: #094a8c;
   --color-on-primary: #ffffff;
+  --color-success: #1e7d45;
 
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --text-sm: 0.875rem;
@@ -37,5 +38,6 @@
     --color-primary: #5aa2f0;
     --color-primary-hover: #7ab4f3;
     --color-on-primary: #0b1a2b;
+    --color-success: #5cc98a;
   }
 }
