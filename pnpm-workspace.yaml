@@ -5,3 +5,5 @@ packages:
 
 allowBuilds:
   esbuild: true
+  '@scarf/scarf': false
+  protobufjs: false
