@@ -58,3 +58,22 @@ def test_an_invalid_tree_is_dropped_for_text_and_counted(
     with caplog.at_level(logging.WARNING):
         assert render_ui(**tree) == DROPPED
     assert any(getattr(record, "metric", None) == INVALID_UI_METRIC for record in caplog.records)
+
+
+def test_the_per_currency_spending_card_the_accounts_skill_asks_for_is_valid() -> None:
+    def section(currency: str, title: str, total: float, formatted: str) -> list[dict[str, Any]]:
+        bars = [{"label": "compras", "value": total}]
+        return [
+            {"component": "BarChart", "props": {"title": title, "currency": currency, "bars": bars}},
+            {"component": "List", "props": {"items": [{"title": "Compras", "trailing": formatted}]}},
+        ]
+
+    tree = {
+        "title": "Gastos de octubre",
+        "children": [
+            *section("ARS", "En pesos", 80000.0, "$ 80.000,00"),
+            *section("USD", "En dólares", 120.0, "US$ 120,00"),
+        ],
+    }
+    components = surface_operations(UiTree.model_validate(tree), "s1")[1]["updateComponents"]["components"]
+    assert [c.get("currency") for c in components if c["component"] == "BarChart"] == ["ARS", "USD"]

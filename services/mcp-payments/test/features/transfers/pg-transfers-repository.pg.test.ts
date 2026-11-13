@@ -30,8 +30,8 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     );
     try {
       const [a, b] = await Promise.all([
-        repo.executeDraft(draftId, new Date()),
-        repo.executeDraft(draftId, new Date()),
+        repo.executeDraft(draftId, () => new Date()),
+        repo.executeDraft(draftId, () => new Date()),
       ]);
       expect([a.status, b.status].sort()).toEqual(['already_executed', 'executed']);
       const after = await db.query<{ balance: string }>(
@@ -67,7 +67,7 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
       [draftId],
     );
     try {
-      expect((await repo.executeDraft(draftId, bookedAt)).status).toBe('executed');
+      expect((await repo.executeDraft(draftId, () => bookedAt)).status).toBe('executed');
       const { rows } = await db.query<{ amount: string; category: string }>(
         `SELECT amount::text, category FROM bank.transactions
           WHERE account_id = 'acc-juan-ars' AND booked_at = $1 ORDER BY category`,
@@ -81,6 +81,44 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     } finally {
       await db.query(`UPDATE bank.accounts SET balance = $1 WHERE id = 'acc-juan-ars'`, [before.toFixed(2)]);
       await db.query(`DELETE FROM bank.transactions WHERE account_id = 'acc-juan-ars' AND booked_at = $1`, [bookedAt]);
+      await db.query(`DELETE FROM bank.transfers WHERE draft_id = $1`, [draftId]);
+      await db.query(`DELETE FROM bank.transfer_drafts WHERE id = $1`, [draftId]);
+    }
+  });
+
+  it('refuses a draft that expired while the execution waited on its row lock', async () => {
+    const draftId = `drf_${randomUUID()}`;
+    const balance = async () =>
+      (await db.query<{ balance: string }>(`SELECT balance::text FROM bank.accounts WHERE id = 'acc-juan-ars'`)).rows[0]
+        ?.balance;
+    const before = await balance();
+    // After the draft's expiry, and a booking time no other row has, so a failed run cleans up only its own.
+    const expired = new Date(Date.now() + 10 * 60_000 + Math.floor(Math.random() * 1000));
+    await db.query(
+      `INSERT INTO bank.transfer_drafts (id, customer_id, source_account_id, beneficiary_id, amount, currency, fee, status, expires_at)
+       VALUES ($1, 'juan', 'acc-juan-ars', 'ben-juan-ana', 10.00, 'ARS', 0, 'pending', now() + interval '5 minutes')`,
+      [draftId],
+    );
+    const holder = await db.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM bank.transfer_drafts WHERE id = $1 FOR UPDATE`, [draftId]);
+      let clock = new Date();
+      const execution = repo.executeDraft(draftId, () => clock);
+      clock = expired; // The lock is released only after the draft's expiry.
+      await holder.query('COMMIT');
+      expect((await execution).status).toBe('expired');
+      const { rows } = await db.query<{ status: string }>(`SELECT status FROM bank.transfer_drafts WHERE id = $1`, [
+        draftId,
+      ]);
+      expect(rows[0]?.status).toBe('pending');
+      expect((await db.query(`SELECT 1 FROM bank.transfers WHERE draft_id = $1`, [draftId])).rowCount).toBe(0);
+      expect(await balance()).toBe(before);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+      await db.query(`UPDATE bank.accounts SET balance = $1 WHERE id = 'acc-juan-ars'`, [before]);
+      await db.query(`DELETE FROM bank.transactions WHERE account_id = 'acc-juan-ars' AND booked_at = $1`, [expired]);
       await db.query(`DELETE FROM bank.transfers WHERE draft_id = $1`, [draftId]);
       await db.query(`DELETE FROM bank.transfer_drafts WHERE id = $1`, [draftId]);
     }

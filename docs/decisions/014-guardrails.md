@@ -49,14 +49,17 @@ tool may run, and no text may reach the client, before its verdict.
   streamed back to the customer who forged it: it moves no money (writes go through the tool policy and the
   MCP servers, which read the bank's own data) and reaches no one else. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
   `1254300.50`, `****4521` by its last digits, `15 de octubre`, `15/10`, ISO dates). A failing sentence becomes a
-  fallback; an `a2ui-surface` with an ungrounded number is dropped for a text fallback (ADR 012's promise).
+  fallback; an `a2ui-surface` has PII masked in every string it shows (ids and references left intact), then
+  is dropped for a text fallback if a number is ungrounded (ADR 012's promise).
   `bank-template` cards pass untouched. The raw `render_ui` call (its `TOOL_CALL_*` events and result) and
   every `REASONING_*` event are withheld: the model's unvalidated tree and its reasoning never leave the bot
   (rule 5), and the validated `a2ui-surface` is all the client needs. Other tool calls still reach the client:
   CopilotKit keeps them in the history it sends back, and an approval resume needs the paused
-  `execute_transfer` call there. Each change is logged with a metric: `guardrail.input.blocked`,
+  `execute_transfer` call there. A `RUN_ERROR`'s message is `str(exc)`, which can quote an IdP URL, an HTTP
+  body or model output: the client gets a fixed Spanish message (and the event's `code`, if any), and the
+  original is logged redacted. Each change is logged with a metric: `guardrail.input.blocked`,
   `guardrail.output.ungrounded`, `guardrail.output.pii_redacted`, `guardrail.output.surface_dropped`,
-  `guardrail.policy.write_not_requested`.
+  `guardrail.output.run_error`, `guardrail.policy.write_not_requested`.
 - **Logs and traces:** a `logging.Filter` redacts the formatted message, every `extra=` field and exception text.
   Pydantic AI instrumentation runs with `include_content=False`: agent spans keep their structure (model, tool
   names, tokens, timings) but no prompts, completions, tool arguments or results. Customer, beneficiary and

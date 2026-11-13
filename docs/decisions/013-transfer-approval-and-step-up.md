@@ -15,7 +15,7 @@ the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` al
   turns into `ToolApproved(override_args=…)`. A cancel resumes with `approved: false`.
 - **The panel shows server data:** the approval panel looks up the `transfer-confirm` server template for
   the interrupt's `draft_id` in the thread. It never displays the interrupt's model-proposed arguments.
-- **Step-up:** `POST /auth/step-up` (session, JSON, PIN `123456`, the third wrong PIN in a row locks it for 5 min from that failure) signs
+- **Step-up:** `POST /auth/step-up` (session, JSON, PIN `123456`, a third wrong PIN within 15 min of the streak's first locks it for 5 min from that failure; older failures are forgotten, so a typo days later can't lock anyone out) signs
   exactly the draft values the app sends as `authorization_details: [{type: "transfer", draft_id, amount,
   currency, beneficiary_id}]`. The token has `aud=mcp-payments`, a 2-minute TTL, `token_use: "step_up"` and
   no `act`, so it can't pass as an access token. The IdP doesn't read the payments database: the resource
@@ -24,8 +24,10 @@ the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` al
   step-up token (signature, issuer, `aud`, `exp`, `token_use`, scope `transfers:execute`), then that
   `sub` is the caller and the draft id matches. Claim the `jti` before anything else can fail (single use,
   so a double click is refused). Then the grant must equal the draft (amount, currency, beneficiary) and
-  the draft must be pending and unexpired. Execution runs in one transaction under the draft's row lock;
-  a second valid token for an executed draft returns the same receipt without a second debit.
+  the draft must be pending and unexpired. Execution runs in one transaction under the draft's row lock,
+  which re-checks status and expiry with the clock read after the lock is taken, so a call that waited on the
+  lock can't execute a draft that expired meanwhile (`draft_expired`); a second valid token for an executed
+  draft returns the same receipt without a second debit.
 - **Resume needs its skill:** each run restores the skills loaded by earlier `load_skill` calls in its
   history. Otherwise the resumed `execute_transfer` would not be visible. Pre-loading grants no capability
   beyond the user's tokens and the policy. History becomes server-owned in Phase 7.
