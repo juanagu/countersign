@@ -33,5 +33,5 @@ export async function login(username: string): Promise<SessionUser> {
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+  await fetch(`${API_BASE}/auth/logout`, { method: 'POST', headers: { 'content-type': 'application/json' } });
 }
