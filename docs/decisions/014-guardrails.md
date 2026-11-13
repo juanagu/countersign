@@ -40,7 +40,11 @@ tool may run, and no text may reach the client, before its verdict.
   `PolicyToolset` before the model sees them. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
   `1254300.50`, `****4521` by its last digits, `15 de octubre`, `15/10`, ISO dates). A failing sentence becomes a
   fallback; an `a2ui-surface` with an ungrounded number is dropped for a text fallback (ADR 012's promise).
-  `bank-template` cards pass untouched. Each change is logged with a metric: `guardrail.input.blocked`,
+  `bank-template` cards pass untouched. The raw `render_ui` call (its `TOOL_CALL_*` events and result) and
+  every `REASONING_*` event are withheld: the model's unvalidated tree and its reasoning never leave the bot
+  (rule 5), and the validated `a2ui-surface` is all the client needs. Other tool calls still reach the client:
+  CopilotKit keeps them in the history it sends back, and an approval resume needs the paused
+  `execute_transfer` call there. Each change is logged with a metric: `guardrail.input.blocked`,
   `guardrail.output.ungrounded`, `guardrail.output.pii_redacted`, `guardrail.output.surface_dropped`,
   `guardrail.policy.write_not_requested`.
 - **Logs and traces:** a `logging.Filter` redacts the formatted message, every `extra=` field and exception text.

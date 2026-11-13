@@ -143,3 +143,21 @@ async def test_pii_in_the_message_is_masked_before_the_classifier_and_the_model(
     assert seen_by_classifier == ["Mi tarjeta es [tarjeta]"]
     assert seen_by_model and all("4532" not in seen for seen in seen_by_model)
     assert "[tarjeta]" in seen_by_model[0]
+
+
+async def test_the_client_gets_the_validated_surface_but_not_the_raw_render_ui_call(
+    verifier: JwksTokenVerifier, signing_key: SigningKey
+) -> None:
+    tree = {"title": "Ayuda", "children": [{"component": "Text", "props": {"text": "Podés consultar tu saldo."}}]}
+
+    async def stream(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])):
+            yield {0: DeltaToolCall(name="render_ui", json_args=json.dumps(tree))}
+        else:
+            yield "Listo."
+
+    sse = await _post(_agent(FunctionModel(stream_function=stream), []), verifier, signing_key, "¿Qué puedo hacer?")
+    events = _events(sse)
+    assert [e["activityType"] for e in events if e["type"] == "ACTIVITY_SNAPSHOT"] == ["a2ui-surface"]
+    assert not [e for e in events if e["type"].startswith("TOOL_CALL")]
+    assert _text(sse) == "Listo."

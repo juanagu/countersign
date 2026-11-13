@@ -16,6 +16,7 @@ from app.chat.deps import BotDeps
 from app.config import SKILLS_DIR
 from app.main import create_app
 from app.skills.registry import SkillRegistry
+from evals.agui_client import fold
 from tests.conftest import SigningKey, make_settings, open_guard, open_guardrails
 
 DRAFT_ID = "drf_0b3a6f9e-4c1d-4e2a-9f7b-1a2b3c4d5e6f"
@@ -175,3 +176,53 @@ async def test_the_ag_ui_run_ends_as_an_interrupt_naming_the_draft(
     [interrupt] = finished["outcome"]["interrupts"]
     assert interrupt["metadata"]["draft_id"] == DRAFT_ID
     assert fake.executed == []
+
+
+def _stream_to_execute():  # type: ignore[no-untyped-def]
+    from pydantic_ai.models.function import DeltaToolCall
+
+    async def stream(messages: list[ModelMessage], _: AgentInfo):  # type: ignore[no-untyped-def]
+        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        if not returns:
+            yield {0: DeltaToolCall(name="load_skill", json_args=json.dumps({"name": "payments"}))}
+        elif len(returns) == 1:
+            yield {0: DeltaToolCall(name="execute_transfer", json_args=json.dumps({"draft_id": DRAFT_ID}))}
+        else:
+            yield "Listo, la transferencia salió."
+
+    return stream
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_the_client_can_resume_an_interrupt_from_the_events_it_received(
+    signing_key: SigningKey, verifier: JwksTokenVerifier
+) -> None:
+    fake = FakePayments()
+    agent = build_agent(
+        FunctionModel(stream_function=_stream_to_execute()),
+        skills=SkillRegistry.from_dir(SKILLS_DIR),
+        domain_tools=[fake.toolset],
+    )
+    app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails())
+    headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='juan')}"}
+    messages: list[dict[str, Any]] = [{"id": "u", "role": "user", "content": "Mandale 50.000 a Ana"}]
+    base = {"threadId": "t", "tools": [], "context": [], "state": {}, "forwardedProps": {}}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        first = await http.post("/agent", json={**base, "runId": "r1", "messages": messages}, headers=headers)
+        events = [json.loads(line[6:]) for line in first.text.splitlines() if line.startswith("data: ")]
+        [interrupt] = events[-1]["outcome"]["interrupts"]
+        fold(events, messages)  # As CopilotKit does: the execute_transfer call must reach the client's history.
+        resume = [
+            {
+                "interruptId": interrupt["id"],
+                "status": "resolved",
+                "payload": {"approved": True, "editedArgs": {"draft_id": DRAFT_ID, "step_up_token": "from-the-app"}},
+            }
+        ]
+        second = await http.post(
+            "/agent", json={**base, "runId": "r2", "messages": messages, "resume": resume}, headers=headers
+        )
+
+    assert fake.executed == [{"draft_id": DRAFT_ID, "step_up_token": "from-the-app"}]
+    assert "Listo, la transferencia salió." in second.text
