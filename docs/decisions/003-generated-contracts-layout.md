@@ -7,7 +7,7 @@ the generated types without running the generator first (Docker builds, editors)
 ## Decision
 - `make contracts` writes TS to `packages/contracts/src/generated/` (exported as
   `@poc/contracts`) and Pydantic v2 models to `services/bot/app/contracts/generated/`.
-- Generated files are committed. CI runs `make contracts-check`, which regenerates and
+- Generated files are committed. The pre-push hook runs `make contracts-check`, which regenerates and
   fails on any diff.
 
 ## Consequences

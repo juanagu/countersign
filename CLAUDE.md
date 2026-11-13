@@ -128,7 +128,7 @@ make up          # docker compose up infra + all services, waits until healthy
 make down
 make logs
 make contracts   # regenerate TS + Python types from JSON Schema
-make contracts-check  # fail if generated contracts are stale (CI)
+make contracts-check  # fail if generated contracts are stale (pre-push)
 make seed        # load mock bank data
 make ingest      # chunk + embed data/kb into pgvector
 make test        # all unit/integration tests

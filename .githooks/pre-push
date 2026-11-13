@@ -1,10 +1,9 @@
 #!/bin/sh
-# Pre-push hook: the CI fast tier's cheap checks (lint, typecheck, unit tests), so a push doesn't
-# fail CI on something a local run catches. Installed by scripts/install-git-hooks.mjs on install.
-[ -n "$CI" ] && exit 0
+# Pre-push hook: the POC's only automated gate (no CI, see docs/decisions/004). Runs contracts drift,
+# lint, typecheck and unit tests. Installed by scripts/install-git-hooks.mjs on install.
 top="$(git rev-parse --show-toplevel)"
 [ -d "$top/node_modules" ] || { echo "pre-push: run make install first" >&2; exit 1; }
 if [ -n "$(git status --porcelain)" ]; then
   echo "pre-push: note: uncommitted files present; checks run on the working tree" >&2
 fi
-make -C "$top" lint test || { echo "pre-push: FAILED (make lint test)" >&2; exit 1; }
+make -C "$top" contracts-check lint test || { echo "pre-push: FAILED (make contracts-check lint test)" >&2; exit 1; }

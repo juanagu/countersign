@@ -58,4 +58,7 @@ infra/                 docker-compose: Postgres + pgvector, Redis, Phoenix, all 
 data/kb, data/seed     synthetic knowledge base and bank data
 ```
 
-Generated contract code is committed; CI runs `make contracts-check` to catch drift.
+Generated contract code is committed; the pre-push hook runs `make contracts-check` to catch drift.
+
+There is no CI for this POC ([ADR 004](docs/decisions/004-local-checks-instead-of-ci.md)): the
+pre-push hook runs `make contracts-check lint test`, and every phase is verified locally.
