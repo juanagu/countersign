@@ -17,7 +17,7 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | 4 — Generative UI | in progress | `feat/p4-genui` | Built, verified at the event level; not reviewed yet. |
 | 5 — Approval and step-up | in progress | `feat/p5-approval` | Scenario 3 verified live; not reviewed yet. |
 | 6 — Guardrails | in progress | `feat/p6-guardrails` | Being built. |
-| 7 — Resumable streams | todo | — | CopilotKit's built-in resume is unreliable after a mid-stream disconnect; build a Redis-backed runner in the BFF. |
+| 7 — Resumable streams | in progress | `feat/p7-resumable-streams` | Redis-backed runner + Postgres history (ADR 015); Scenario 5 verified live and in tests; not reviewed yet. |
 | 8 — Evals and demo polish | todo | — | `make eval` already runs the KB cases; red-team set lands in Phase 6. |
 
 ## Follow-ups
@@ -42,3 +42,7 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F16 | Bot: log a failed embedder warm-up (done-callback) so a missing model shows before the first question. | todo | Phase 2–3 review 4 |
 | F17 | Bot: derive which skills open which MCP server from the skill files instead of `SKILLS_BY_AUDIENCE`. | todo | Phase 2–3 review 4 |
 | F18 | Bot tests: check the fake MCP servers' tool names, args and tier meta against the real servers' `tools/list` (standards: a double is checked against the real boundary). | todo | Phase 2–3 review 4 |
+| F19 | Resumable streams: browser check of the offline toggle and reload (`apps/web/e2e/resume.spec.ts`, written, never run). | todo | Phase 7 |
+| F20 | BFF runner: make `stop` reach a run on another BFF replica (Redis pub/sub), and let a run outlive its BFF process (the bot writing the log, as the plan first proposed). | todo | Phase 7 |
+| F21 | Restore past the replay window: keep the cards (template/A2UI activity) and a pending approval, e.g. by persisting the display transcript with the conversation. | todo | Phase 7 |
+| F22 | Thread log size: `RUN_STARTED` carries the client's whole message list on every run; store only the new turn and rebuild earlier turns from the previous runs. | todo | Phase 7 |
