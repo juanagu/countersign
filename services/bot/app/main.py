@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI
@@ -12,6 +13,7 @@ from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
 from app.chat.routes import chat_router
 from app.config import Settings
+from app.core.clock import BankClock
 from app.core.logging import configure_logging
 from app.core.telemetry import setup_telemetry
 from app.skills.registry import SkillRegistry
@@ -27,7 +29,12 @@ def _default_agent(settings: Settings, http: httpx.AsyncClient) -> Agent[BotDeps
         client_secret=settings.bot_client_secret,
     )
     tools = banking_toolset(exchanger, accounts_url=settings.mcp_accounts_url, payments_url=settings.mcp_payments_url)
-    return build_agent(settings.bot_model, skills=SkillRegistry.from_dir(settings.skills_dir), domain_tools=[tools])
+    return build_agent(
+        settings.bot_model,
+        skills=SkillRegistry.from_dir(settings.skills_dir),
+        domain_tools=[tools],
+        clock=BankClock(ZoneInfo(settings.bank_timezone)),
+    )
 
 
 def create_app(

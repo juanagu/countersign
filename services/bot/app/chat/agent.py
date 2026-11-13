@@ -1,11 +1,11 @@
 from collections.abc import Sequence
-from datetime import date
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset
 
 from app.chat.deps import BotDeps
+from app.core.clock import BankClock
 from app.policy.policy_toolset import PolicyToolset
 from app.policy.tool_policy import ToolPolicy
 from app.skills.load_skill import skills_toolset
@@ -34,8 +34,10 @@ def build_agent(
     *,
     skills: SkillRegistry,
     domain_tools: Sequence[AbstractToolset[BotDeps]] = (),
+    clock: BankClock | None = None,
 ) -> Agent[BotDeps, str]:
-    policy = ToolPolicy(skills)
+    clock = clock or BankClock()
+    policy = ToolPolicy(skills, clock=clock)
     toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills)]
     toolsets += [PolicyToolset(wrapped=toolset, policy=policy) for toolset in domain_tools]
     agent = Agent(
@@ -63,6 +65,6 @@ def build_agent(
 
     @agent.instructions
     def today(_: RunContext[BotDeps]) -> str:
-        return f"Today is {date.today().isoformat()}."
+        return f"Today is {clock.today().isoformat()}."
 
     return agent
