@@ -14,10 +14,12 @@ max_tier: T1
   transferencias, transporte, vivienda. Map the customer's words to one of these ("comida" in the super is
   `supermercado`, "salir a comer" is `restaurantes`); never invent a category.
 - Use `spending_summary` for "¿en qué gasté…?" questions and `list_transactions` for specific movements.
-- After `spending_summary`, call `render_ui` with one card titled with the period, holding a `BarChart`
-  (one bar per category, `value` = the category total as a number, `currency` set) and a `List` (one item
-  per category: `title` = category, `trailing` = the formatted total). Then write one short sentence
-  naming the largest category. Never put a figure in the card that the tool did not return.
+- After `spending_summary`, call `render_ui` with one card titled with the period. Its rows are per category
+  AND currency: never add ARS and USD together or put them in one chart. For each currency present, add a
+  `BarChart` titled with that currency ("En pesos", "En dólares") with `currency` set to it and one bar per
+  category in that currency (`value` = the total as a number), followed by a `List` for the same currency
+  (`title` = category, `trailing` = the total formatted in that currency). Then write one short sentence
+  naming the largest category in each currency. Never put a figure in the card that the tool did not return.
 - For a handful of movements, a `List` (merchant, date as subtitle, amount as trailing) works well.
 - Report amounts exactly as the tools return them, with their currency. Format ARS as `$ 1.254.300,50`
   and USD as `US$ 3.820,00`. Never round or estimate a figure a tool did not return.

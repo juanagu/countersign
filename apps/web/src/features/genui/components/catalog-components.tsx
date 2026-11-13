@@ -54,8 +54,9 @@ export function BarChartView({ title, currency, bars }: BarChartProps) {
     <figure className="gen-chart">
       {title && <figcaption className="gen-chart__title">{title}</figcaption>}
       <ul className="gen-chart__bars">
-        {bars.map((bar) => (
-          <li key={bar.label} className="gen-chart__bar">
+        {/* The model may repeat a label (e.g. one category in two currencies); the index keeps keys unique. */}
+        {bars.map((bar, index) => (
+          <li key={`${index}-${bar.label}`} className="gen-chart__bar">
             <span className="gen-chart__label">{bar.label}</span>
             <span className="gen-chart__track" aria-hidden="true">
               <span className="gen-chart__fill" style={{ width: `${(bar.value / max) * 100}%` }} />
