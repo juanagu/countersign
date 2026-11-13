@@ -12,6 +12,9 @@ BOT_AUDIENCE = "bot"
 _ALGORITHMS = ["ES256"]
 _REQUIRED_CLAIMS = ["exp", "iat", "iss", "aud", "sub"]
 _JWKS_TIMEOUT_SECONDS = 5.0
+_REQUIRED_SCOPE = "chat"
+# Caps IdP fetches when every token carries a fresh made-up kid.
+_GLOBAL_MIN_FETCH_SECONDS = 1.0
 
 JwksFetcher = Callable[[], Awaitable[object]]
 Clock = Callable[[], float]
@@ -61,9 +64,25 @@ def http_jwks_fetcher(client: httpx.AsyncClient, url: str) -> JwksFetcher:
 def _parse_jwks(raw: object) -> dict[str, jwt.PyJWK]:
     try:
         jwks = _Jwks.model_validate(raw)
-        return {key.kid: jwt.PyJWK(key.model_dump()) for key in jwks.keys if key.kid is not None}
-    except (ValidationError, jwt.PyJWTError) as error:
+    except ValidationError as error:
         raise JwksUnavailableError("malformed jwks") from error
+    keys = {key.kid: parsed for key in jwks.keys if key.kid is not None and (parsed := _load_key(key)) is not None}
+    if not keys:
+        raise JwksUnavailableError("no usable key in jwks")
+    return keys
+
+
+def _load_key(key: _Jwk) -> jwt.PyJWK | None:
+    # One key of an unsupported type must not take the rest of the set down with it.
+    try:
+        return jwt.PyJWK(key.model_dump())
+    except jwt.PyJWTError:
+        return None
+
+
+def _has_required_scope(claims: dict[str, object]) -> bool:
+    scope = claims.get("scope")
+    return isinstance(scope, str) and _REQUIRED_SCOPE in scope.split()
 
 
 class JwksTokenVerifier:
@@ -71,6 +90,7 @@ class JwksTokenVerifier:
 
     Each unknown kid triggers at most one fetch per interval, so a key rotated right after the last
     fetch is still picked up; after a failed fetch no kid triggers another until the interval passes.
+    Across all kids there is at most one fetch per global floor.
     """
 
     def __init__(
@@ -81,6 +101,7 @@ class JwksTokenVerifier:
         audience: str,
         min_refresh_seconds: float = 10.0,
         clock: Clock = time.monotonic,
+        global_min_fetch_seconds: float = _GLOBAL_MIN_FETCH_SECONDS,
     ):
         self._fetch_jwks = fetch_jwks
         self._issuer = issuer
@@ -90,6 +111,8 @@ class JwksTokenVerifier:
         self._keys: dict[str, jwt.PyJWK] = {}
         self._last_attempt_by_kid: dict[str, float] = {}
         self._last_failure = float("-inf")
+        self._global_min_fetch_seconds = global_min_fetch_seconds
+        self._last_fetch = float("-inf")
         self._lock = asyncio.Lock()
 
     async def verify(self, token: str) -> Principal:
@@ -108,6 +131,8 @@ class JwksTokenVerifier:
             )
         except jwt.PyJWTError as error:
             raise InvalidTokenError(str(error)) from error
+        if not _has_required_scope(claims):
+            raise InvalidTokenError("missing chat scope")
         return Principal(user_id=str(claims["sub"]), token=token)
 
     async def _key(self, kid: str) -> jwt.PyJWK | None:
@@ -124,8 +149,11 @@ class JwksTokenVerifier:
                 raise JwksUnavailableError("backing off after a failed jwks fetch")
             if self._within_interval(self._last_attempt_by_kid.get(kid, float("-inf")), now):
                 return
+            if now - self._last_fetch < self._global_min_fetch_seconds:
+                return
             self._forget_attempts_before(now - self._min_refresh_seconds)
             self._last_attempt_by_kid[kid] = now
+            self._last_fetch = now
             try:
                 self._keys = _parse_jwks(await self._fetch_jwks())
             except JwksUnavailableError:

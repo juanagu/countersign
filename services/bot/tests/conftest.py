@@ -41,6 +41,7 @@ class SigningKey:
             "iat": now,
             "exp": now + 300,
             "jti": str(uuid.uuid4()),
+            "scope": "chat",
         }
         claims.update(overrides)
         claims = {k: v for k, v in claims.items() if v is not None}

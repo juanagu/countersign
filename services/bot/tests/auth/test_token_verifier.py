@@ -34,6 +34,9 @@ def _expired() -> dict[str, Any]:
         pytest.param(_expired(), id="expired"),
         pytest.param({"sub": None}, id="missing sub"),
         pytest.param({"exp": None}, id="missing exp"),
+        pytest.param({"scope": None}, id="missing scope"),
+        pytest.param({"scope": "accounts:read"}, id="scope without chat"),
+        pytest.param({"scope": "chatty"}, id="scope only resembling chat"),
     ],
 )
 async def test_rejects_invalid_claims(
@@ -125,6 +128,28 @@ async def test_rate_limits_failed_fetches_across_kids(signing_key: SigningKey) -
     clock.now += 10
     assert (await verifier.verify(signing_key.token())).user_id == "ana"
     assert jwks.calls == 2
+
+
+async def test_fetches_at_most_once_per_second_across_fresh_kids(signing_key: SigningKey) -> None:
+    jwks, clock = FakeJwks(signing_key), FakeClock()
+    verifier = _verifier(jwks, clock)
+    for kid in ("a", "b", "c"):
+        with pytest.raises(InvalidTokenError):
+            await verifier.verify(SigningKey(kid=kid).token())
+        clock.now += 0.3
+    assert jwks.calls == 1
+
+    clock.now += 0.2
+    with pytest.raises(InvalidTokenError):
+        await verifier.verify(SigningKey(kid="d").token())
+    assert jwks.calls == 2
+
+
+async def test_skips_unparsable_keys_and_keeps_the_usable_ones(signing_key: SigningKey) -> None:
+    jwks = FakeJwks(signing_key)
+    broken = {"kid": "broken", "kty": "EC", "crv": "P-256", "x": "!", "y": "!"}
+    jwks.answer = {"keys": [broken, signing_key.jwk()]}
+    assert (await _verifier(jwks, FakeClock()).verify(signing_key.token())).user_id == "ana"
 
 
 @pytest.mark.parametrize(
