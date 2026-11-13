@@ -20,6 +20,7 @@ from app.main import create_app
 ISSUER = "http://idp.test"
 KID = "test-key"
 STREAMED_CHUNKS = ["Hola", ", ¿en qué ", "te ayudo?"]
+TEST_MODEL = "test"
 
 
 class SigningKey:
@@ -83,7 +84,7 @@ def agent(seen_user_ids: list[str]) -> Agent[BotDeps, str]:
 
 @pytest.fixture
 async def client(agent: Agent[BotDeps, str], verifier: JwksTokenVerifier) -> AsyncIterator[AsyncClient]:
-    app = create_app(Settings(), agent=agent, token_verifier=verifier)
+    app = create_app(Settings(bot_model=TEST_MODEL), agent=agent, token_verifier=verifier)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         yield http
 
