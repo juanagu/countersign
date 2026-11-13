@@ -12,8 +12,10 @@ MCP tools at `POST /mcp`:
   `pending` draft that expires in 5 minutes and returns it.
   The rules live in the `prepareTransfer(repo, customerId, args, now)` use-case (`prepare-transfer.ts`),
   which returns the draft or a typed error; the tool callback only checks the scope and shapes the output.
-- `execute_transfer(draft_id, step_up_token)` (T3): returns `not_authorised` until Phase 5 adds step-up
-  verification.
+- `execute_transfer(draft_id, step_up_token)` (T3): `executeTransfer` verifies the step-up token (ADR 013),
+  claims its `jti`, checks the grant against the stored draft and executes once per draft (row lock,
+  idempotent receipt). Errors: `not_authorised`, `token_already_used`, `draft_not_found`, `draft_expired`,
+  `draft_not_pending`, `insufficient_funds`.
 
 ## Data flow
 

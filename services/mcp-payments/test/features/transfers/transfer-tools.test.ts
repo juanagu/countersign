@@ -2,6 +2,7 @@ import { createJwtVerifier } from '@poc/mcp-kit';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AUDIENCE, createApp } from '../../../src/app.js';
+import { createStepUpVerifier } from '../../../src/features/transfers/step-up-verifier.js';
 import { InMemoryTransfersRepository } from '../../support/in-memory-transfers.js';
 import { connectClient, parseText } from '../../support/mcp-client.js';
 
@@ -21,7 +22,12 @@ beforeEach(async () => {
     allowedActors: ['bot'],
     keys: keys.keys,
   });
-  app = createApp({ verify, transfers: repo, now: () => NOW });
+  app = createApp({
+    verify,
+    transfers: repo,
+    verifyStepUp: createStepUpVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, keys: keys.keys }),
+    now: () => NOW,
+  });
 });
 
 async function clientFor(sub: string, scope = SCOPE) {

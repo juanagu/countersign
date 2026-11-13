@@ -7,9 +7,11 @@ const refuseEveryToken = () => Promise.reject(new Error('no token in these tests
 
 describe('mcp-payments', () => {
   it('reports healthy on /health without a token', async () => {
-    const res = await createApp({ verify: refuseEveryToken, transfers: new InMemoryTransfersRepository() }).request(
-      '/health',
-    );
+    const res = await createApp({
+      verify: refuseEveryToken,
+      verifyStepUp: async () => undefined,
+      transfers: new InMemoryTransfersRepository(),
+    }).request('/health');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'ok', service: 'mcp-payments' });
   });

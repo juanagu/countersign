@@ -1,8 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { fail, ok, requireScope, tierMeta, type Principal } from '@poc/mcp-kit';
 import { z } from 'zod';
+import { executeTransfer } from './execute-transfer.js';
 import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
-import type { Beneficiary, TransfersRepository } from './transfers-repository.js';
+import type { VerifyStepUp } from './step-up-verifier.js';
+import type { Beneficiary, TransferDraft, TransferReceipt, TransfersRepository } from './transfers-repository.js';
 
 export const SCOPES = { readBeneficiaries: 'beneficiaries:read', prepare: 'transfers:prepare' } as const;
 
@@ -31,14 +33,33 @@ function draftView({ draft, total, account, beneficiary }: PreparedTransfer) {
   };
 }
 
+async function receiptView(repo: TransfersRepository, draft: TransferDraft, receipt: TransferReceipt) {
+  const [account, beneficiary] = await Promise.all([
+    repo.findAccount(draft.sourceAccountId),
+    repo.findBeneficiary(draft.beneficiaryId),
+  ]);
+  return {
+    transfer_id: receipt.transferId,
+    draft_id: receipt.draftId,
+    reference: receipt.reference,
+    executed_at: receipt.executedAt,
+    amount: draft.amount,
+    fee: draft.fee,
+    currency: draft.currency,
+    source_account: account && { id: account.id, alias: account.alias, number: mask(account.number) },
+    beneficiary: beneficiary && publicBeneficiary(beneficiary),
+  };
+}
+
 export interface TransferToolsDeps {
   repo: TransfersRepository;
+  verifyStepUp: VerifyStepUp;
   now?: () => Date;
 }
 
 export function buildPaymentsServer(
   principal: Principal,
-  { repo, now = () => new Date() }: TransferToolsDeps,
+  { repo, verifyStepUp, now = () => new Date() }: TransferToolsDeps,
 ): McpServer {
   const server = new McpServer({ name: 'mcp-payments', version: '0.1.0' });
 
@@ -90,8 +111,11 @@ export function buildPaymentsServer(
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
       _meta: tierMeta('T3'),
     },
-    // Step-up verification lands in Phase 5; until then nothing executes.
-    async () => fail('not_authorised', 'La transferencia no está autorizada.'),
+    async ({ draft_id, step_up_token }) => {
+      const result = await executeTransfer({ repo, verifyStepUp, now }, principal.sub, draft_id, step_up_token);
+      if (!result.ok) return fail(result.error.code, result.error.message);
+      return ok(await receiptView(repo, result.value.draft, result.value.receipt));
+    },
   );
 
   return server;

@@ -2,6 +2,7 @@ import { mcpRoute, type VerifyAccessToken } from '@poc/mcp-kit';
 import { Hono } from 'hono';
 import type { Logger } from 'pino';
 import { buildPaymentsServer } from './features/transfers/transfer-tools.js';
+import type { VerifyStepUp } from './features/transfers/step-up-verifier.js';
 import type { TransfersRepository } from './features/transfers/transfers-repository.js';
 
 export const SERVICE_NAME = 'mcp-payments';
@@ -11,18 +12,20 @@ export const AUDIENCE = 'mcp-payments';
 export interface AppDeps {
   verify: VerifyAccessToken;
   transfers: TransfersRepository;
+  verifyStepUp: VerifyStepUp;
   now?: () => Date;
   logger?: Logger;
 }
 
-export function createApp({ verify, transfers, now, logger }: AppDeps): Hono {
+export function createApp({ verify, transfers, verifyStepUp, now, logger }: AppDeps): Hono {
   const app = new Hono();
   app.get('/health', (c) => c.json({ status: 'ok', service: SERVICE_NAME }));
   app.route(
     '/',
     mcpRoute({
       verify,
-      buildServer: (principal) => buildPaymentsServer(principal, { repo: transfers, ...(now && { now }) }),
+      buildServer: (principal) =>
+        buildPaymentsServer(principal, { repo: transfers, verifyStepUp, ...(now && { now }) }),
       onRejected: (reason) => logger?.warn({ reason }, 'rejected access token'),
     }),
   );

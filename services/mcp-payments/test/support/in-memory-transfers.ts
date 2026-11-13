@@ -1,7 +1,9 @@
 import type {
   Beneficiary,
   SourceAccount,
+  ExecuteDraftOutcome,
   TransferDraft,
+  TransferReceipt,
   TransfersRepository,
 } from '../../src/features/transfers/transfers-repository.js';
 
@@ -68,5 +70,36 @@ export class InMemoryTransfersRepository implements TransfersRepository {
 
   async createDraft(draft: TransferDraft) {
     this.drafts.push(draft);
+  }
+
+  readonly usedJtis = new Set<string>();
+  readonly receipts = new Map<string, TransferReceipt>();
+  /** Every debit applied, so tests can assert a draft moved money exactly once. */
+  readonly debits: { draftId: string; amount: string }[] = [];
+
+  async findDraft(id: string) {
+    return this.drafts.find((d) => d.id === id);
+  }
+
+  async findReceipt(draftId: string) {
+    return this.receipts.get(draftId);
+  }
+
+  async claimTokenId(jti: string) {
+    if (this.usedJtis.has(jti)) return false;
+    this.usedJtis.add(jti);
+    return true;
+  }
+
+  async executeDraft(draftId: string, now: Date): Promise<ExecuteDraftOutcome> {
+    const draft = this.drafts.find((d) => d.id === draftId);
+    const existing = this.receipts.get(draftId);
+    if (draft?.status === 'executed' && existing) return { status: 'already_executed', receipt: existing };
+    if (draft?.status !== 'pending') return { status: 'not_pending' };
+    draft.status = 'executed';
+    this.debits.push({ draftId, amount: draft.amount });
+    const receipt = { transferId: `trf_${draftId}`, draftId, reference: 'BD-TEST', executedAt: now.toISOString() };
+    this.receipts.set(draftId, receipt);
+    return { status: 'executed', receipt };
   }
 }

@@ -31,6 +31,20 @@ export interface TransferDraft {
   expiresAt: string;
 }
 
+export interface TransferReceipt {
+  transferId: string;
+  draftId: string;
+  reference: string;
+  executedAt: string;
+}
+
+export type ExecuteDraftOutcome =
+  | { status: 'executed'; receipt: TransferReceipt }
+  /** Another call executed this draft first: same receipt, no second debit. */
+  | { status: 'already_executed'; receipt: TransferReceipt }
+  | { status: 'not_pending' }
+  | { status: 'insufficient_funds' };
+
 /** The transfers feature's port onto bank data. */
 export interface TransfersRepository {
   listBeneficiaries(customerId: string): Promise<Beneficiary[]>;
@@ -38,4 +52,10 @@ export interface TransfersRepository {
   findBeneficiary(id: string): Promise<Beneficiary | undefined>;
   findAccount(id: string): Promise<SourceAccount | undefined>;
   createDraft(draft: TransferDraft): Promise<void>;
+  findDraft(id: string): Promise<TransferDraft | undefined>;
+  findReceipt(draftId: string): Promise<TransferReceipt | undefined>;
+  /** Records a step-up token id; false if it was already used (single use). */
+  claimTokenId(jti: string): Promise<boolean>;
+  /** Debits, records the transfer and marks the draft executed, atomically and at most once per draft. */
+  executeDraft(draftId: string, now: Date): Promise<ExecuteDraftOutcome>;
 }
