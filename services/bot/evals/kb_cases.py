@@ -4,11 +4,13 @@ Run with `make eval` (needs ANTHROPIC_API_KEY, `make up` and `make ingest`).
 """
 
 import asyncio
+import json
 import re
 import sys
 from dataclasses import dataclass
 
 from psycopg_pool import AsyncConnectionPool
+from pydantic_ai.messages import ToolCallPart
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
@@ -33,10 +35,12 @@ class Contains(Evaluator[str, str]):
 
 @dataclass
 class Cites(Evaluator[str, str]):
+    """The answer shows a Citation component naming the doc (the task appends render_ui arguments)."""
+
     doc_id: str
 
     def evaluate(self, ctx: EvaluatorContext[str, str]) -> bool:
-        return f"kb:{self.doc_id}" in ctx.output
+        return '"Citation"' in ctx.output and f'"docId": "{self.doc_id}"' in ctx.output
 
 
 @dataclass
@@ -78,7 +82,13 @@ async def main() -> int:
 
         async def answer(question: str) -> str:
             result = await agent.run(question, deps=BotDeps(user_id="eval", access_token=""))
-            return result.output
+            ui_calls = [
+                json.dumps(part.args_as_dict(), ensure_ascii=False)
+                for message in result.all_messages()
+                for part in getattr(message, "parts", [])
+                if isinstance(part, ToolCallPart) and part.tool_name == "render_ui"
+            ]
+            return "\n".join([result.output, *ui_calls])
 
         report = await DATASET.evaluate(answer, max_concurrency=2)
     report.print(include_input=True, include_output=True)

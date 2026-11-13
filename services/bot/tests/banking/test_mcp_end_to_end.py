@@ -122,7 +122,7 @@ async def test_calls_mcp_with_the_exchanged_token_never_the_incoming_one(
     assert all(header in {"Bearer exchanged-mcp-accounts", "Bearer exchanged-mcp-payments"} for header in seen_auth)
     assert not any(INCOMING_TOKEN in header for header in seen_auth)
     # Before load_skill no domain tool is visible; afterwards only the skill's allow-listed ones are.
-    assert seen_tools[0] == ["load_skill"]
+    assert seen_tools[0] == ["load_skill", "render_ui"]
     assert "list_accounts" in seen_tools[1]
     assert "secret_admin_tool" not in seen_tools[1]
     assert "untrusted_data" in result.output

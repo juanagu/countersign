@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import RunContext, ToolReturn
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from app.chat.deps import BotDeps
@@ -38,4 +38,7 @@ class PolicyToolset(WrapperToolset[BotDeps]):
             logger.info("tool call denied", extra={"tool": name, "reason": decision.reason})
             return {"error": "policy_denied", "reason": decision.reason}
         result = await self.wrapped.call_tool(name, tool_args, ctx, tool)
+        if isinstance(result, ToolReturn):  # Keep attached UI events; only the model-facing value is wrapped.
+            result.return_value = {"untrusted_data": result.return_value, "note": UNTRUSTED_NOTE}
+            return result
         return {"untrusted_data": result, "note": UNTRUSTED_NOTE}
