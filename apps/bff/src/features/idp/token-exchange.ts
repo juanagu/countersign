@@ -97,18 +97,19 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
     const subject = await issuer.verifyBotToken(subjectToken).catch(() => undefined);
     if (!subject) return oauthError(c, 'invalid_grant');
 
-    const { token, expiresIn } = await issuer.issueExchanged({
+    const exchanged = await issuer.issueExchanged({
       sub: subject.sub,
       audience,
       scopes,
       actor,
       notAfter: subject.exp,
     });
+    if (!exchanged) return oauthError(c, 'invalid_grant'); // The subject token is about to expire.
     return c.json({
-      access_token: token,
+      access_token: exchanged.token,
       issued_token_type: ACCESS_TOKEN_TYPE,
       token_type: 'Bearer',
-      expires_in: expiresIn,
+      expires_in: exchanged.expiresIn,
       scope: scopes.join(' '),
     });
   });

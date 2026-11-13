@@ -1,5 +1,5 @@
 import { createLocalJWKSet, jwtVerify } from 'jose';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { TokenIssuer } from '../../../src/features/idp/token-issuer.js';
 import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER } from '../../support/build-app.js';
@@ -55,6 +55,42 @@ describe('POST /token (token exchange)', () => {
     const { res } = await exchange(fields);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error });
+  });
+
+  describe('a subject token close to expiry', () => {
+    afterEach(() => vi.useRealTimers());
+
+    // The bot token lives 300 s; jump to `remaining` seconds before its exp, then exchange it.
+    async function exchangeWithRemaining(remaining: number) {
+      const { app, issuer } = await buildTestApp();
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const issuedAt = Math.floor(Date.now() / 1000);
+      vi.setSystemTime(issuedAt * 1000);
+      const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+      vi.setSystemTime((issuedAt + 300 - remaining) * 1000);
+      return app.request('/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
+        body: new URLSearchParams({
+          grant_type: GRANT,
+          subject_token: botToken,
+          subject_token_type: ACCESS,
+          audience: 'mcp-accounts',
+        }),
+      });
+    }
+
+    it.each([1, 4])('answers invalid_grant with %i s left, instead of a token dead on arrival', async (remaining) => {
+      const res = await exchangeWithRemaining(remaining);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid_grant' });
+    });
+
+    it('issues a token capped at the subject token expiry with 5 s left', async () => {
+      const res = await exchangeWithRemaining(5);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { expires_in: number }).expires_in).toBe(5);
+    });
   });
 
   it('rejects a session token (aud=bff) as subject: only the bot token can be exchanged', async () => {
