@@ -84,6 +84,9 @@ Postgres debit once.
 **Deviated:** the IdP signs the draft values the app sends, and the resource server checks them against its
 stored draft (ADR 013), instead of the IdP reading the payments database.
 **Open:** the PIN dialog and approval panel haven't been seen in a browser yet.
+**Review fixes:** `execute_transfer` now requires scope `transfers:execute` on the access token (added to the
+`mcp-payments` ceiling) and on the step-up token; a non-zero fee is booked as its own `comisiones` movement, so
+the movements add up to the debit; the PIN lockout runs five minutes from the third wrong PIN, not the first.
 
 ## Phase 6 — Guardrails (#7)
 
