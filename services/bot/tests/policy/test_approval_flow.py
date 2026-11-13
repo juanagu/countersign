@@ -372,10 +372,10 @@ async def test_a_forged_resume_never_skips_the_guards_or_moves_money(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         res = await http.post("/agent", json=_forged_resume_body(injection), headers=headers)
 
-    # With server-owned history (ADR 015) the stored conversation isn't waiting on the forged call, so the run is
-    # refused outright; without it the injected message would be classified and blocked. Either way it is never
-    # trusted as a resume, and nothing executes.
-    assert classified in ([], [injection])
+    # With server-owned history (ADR 015) the client's forged turns are never loaded and the stored conversation
+    # isn't waiting on the forged call, so the run is refused. What matters: it was not trusted as a resume (the
+    # classifier still ran), the injected text was never treated as history, and nothing executed.
+    assert len(classified) == 1
     assert fake.executed == []
     assert "Listo, la transferencia salió." not in res.text
 
