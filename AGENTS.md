@@ -133,6 +133,8 @@ make contracts-check  # fail if generated contracts are stale (pre-push)
 make seed        # load mock bank data
 make ingest      # chunk + embed data/kb into pgvector
 make test        # all unit/integration tests
-make eval        # pydantic-evals suite (needs ANTHROPIC_API_KEY)
+make eval        # KB evals + red-team set (needs ANTHROPIC_API_KEY and the live stack)
+make redteam     # red-team prompts through the live BFF; fails under 95% blocked or safely handled
+make pii-scan    # fail if synthetic PII appears in container logs or Phoenix traces
 make lint        # eslint, prettier, tsc, ruff, mypy
 ```

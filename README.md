@@ -43,7 +43,9 @@ make up / make down   # start / stop the stack
 make contracts        # regenerate TS + Python types from packages/contracts/schemas
 make lint             # eslint, prettier, tsc, ruff, mypy
 make test             # vitest + pytest
-make seed / ingest / eval   # land in Phases 2, 3 and 8
+make seed / ingest    # load mock bank data / embed the knowledge base
+make eval             # KB evals + red-team set against the live stack
+make pii-scan         # check logs and traces for unredacted synthetic PII
 ```
 
 ## Layout
