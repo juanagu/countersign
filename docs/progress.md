@@ -49,3 +49,20 @@ known questions, and a public-only caller never gets a customer doc. Eval: 3/3, 
 unanswerable questions answered "No tengo esa información" with no figure.
 **Deviated:** smaller chunks than the plan's 400–600 tokens, and an OR full-text query (ADR 010).
 Citations are text links until Phase 4.
+
+## Phase 4 — Generative UI: A2UI + server templates (#5)
+
+**Built:** contract schemas for the A2UI catalog (`UiTree` plus props for 9 components, no inputs) and the
+bank templates, generating TS and Pydantic; bot `render_ui` (validated → A2UI v0.9 `a2ui-surface`
+activity; invalid → dropped, metric logged, text fallback); `TemplateToolset` attaching a
+`transfer-confirm` card built from the `prepare_transfer` result; web catalog renderers, transfer
+confirm/receipt cards, and button and quick-reply actions; skills updated (spending → BarChart + List;
+knowledge → Citation).
+**Verified:** Scenario 2 live: "¿En qué gasté el mes pasado?" → `spending_summary` → an `a2ui-surface`
+with a BarChart (8 bars) and a List whose values match the tool result. Test: the confirm card carries the
+draft's amount and beneficiary while the model's text claims "$ 999.999 a Mallory". Test: six kinds of
+invalid tree fall back to text and log `a2ui.invalid_payload`. KB eval 3/3 with the Citation component.
+**Deviated:** templates as activity snapshots, not custom events (ADR 011); agent-side generation instead
+of `generate_a2ui` (ADR 012). Built without a designer artboard: the card styling uses the existing tokens
+and needs a visual review.
+**Open:** browser rendering not seen yet (Playwright screenshots planned).
