@@ -50,7 +50,8 @@ tool may run, and no text may reach the client, before its verdict.
 ## Consequences
 - Latency: text waits for the classifier (Haiku, usually done before Sonnet's first tokens) and for each
   sentence end. Streaming is per sentence rather than per token.
-- Grounding also accepts figures from the customer's latest message, today's date and its year. Without it, a
+- Grounding also accepts figures from the customer's latest message, today's date and its year. Today is the
+  bank's day (`BankClock`, the one the prompt and the policy use), not the UTC host's. Without it, a
   sentence such as "Preparo una transferencia de $ 50.000" written before the tool call would be replaced. The
   risk is echoing a customer-supplied figure as if it were the bank's; the red-team case with a fake tool result
   covers it with the input classifier and the judge.

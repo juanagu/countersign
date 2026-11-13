@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from app.core.clock import BankClock
 from app.guardrails.grounding import Evidence
 from app.guardrails.verdict import Verdict, block
 
@@ -33,7 +34,7 @@ class RunGuard:
     """
 
     customer_messages: list[str] = field(default_factory=list)  # Redacted, oldest first.
-    today: date = field(default_factory=date.today)
+    today: date = field(default_factory=lambda: BankClock().today())
     write_intent: WriteIntentCheck = deny_writes
     # Set once the run (or its history) holds third-party free text: memos, merchant names, KB passages.
     third_party_text_seen: bool = False
