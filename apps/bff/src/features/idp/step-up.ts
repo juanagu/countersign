@@ -22,25 +22,24 @@ export interface StepUpOptions {
   now?: () => number;
 }
 
-/** Counts wrong PINs per user; three in a row lock step-up for five minutes. */
-class PinAttempts {
-  private readonly failures = new Map<string, { count: number; since: number }>();
+/** Counts wrong PINs per user; the third in a row locks step-up for five minutes from that failure. */
+export class PinAttempts {
+  private readonly failures = new Map<string, { count: number; lockedUntil: number | undefined }>();
 
   constructor(private readonly now: () => number) {}
 
   locked(sub: string): boolean {
-    const entry = this.failures.get(sub);
-    if (!entry) return false;
-    if (this.now() - entry.since > LOCKOUT_MS) {
-      this.failures.delete(sub);
-      return false;
-    }
-    return entry.count >= MAX_FAILURES;
+    const lockedUntil = this.failures.get(sub)?.lockedUntil;
+    if (lockedUntil === undefined) return false;
+    if (this.now() < lockedUntil) return true;
+    this.failures.delete(sub);
+    return false;
   }
 
   fail(sub: string): void {
-    const entry = this.failures.get(sub);
-    this.failures.set(sub, entry ? { ...entry, count: entry.count + 1 } : { count: 1, since: this.now() });
+    const count = (this.failures.get(sub)?.count ?? 0) + 1;
+    const lockedUntil = count >= MAX_FAILURES ? this.now() + LOCKOUT_MS : undefined;
+    this.failures.set(sub, { count, lockedUntil });
   }
 
   reset(sub: string): void {
