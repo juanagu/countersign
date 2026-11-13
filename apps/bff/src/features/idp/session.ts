@@ -1,5 +1,4 @@
 import type { MiddlewareHandler } from 'hono';
-import { getCookie } from 'hono/cookie';
 import { parse } from 'hono/utils/cookie';
 import type { SessionClaims, TokenIssuer } from './token-issuer.js';
 
@@ -16,8 +15,7 @@ export async function readSession(issuer: TokenIssuer, request: Request): Promis
 
 export function requireSession(issuer: TokenIssuer): MiddlewareHandler<SessionEnv> {
   return async (c, next) => {
-    const token = getCookie(c, SESSION_COOKIE);
-    const session = token ? await issuer.verifySession(token).catch(() => undefined) : undefined;
+    const session = await readSession(issuer, c.req.raw);
     if (!session) return c.json({ error: 'unauthenticated' }, 401);
     c.set('session', session);
     await next();

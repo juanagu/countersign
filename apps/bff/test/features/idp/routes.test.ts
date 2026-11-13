@@ -38,10 +38,33 @@ describe('mock IdP', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
-  it('rejects a malformed login body', async () => {
+  it('rejects a malformed JSON login body', async () => {
     const { app } = await buildTestApp();
-    const res = await app.request('/auth/login', { method: 'POST', body: 'not json' });
+    const res = await app.request('/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'not json',
+    });
     expect(res.status).toBe(401);
+  });
+
+  it('refuses a non-JSON login, as a cross-site form would send it, with 415', async () => {
+    const { app } = await buildTestApp();
+    for (const contentType of ['text/plain', 'application/x-www-form-urlencoded', undefined]) {
+      const res = await app.request('/auth/login', {
+        method: 'POST',
+        headers: contentType ? { 'content-type': contentType } : {},
+        body: JSON.stringify({ username: 'ana' }),
+      });
+      expect(res.status).toBe(415);
+      expect(res.headers.get('set-cookie')).toBeNull();
+    }
+  });
+
+  it('refuses a non-JSON logout with 415', async () => {
+    const { app } = await buildTestApp();
+    const res = await app.request('/auth/logout', { method: 'POST', headers: { 'content-type': 'text/plain' } });
+    expect(res.status).toBe(415);
   });
 
   it('issues a session token with aud=bff that verifies against the JWKS', async () => {

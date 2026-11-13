@@ -1,11 +1,10 @@
 import logging
 from typing import Annotated
 
-import httpx
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.auth.token_verifier import InvalidTokenError, Principal, TokenVerifier
+from app.auth.token_verifier import InvalidTokenError, JwksUnavailableError, Principal, TokenVerifier
 
 logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
@@ -23,8 +22,8 @@ async def require_principal(
     except InvalidTokenError as error:
         logger.info("rejected bearer token", extra={"reason": str(error)})
         raise _UNAUTHORIZED from error
-    except httpx.HTTPError as error:
-        logger.error("jwks unavailable", extra={"error": type(error).__name__})
+    except JwksUnavailableError as error:
+        logger.error("jwks unavailable", extra={"reason": str(error)})
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "idp_unavailable") from error
 
 

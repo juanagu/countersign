@@ -11,9 +11,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
-    bot_port: int = Field(default=8000, gt=0)
     log_level: str = "info"
-    bot_model: str = "anthropic:claude-sonnet-5-5"
+    bot_model: str  # BOT_MODEL; required so no model name is hard-coded.
     idp_issuer: str = "http://localhost:3000"
     idp_jwks_url: str = "http://localhost:3000/.well-known/jwks.json"
     idp_token_url: str = "http://localhost:3000/token"  # noqa: S105 (a URL)

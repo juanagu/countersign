@@ -20,6 +20,15 @@ export function App({ initialState }: { initialState?: SessionState }) {
     setSession({ status: 'signed-out' });
   }
 
+  // An expired session shows up as a failed runtime call; only a confirmed 401 signs the user out.
+  function recheckSession() {
+    fetchSession()
+      .then((user) => {
+        if (!user) setSession({ status: 'signed-out' });
+      })
+      .catch(() => undefined);
+  }
+
   if (session.status === 'loading') {
     return (
       <main className="page-center muted" aria-busy="true">
@@ -30,5 +39,7 @@ export function App({ initialState }: { initialState?: SessionState }) {
   if (session.status === 'signed-out') {
     return <LoginScreen onSignedIn={(user) => setSession({ status: 'signed-in', user })} />;
   }
-  return <ChatScreen key={session.user.id} user={session.user} onSignOut={() => void signOut()} />;
+  return (
+    <ChatScreen key={session.user.id} user={session.user} onSignOut={signOut} onRuntimeRequestFailed={recheckSession} />
+  );
 }

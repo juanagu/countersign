@@ -4,7 +4,8 @@ Hosts the CopilotKit v2 runtime for the web chat and proxies runs to the bot ove
 
 ## Exposed interface
 
-- `chatRoutes({ issuer, botAgentUrl })`: the runtime under `/copilotkit/*`, behind `requireSession`.
+- `chatRoutes({ issuer, botAgentUrl })`: the runtime under `/copilotkit/*`, behind `requireSession`,
+  with no CORS headers. `identifyUser` scopes each thread to the session's user.
 - Agent id: `default`.
 
 ## Data flow
