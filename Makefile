@@ -1,3 +1,8 @@
+-include .env
+POSTGRES_HOST_PORT ?= 5432
+# Repository tests run against the seeded compose Postgres when it is up, and skip otherwise.
+export TEST_DATABASE_URL ?= postgres://bank:bank@localhost:$(POSTGRES_HOST_PORT)/bank
+
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 BOT := uv run --directory services/bot
 
@@ -33,8 +38,8 @@ contracts-check: contracts ## Fail if generated contracts are out of date
 	@test -z "$$(git ls-files --others --exclude-standard packages/contracts/src/generated services/bot/app/contracts/generated)" \
 		|| (echo "untracked generated contracts; commit them" && exit 1)
 
-seed: ## Load mock bank data (Phase 2)
-	@echo "seed: not implemented until Phase 2" && exit 1
+seed: ## Load mock bank data (drops and recreates the bank schema)
+	cat data/seed/*.sql | $(COMPOSE) exec -T postgres psql -q -v ON_ERROR_STOP=1 -U bank -d bank
 
 ingest: ## Chunk + embed data/kb into pgvector (Phase 3)
 	@echo "ingest: not implemented until Phase 3" && exit 1
