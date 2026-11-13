@@ -22,7 +22,9 @@ def _exchanged_auth(exchanger: TokenExchanger, audience: str) -> Callable[[RunCo
 
 def banking_toolset(exchanger: TokenExchanger, *, accounts_url: str, payments_url: str) -> AbstractToolset[BotDeps]:
     servers: list[AbstractToolset[BotDeps]] = [
-        MCPToolset(url, id=audience, auth=_exchanged_auth(exchanger, audience))
+        # Domain errors (insufficient_funds, over_limit…) are final answers for the model to explain, not
+        # mistakes to retry: 'failed' hands them over without spending the run's retry budget.
+        MCPToolset(url, id=audience, auth=_exchanged_auth(exchanger, audience), tool_error_behavior="failed")
         for audience, url in ((ACCOUNTS_AUDIENCE, accounts_url), (PAYMENTS_AUDIENCE, payments_url))
     ]
     return CombinedToolset(servers)

@@ -10,7 +10,15 @@ import httpx
 import pytest
 import uvicorn
 from fastmcp import FastMCP
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from fastmcp.exceptions import ToolError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -40,6 +48,10 @@ def _fake_accounts_server() -> FastMCP:
     @mcp.tool(meta={"bank/riskTier": "T1"})
     def list_accounts() -> dict[str, Any]:
         return {"accounts": [{"id": "acc-ana-ars", "currency": "ARS"}]}
+
+    @mcp.tool(meta={"bank/riskTier": "T1"})
+    def get_balance(account_id: str) -> dict[str, Any]:
+        raise ToolError(json.dumps({"error": "account_not_found", "account_id": account_id}))
 
     @mcp.tool(meta={"bank/riskTier": "T1"})
     def secret_admin_tool() -> str:
@@ -82,6 +94,25 @@ async def fake_servers() -> AsyncIterator[tuple[str, str, list[str]]]:
     await asyncio.gather(*tasks)
 
 
+def _exchanger(audiences: list[str] | None = None) -> TokenExchanger:
+    """A token exchanger against a fake IdP that records each audience it is asked for."""
+
+    def token_endpoint(request: httpx.Request) -> httpx.Response:
+        audience = dict(httpx.QueryParams(request.content.decode()))["audience"]
+        if audiences is not None:
+            audiences.append(audience)
+        return httpx.Response(
+            200, json={"access_token": f"exchanged-{audience}", "expires_in": 300, "token_type": "Bearer"}
+        )
+
+    return TokenExchanger(
+        httpx.AsyncClient(transport=httpx.MockTransport(token_endpoint)),
+        token_url="http://idp.test/token",
+        client_id="bot",
+        client_secret="s3cret",
+    )
+
+
 def _scripted_model(seen_tools: list[list[str]]) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tools.append(sorted(t.name for t in info.function_tools))
@@ -100,18 +131,7 @@ async def test_calls_mcp_with_the_exchanged_token_never_the_incoming_one(
 ) -> None:
     accounts_url, payments_url, seen_auth = fake_servers
 
-    def token_endpoint(request: httpx.Request) -> httpx.Response:
-        audience = dict(httpx.QueryParams(request.content.decode()))["audience"]
-        return httpx.Response(
-            200, json={"access_token": f"exchanged-{audience}", "expires_in": 300, "token_type": "Bearer"}
-        )
-
-    exchanger = TokenExchanger(
-        httpx.AsyncClient(transport=httpx.MockTransport(token_endpoint)),
-        token_url="http://idp.test/token",
-        client_id="bot",
-        client_secret="s3cret",
-    )
+    exchanger = _exchanger()
     seen_tools: list[list[str]] = []
     tools = banking_toolset(exchanger, accounts_url=accounts_url, payments_url=payments_url)
     agent = build_agent(_scripted_model(seen_tools), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
@@ -126,3 +146,28 @@ async def test_calls_mcp_with_the_exchanged_token_never_the_incoming_one(
     assert "list_accounts" in seen_tools[1]
     assert "secret_admin_tool" not in seen_tools[1]
     assert "untrusted_data" in result.output
+
+
+async def test_domain_errors_reach_the_model_without_spending_the_retry_budget(
+    fake_servers: tuple[str, str, list[str]],
+) -> None:
+    accounts_url, payments_url, _ = fake_servers
+    steps = [
+        ToolCallPart("load_skill", {"name": "accounts"}),
+        ToolCallPart("get_balance", {"account_id": "acc-x"}),
+        ToolCallPart("get_balance", {"account_id": "acc-y"}),
+    ]
+    failures: list[str] = []
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        failures.extend(str(p.content) for p in messages[-1].parts if isinstance(p, RetryPromptPart | ToolReturnPart))
+        step = len(messages) // 2
+        return ModelResponse(parts=[steps[step] if step < len(steps) else TextPart("No encontré esas cuentas.")])
+
+    tools = banking_toolset(_exchanger(), accounts_url=accounts_url, payments_url=payments_url)
+    agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
+
+    result = await agent.run("¿Saldo de acc-x y acc-y?", deps=BotDeps(user_id="ana", access_token=INCOMING_TOKEN))
+
+    assert result.output == "No encontré esas cuentas."
+    assert sum("account_not_found" in failure for failure in failures) == 2
