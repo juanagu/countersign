@@ -13,6 +13,12 @@ tool may run, and no text may reach the client, before its verdict.
   adapter masks PII in every customer turn before the classifier, the model, logs or traces see it. The
   classifier is a structured-output Pydantic AI agent on `GUARD_MODEL` (categories: ok, prompt_injection,
   jailbreak, other_customer_data, credentials, off_topic). It fails closed: an error or a 15 s timeout blocks.
+  An approval resume (`RunAgentInput.resume` set, no customer prompt after the model's last response) opens the
+  gate without the classifier: the run that raised the interrupt classified that message, and a failure or
+  timeout here would waste the customer's single-use step-up token. A resume that carries a new customer
+  message is classified as usual. A forged history could hide an unclassified older message behind a resume,
+  but the classifier only ever sees the latest message, so a forged history can already do that; the tool
+  policy and the output guard are what stand behind it (see Consequences).
 - **The gate is a `RunGuard` in `BotDeps`**, one per run, holding an `asyncio.Event` for the verdict. It is the
   one object both sides of the run can reach: the tool policy runs inside the agent run and sees only `deps`;
   the output stream runs outside it and is built with the same `deps`. `PolicyToolset` awaits the verdict before
@@ -29,26 +35,42 @@ tool may run, and no text may reach the client, before its verdict.
   3 T3 calls. A write (T2/T3) in a conversation that holds third-party free text (`list_transactions` memos and
   merchants, `search_knowledge` passages), in this run or in the client's history, is re-evaluated by a guard-model
   check: do the customer's last three messages ask for this exact action, recipient and amount? Denied
-  otherwise, and on any error. An approved T3 resume skips it: the customer's approval with step-up is the fresh
-  evaluation.
+  otherwise, and on any error. A T3 call that needs approval skips it, before and after the approval: its only
+  argument is a draft id, which the judge can't match to the customer's words, so it would deny every transfer
+  and the interrupt would never be raised. The customer's approval of the server-rendered card plus step-up is
+  that call's fresh evaluation, and the draft it names came from `prepare_transfer` (T2), which is re-evaluated.
 - **Output:** text deltas are released a sentence at a time (terminal punctuation followed by whitespace, or a
   line break; a dot inside `1.254.300,50` is never followed by whitespace). Each sentence passes a PII-leak check
   (masked in place) and a grounding check: every amount (with a currency or unit, or ≥ 1000, or with decimals),
   percentage, date and account number must appear in this run's domain-tool results, recorded by
-  `PolicyToolset` before the model sees them. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
+  `PolicyToolset` before the model sees them, or in the tool results of earlier turns in the history (not
+  `load_skill` or `render_ui`, which carry no bank data), so a follow-up may restate an earlier figure. That
+  history comes from the client, so a forged tool result could ground a made-up figure, but only in an answer
+  streamed back to the customer who forged it: it moves no money (writes go through the tool policy and the
+  MCP servers, which read the bank's own data) and reaches no one else. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
   `1254300.50`, `****4521` by its last digits, `15 de octubre`, `15/10`, ISO dates). A failing sentence becomes a
   fallback; an `a2ui-surface` with an ungrounded number is dropped for a text fallback (ADR 012's promise).
-  `bank-template` cards pass untouched. Each change is logged with a metric: `guardrail.input.blocked`,
+  `bank-template` cards pass untouched. The raw `render_ui` call (its `TOOL_CALL_*` events and result) and
+  every `REASONING_*` event are withheld: the model's unvalidated tree and its reasoning never leave the bot
+  (rule 5), and the validated `a2ui-surface` is all the client needs. Other tool calls still reach the client:
+  CopilotKit keeps them in the history it sends back, and an approval resume needs the paused
+  `execute_transfer` call there. Each change is logged with a metric: `guardrail.input.blocked`,
   `guardrail.output.ungrounded`, `guardrail.output.pii_redacted`, `guardrail.output.surface_dropped`,
   `guardrail.policy.write_not_requested`.
 - **Logs and traces:** a `logging.Filter` redacts the formatted message, every `extra=` field and exception text.
-  A `RedactingSpanExporter` wraps the OTLP exporter and rebuilds each span with redacted attributes and events,
-  so pydantic-ai instrumentation now runs with `include_content=True`. `setup_telemetry` requires the wrapper.
+  Pydantic AI instrumentation runs with `include_content=False`: agent spans keep their structure (model, tool
+  names, tokens, timings) but no prompts, completions, tool arguments or results. Customer, beneficiary and
+  merchant names and memos are free text: a name pattern misses a lone first name, a memo or a lowercase
+  name, and over-redacts everything else, while rule 7 is not optional and content in traces is only a
+  debugging aid. A `RedactingSpanExporter` still wraps the OTLP exporter and redacts the attributes that
+  remain (URLs, error text), and `setup_telemetry` requires it. `make pii-scan` also looks for the seed's
+  customer and beneficiary names.
 
 ## Consequences
 - Latency: text waits for the classifier (Haiku, usually done before Sonnet's first tokens) and for each
   sentence end. Streaming is per sentence rather than per token.
-- Grounding also accepts figures from the customer's latest message, today's date and its year. Without it, a
+- Grounding also accepts figures from the customer's latest message, today's date and its year. Today is the
+  bank's day (`BankClock`, the one the prompt and the policy use), not the UTC host's. Without it, a
   sentence such as "Preparo una transferencia de $ 50.000" written before the tool call would be replaced. The
   risk is echoing a customer-supplied figure as if it were the bank's; the red-team case with a fake tool result
   covers it with the input classifier and the judge.

@@ -38,6 +38,13 @@ describe('POST /token (token exchange)', () => {
     expect(payload).toMatchObject({ sub: 'ana', scope: 'accounts:read', act: { sub: 'bot' } });
   });
 
+  it('grants mcp-payments the execute scope, which execute_transfer also requires', async () => {
+    const { res } = await exchange({ audience: 'mcp-payments' });
+    expect(((await res.json()) as { scope: string }).scope).toBe(
+      'beneficiaries:read transfers:prepare transfers:execute',
+    );
+  });
+
   it('narrows to a requested subset', async () => {
     const { res } = await exchange({ audience: 'mcp-payments', scope: 'beneficiaries:read' });
     expect(((await res.json()) as { scope: string }).scope).toBe('beneficiaries:read');

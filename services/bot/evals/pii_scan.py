@@ -1,7 +1,8 @@
 """Fails if synthetic PII appears in container logs or Phoenix traces. Run after `make eval` (`make pii-scan`).
 
-Looks for the seed's full account numbers and CBUs, every email address, and the personal data the red-team
-prompts type in (`pii_markers` in redteam.yaml). Masked forms such as `****4521` or `[cuenta]` are fine.
+Looks for the seed's full account numbers and CBUs, its customer and beneficiary names, every email address, and
+the personal data the red-team prompts type in (`pii_markers` in redteam.yaml). Masked forms such as `****4521`
+or `[cuenta]` are fine.
 """
 
 import json
@@ -25,10 +26,25 @@ MAX_PAGES = 500
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b")
 
 
+# Full names: the second value of a `customers` row, the third of a `beneficiaries` row.
+CUSTOMER_ROW = re.compile(r"^\s*\('[\w-]+',\s*'([^']+)'\)", re.MULTILINE)
+BENEFICIARY_ROW = re.compile(r"^\s*\('[\w-]+',\s*'[\w-]+',\s*'([^']+)'", re.MULTILINE)
+
+
+def _insert_block(sql: str, table: str) -> str:
+    match = re.search(rf"INSERT INTO {table} \(.*?;", sql, re.DOTALL)
+    return match.group(0) if match else ""
+
+
+def seed_names(sql: str) -> set[str]:
+    customers = CUSTOMER_ROW.findall(_insert_block(sql, "customers"))
+    return set(customers) | set(BENEFICIARY_ROW.findall(_insert_block(sql, "beneficiaries")))
+
+
 def seed_markers() -> set[str]:
     sql = SEED.read_text(encoding="utf-8")
     numbers = set(re.findall(r"'(\d{4}-\d{4}-\d{4})'", sql)) | set(re.findall(r"'(\d{22})'", sql))
-    return numbers | set(EMAIL.findall(sql))
+    return numbers | set(EMAIL.findall(sql)) | seed_names(sql)
 
 
 def compose_logs() -> str:

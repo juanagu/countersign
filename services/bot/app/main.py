@@ -36,6 +36,7 @@ def _default_agent(
     pool: AsyncConnectionPool,
     embedder: LazyEmbedder,
     skills: SkillRegistry,
+    clock: BankClock,
 ) -> BotAgent:
     exchanger = TokenExchanger(
         http,
@@ -49,7 +50,7 @@ def _default_agent(
         settings.bot_model,
         skills=skills,
         domain_tools=[tools, knowledge],
-        clock=BankClock(ZoneInfo(settings.bank_timezone)),
+        clock=clock,
     )
 
 
@@ -94,8 +95,9 @@ def create_app(
         return {"status": "ok", "service": SERVICE_NAME}
 
     skills = SkillRegistry.from_dir(settings.skills_dir)
-    guardrails = guardrails or Guardrails.on_model(settings.guard_model)
-    run_agent = agent or _default_agent(settings, http, pool, embedder, skills)
+    clock = BankClock(ZoneInfo(settings.bank_timezone))  # One calendar for the prompt, the policy and grounding.
+    guardrails = guardrails or Guardrails.on_model(settings.guard_model, clock=clock)
+    run_agent = agent or _default_agent(settings, http, pool, embedder, skills, clock)
     app.include_router(chat_router(run_agent, skills, guardrails, store))
     app.include_router(conversations_router(store))
     setup_telemetry(app, settings, wrap_exporter=RedactingSpanExporter)

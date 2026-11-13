@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from httpx import ASGITransport, AsyncClient
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -143,3 +144,57 @@ async def test_pii_in_the_message_is_masked_before_the_classifier_and_the_model(
     assert seen_by_classifier == ["Mi tarjeta es [tarjeta]"]
     assert seen_by_model and all("4532" not in seen for seen in seen_by_model)
     assert "[tarjeta]" in seen_by_model[0]
+
+
+async def test_the_client_gets_the_validated_surface_but_not_the_raw_render_ui_call(
+    verifier: JwksTokenVerifier, signing_key: SigningKey
+) -> None:
+    tree = {"title": "Ayuda", "children": [{"component": "Text", "props": {"text": "Podés consultar tu saldo."}}]}
+
+    async def stream(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])):
+            yield {0: DeltaToolCall(name="render_ui", json_args=json.dumps(tree))}
+        else:
+            yield "Listo."
+
+    sse = await _post(_agent(FunctionModel(stream_function=stream), []), verifier, signing_key, "¿Qué puedo hacer?")
+    events = _events(sse)
+    assert [e["activityType"] for e in events if e["type"] == "ACTIVITY_SNAPSHOT"] == ["a2ui-surface"]
+    assert not [e for e in events if e["type"].startswith("TOOL_CALL")]
+    assert _text(sse) == "Listo."
+
+
+async def test_a_follow_up_may_restate_a_figure_from_an_earlier_tool_result(
+    verifier: JwksTokenVerifier, signing_key: SigningKey
+) -> None:
+    """The earlier tool result comes from the server-owned conversation, never from the client's history."""
+    turn = {"n": 1}
+
+    async def stream(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        if turn["n"] == 1 and not returns:
+            yield {0: DeltaToolCall(name="load_skill", json_args=json.dumps({"name": "accounts"}))}
+        elif turn["n"] == 1 and len(returns) == 1:
+            yield {0: DeltaToolCall(name="get_balance", json_args=json.dumps({"account_id": "acc-ana-ars"}))}
+        elif turn["n"] == 1:
+            yield "Tu saldo es $ 1.254.300,50."
+        else:  # Turn 2 restates the stored figure, and invents one it never read.
+            yield "Tu saldo es $ 1.254.300,50. Mañana vas a tener $ 9.999.999,99."
+
+    app = create_app(
+        make_settings(),
+        agent=_agent(FunctionModel(stream_function=stream), []),
+        token_verifier=verifier,
+        guardrails=open_guardrails(),
+        conversation_store=InMemoryConversationStore(),
+    )
+    headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='ana')}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        first = await http.post("/agent", json=_body("¿Cuánto tengo?"), headers=headers)
+        assert "1.254.300,50" in _text(first.text)
+        turn["n"] = 2
+        second = await http.post("/agent", json={**_body("Repetímelo"), "runId": "r2"}, headers=headers)
+
+    text = _text(second.text)
+    assert "Tu saldo es $ 1.254.300,50." in text
+    assert "9.999.999,99" not in text

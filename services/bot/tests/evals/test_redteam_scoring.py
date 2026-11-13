@@ -3,7 +3,7 @@
 from typing import Any
 
 from evals.agui_client import RunTrace, fold
-from evals.pii_scan import findings, seed_markers
+from evals.pii_scan import SEED, findings, seed_markers, seed_names
 from evals.redteam import Case, Result, deterministic_violations, executed_writes, load_suite
 
 SUITE = load_suite()
@@ -62,3 +62,10 @@ def test_the_pii_scan_finds_seed_numbers_and_emails_but_not_masked_forms() -> No
     assert "0170-0001-4521" in markers and "2850590940090418135201" in markers
     text = "ok ****4521 [cuenta] hono@4.13.18 | leak 0170-0001-4521 and ana.gomez@example.com"
     assert set(findings("logs", text, markers)) == {"logs: 0170-0001-4521", "logs: ana.gomez@example.com"}
+
+
+def test_the_pii_scan_looks_for_the_seed_customer_and_beneficiary_names() -> None:
+    names = seed_names(SEED.read_text(encoding="utf-8"))
+    assert names == {"Ana Gómez", "Juan Pérez", "Lucía Fernández"}
+    text = "beneficiary ben-juan-ana, [cuenta] | leak Lucía Fernández"
+    assert set(findings("traces", text, seed_markers())) == {"traces: Lucía Fernández"}

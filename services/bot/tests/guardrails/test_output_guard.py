@@ -5,9 +5,17 @@ from ag_ui.core import (
     ActivitySnapshotEvent,
     BaseEvent,
     EventType,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallResultEvent,
     ToolCallStartEvent,
 )
 
@@ -88,3 +96,36 @@ def test_a_grounded_surface_and_a_bank_template_pass_untouched(evidence: Evidenc
     other = ToolCallStartEvent(type=EventType.TOOL_CALL_START, tool_call_id="t", tool_call_name="x")
     events: list[BaseEvent] = [_surface(1254300.5), card, other]
     assert _run(OutputGuard(evidence), events) == events
+
+
+def _tool_call(call_id: str, name: str) -> list[BaseEvent]:
+    return [
+        ToolCallStartEvent(type=EventType.TOOL_CALL_START, tool_call_id=call_id, tool_call_name=name),
+        ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=call_id, delta='{"children": []}'),
+        ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=call_id),
+        ToolCallResultEvent(
+            type=EventType.TOOL_CALL_RESULT, message_id=f"r-{call_id}", tool_call_id=call_id, content="ok"
+        ),
+    ]
+
+
+def test_the_raw_render_ui_call_never_leaves_but_other_tool_calls_do(evidence: Evidence) -> None:
+    out = _run(OutputGuard(evidence), [*_tool_call("ui", "render_ui"), *_tool_call("tx", "execute_transfer")])
+    assert {getattr(e, "tool_call_id", None) for e in out} == {"tx"}
+    assert [e.type for e in out] == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_RESULT,
+    ]
+
+
+def test_reasoning_never_leaves_the_bot(evidence: Evidence) -> None:
+    reasoning: list[BaseEvent] = [
+        ReasoningStartEvent(type=EventType.REASONING_START, message_id="t"),
+        ReasoningMessageStartEvent(type=EventType.REASONING_MESSAGE_START, message_id="t", role="reasoning"),
+        ReasoningMessageContentEvent(type=EventType.REASONING_MESSAGE_CONTENT, message_id="t", delta="saldo 999.999"),
+        ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id="t"),
+        ReasoningEndEvent(type=EventType.REASONING_END, message_id="t"),
+    ]
+    assert _run(OutputGuard(evidence), reasoning) == []

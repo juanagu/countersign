@@ -14,6 +14,6 @@ Generative UI from the bot: model-built A2UI surfaces and code-built server temp
 ## Data flow
 
 Domain tool → `TemplateToolset` (card from the result) → `PolicyToolset` (wraps the model-facing value as
-untrusted data, keeps the card) → AG-UI stream. `render_ui` → validated → surface event.
+untrusted data, keeps the card) → AG-UI stream. `render_ui` → validated → surface event; the output guard withholds the raw `render_ui` call itself.
 
 The output guard grounds the numbers in each `a2ui-surface` against this run's tool results and drops a surface that fails; `bank-template` cards pass untouched.

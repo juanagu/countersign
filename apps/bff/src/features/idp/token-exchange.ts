@@ -9,7 +9,7 @@ const SUBJECT_TOKEN_TYPES = new Set([ACCESS_TOKEN_TYPE, 'urn:ietf:params:oauth:t
 /** The most each resource server may be granted. A request can narrow it, never widen it. */
 export const AUDIENCE_SCOPES: Readonly<Record<string, readonly string[]>> = {
   'mcp-accounts': ['accounts:read'],
-  'mcp-payments': ['beneficiaries:read', 'transfers:prepare'],
+  'mcp-payments': ['beneficiaries:read', 'transfers:prepare', 'transfers:execute'],
 };
 
 export interface TokenExchangeOptions {

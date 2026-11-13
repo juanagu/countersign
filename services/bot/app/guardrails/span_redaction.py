@@ -7,19 +7,11 @@ from opentelemetry.sdk.trace import Event, ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.util.types import Attributes
 
-from app.guardrails.pii import redact
-
-
-def _redact_attribute(value: Any) -> Any:
-    if isinstance(value, str):
-        return redact(value)
-    if isinstance(value, Sequence) and not isinstance(value, bytes):
-        return tuple(redact(item) if isinstance(item, str) else item for item in value)
-    return value
+from app.guardrails.pii import redact_value
 
 
 def redact_attributes(attributes: Attributes) -> dict[str, Any]:
-    return {key: _redact_attribute(value) for key, value in (attributes or {}).items()}
+    return {key: redact_value(value) for key, value in (attributes or {}).items()}
 
 
 def redact_span(span: ReadableSpan) -> ReadableSpan:

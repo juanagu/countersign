@@ -17,8 +17,11 @@ export interface StepUpGrant {
 
 export type VerifyStepUp = (token: string) => Promise<StepUpGrant | undefined>;
 
+export const STEP_UP_SCOPE = 'transfers:execute';
+
 const claimsSchema = z.object({
   sub: z.string().min(1),
+  scope: z.string().refine((scope) => scope.split(' ').includes(STEP_UP_SCOPE)),
   jti: z.string().min(1),
   token_use: z.literal('step_up'),
   authorization_details: z
@@ -40,7 +43,7 @@ export interface StepUpVerifierOptions {
   keys: JWTVerifyGetKey;
 }
 
-/** Verifies signature, issuer, audience and expiry, then the step-up claims. Undefined for any failure. */
+/** Verifies signature, issuer, audience and expiry, then the step-up claims and scope. Undefined for any failure. */
 export function createStepUpVerifier({ issuer, audience, keys }: StepUpVerifierOptions): VerifyStepUp {
   return async (token) => {
     const verified = await jwtVerify(token, keys, {

@@ -1,5 +1,6 @@
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { describe, expect, it } from 'vitest';
+import { PinAttempts } from '../../../src/features/idp/step-up.js';
 import { buildTestApp, loginCookie, TEST_ISSUER } from '../../support/build-app.js';
 
 const DRAFT = {
@@ -33,6 +34,7 @@ describe('POST /auth/step-up', () => {
     expect(payload).toMatchObject({
       sub: 'juan',
       token_use: 'step_up',
+      scope: 'transfers:execute',
       authorization_details: [{ type: 'transfer', ...DRAFT }],
     });
     expect(payload.jti).toBeTruthy();
@@ -69,5 +71,45 @@ describe('POST /auth/step-up', () => {
       body: JSON.stringify({ ...DRAFT, pin: '123456' }),
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('PinAttempts', () => {
+  const MINUTE = 60_000;
+  const at = (minutes: number, seconds = 0) => minutes * MINUTE + seconds * 1000;
+
+  it('locks for five minutes from the third failure, however long the first one was before it', () => {
+    let clock = 0;
+    const attempts = new PinAttempts(() => clock);
+    for (const t of [at(0), at(4, 58), at(4, 59)]) {
+      clock = t;
+      attempts.fail('juan');
+    }
+    clock = at(5);
+    expect(attempts.locked('juan')).toBe(true);
+    clock = at(9, 58);
+    expect(attempts.locked('juan')).toBe(true);
+    clock = at(9, 59);
+    expect(attempts.locked('juan')).toBe(false);
+  });
+
+  it('starts a fresh count once the lock lifts', () => {
+    let clock = 0;
+    const attempts = new PinAttempts(() => clock);
+    for (let i = 0; i < 3; i++) attempts.fail('juan');
+    clock = at(5);
+    expect(attempts.locked('juan')).toBe(false);
+    attempts.fail('juan');
+    expect(attempts.locked('juan')).toBe(false);
+  });
+
+  it('does not lock before the third failure, and a success clears the count', () => {
+    const attempts = new PinAttempts(() => 0);
+    attempts.fail('juan');
+    attempts.fail('juan');
+    expect(attempts.locked('juan')).toBe(false);
+    attempts.reset('juan');
+    attempts.fail('juan');
+    expect(attempts.locked('juan')).toBe(false);
   });
 });

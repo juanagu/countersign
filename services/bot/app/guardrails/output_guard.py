@@ -1,4 +1,7 @@
-"""Streaming output guard: text is released a sentence at a time, after grounding and PII-leak checks."""
+"""Streaming output guard: text is released a sentence at a time, after grounding and PII-leak checks.
+
+It also withholds what the client must not see: reasoning and the raw render_ui tool call.
+"""
 
 import logging
 import re
@@ -12,6 +15,8 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ToolCallChunkEvent,
+    ToolCallStartEvent,
 )
 
 from app.guardrails.grounding import Evidence, ungrounded, ungrounded_in_surface
@@ -24,6 +29,10 @@ UNGROUNDED_METRIC = "guardrail.output.ungrounded"
 PII_METRIC = "guardrail.output.pii_redacted"
 SURFACE_DROPPED_METRIC = "guardrail.output.surface_dropped"
 A2UI_ACTIVITY = "a2ui-surface"  # Model-built; `bank-template` cards are built from tool results in code.
+# The model's raw render_ui tree is unvalidated (rule 5): the client gets only the validated `a2ui-surface`.
+SERVER_ONLY_TOOLS = frozenset({"render_ui"})
+# The model's reasoning is not an answer: it skips the output checks, so it never leaves the bot.
+REASONING_EVENTS = frozenset(kind for kind in EventType if kind.name.startswith("REASONING_"))
 
 UNGROUNDED_FALLBACK = "(No puedo confirmar ese dato en este momento, así que no lo muestro.)"
 SURFACE_FALLBACK = "No pude mostrar ese detalle porque no pude verificar sus cifras."
@@ -67,8 +76,11 @@ class OutputGuard:
         self._evidence = evidence
         self._checks = checks
         self._buffers: dict[str, str] = {}
+        self._withheld_calls: set[str] = set()
 
     def process(self, event: BaseEvent) -> Iterator[BaseEvent]:
+        if self._withheld(event):
+            return
         if isinstance(event, TextMessageStartEvent):
             self._buffers[event.message_id] = ""
             yield event
@@ -81,6 +93,14 @@ class OutputGuard:
             yield from self._surface(event)
         else:
             yield event
+
+    def _withheld(self, event: BaseEvent) -> bool:
+        """Reasoning, and every event of a server-only tool call (start, args, end, result)."""
+        if event.type in REASONING_EVENTS:
+            return True
+        if isinstance(event, ToolCallStartEvent | ToolCallChunkEvent) and event.tool_call_name in SERVER_ONLY_TOOLS:
+            self._withheld_calls.add(str(event.tool_call_id))
+        return getattr(event, "tool_call_id", None) in self._withheld_calls
 
     def check_sentence(self, sentence: str) -> str:
         for check in self._checks:
