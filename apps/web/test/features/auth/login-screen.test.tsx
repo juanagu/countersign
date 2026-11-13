@@ -16,4 +16,11 @@ describe('LoginScreen', () => {
     expect(html).toContain('Ana Gómez');
     expect(html).toContain('Juan Pérez');
   });
+
+  it('offers a retry when the demo users could not be loaded', () => {
+    const html = renderToString(<LoginScreen onSignedIn={() => undefined} initialLoadFailed />);
+    expect(html).toContain('No pudimos cargar los usuarios de prueba.');
+    expect(html).toContain('Reintentar');
+    expect(html).not.toContain('No pudimos iniciar sesión');
+  });
 });

@@ -7,19 +7,27 @@ export interface LoginScreenProps {
   onSignedIn: (user: SessionUser) => void;
   /** Injected in tests; fetched from the BFF otherwise. */
   initialUsers?: SessionUser[];
+  /** Injected in tests to render the state after the demo-user fetch failed. */
+  initialLoadFailed?: boolean;
 }
 
-export function LoginScreen({ onSignedIn, initialUsers }: LoginScreenProps) {
+export function LoginScreen({ onSignedIn, initialUsers, initialLoadFailed = false }: LoginScreenProps) {
   const [users, setUsers] = useState<SessionUser[] | undefined>(initialUsers);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(initialLoadFailed);
 
-  useEffect(() => {
-    if (initialUsers) return;
+  function loadUsers() {
+    setLoadFailed(false);
     fetchDemoUsers()
       .then(setUsers)
-      .catch(() => setError(true));
-  }, [initialUsers]);
+      .catch(() => setLoadFailed(true));
+  }
+
+  useEffect(() => {
+    if (initialUsers || initialLoadFailed) return;
+    loadUsers();
+  }, [initialUsers, initialLoadFailed]);
 
   async function signIn(username: string) {
     setPending(username);
@@ -52,6 +60,14 @@ export function LoginScreen({ onSignedIn, initialUsers }: LoginScreenProps) {
             </Button>
           ))}
         </div>
+        {loadFailed && (
+          <div role="alert" className="login-card__error">
+            <p>No pudimos cargar los usuarios de prueba.</p>
+            <Button variant="secondary" onClick={loadUsers}>
+              Reintentar
+            </Button>
+          </div>
+        )}
         {error && (
           <p role="alert" className="login-card__error">
             No pudimos iniciar sesión. Probá de nuevo.
