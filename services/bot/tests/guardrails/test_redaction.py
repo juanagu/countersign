@@ -5,6 +5,7 @@ import sys
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from uvicorn.logging import AccessFormatter
 
 from app.core.logging import JsonFormatter
 from app.guardrails.log_redaction import RedactingFilter
@@ -31,6 +32,20 @@ def test_log_messages_args_and_extra_fields_are_redacted() -> None:
     assert entry["msg"] == "transfer to [cbu] by [email]"
     assert entry["token"] == "[token]"
     assert entry["detail"] == {"account": "[cuenta]", "amount": "1254300.50"}
+
+
+def test_an_access_log_record_keeps_its_args_for_uvicorn_and_has_its_path_masked() -> None:
+    args = ("127.0.0.1:52100", "GET", "/agent?email=ana@example.com", "1.1", 200)
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', args, None)
+    RedactingFilter().filter(record)
+    # Raises on a record whose args were collapsed; logging would print "--- Logging error ---" instead.
+    line = AccessFormatter(fmt="%(client_addr)s - %(request_line)s %(status_code)s", use_colors=False).format(record)
+    assert line == "127.0.0.1:52100 - GET /agent?email=[email] HTTP/1.1 200 OK"
+
+
+def test_pii_in_a_non_string_arg_is_still_redacted() -> None:
+    record = logging.makeLogRecord({"msg": "dni %d", "args": (30123456,)})
+    assert _format(record)["msg"] == "dni [dni]"
 
 
 def test_exception_text_is_redacted() -> None:
