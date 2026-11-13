@@ -2,7 +2,7 @@ import { createLocalJWKSet, jwtVerify } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { TokenIssuer } from '../../../src/features/idp/token-issuer.js';
-import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER } from '../../support/build-app.js';
+import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER, testDeps } from '../../support/build-app.js';
 
 const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS = 'urn:ietf:params:oauth:token-type:access_token';
@@ -124,13 +124,7 @@ describe('POST /token (token exchange)', () => {
 
     async function exchangeAs(authorization: string) {
       const issuer = await TokenIssuer.create(TEST_ISSUER);
-      const app = createApp({
-        issuer,
-        botAgentUrl: 'http://bot.invalid/agent',
-        cookieSecure: false,
-        clients: { bot: SECRET },
-        stepUpPin: '123456',
-      });
+      const app = createApp(testDeps(issuer, { clients: { bot: SECRET } }));
       const res = await app.request('/token', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', authorization },

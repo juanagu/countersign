@@ -107,6 +107,7 @@ services:
     environment:
       IDP_ISSUER: http://bff:3000
       BOT_AGENT_URL: http://bot:8000/agent
+      REDIS_URL: redis://redis:6379
       OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
       OTEL_SERVICE_NAME: bff
       # Keep CopilotKit's runtime telemetry off even without a .env (it is optional above).
@@ -114,6 +115,7 @@ services:
       DO_NOT_TRACK: '1'
     ports: ['127.0.0.1:${BFF_HOST_PORT:-3000}:3000']
     depends_on:
+      redis: { condition: service_healthy }
       bot: { condition: service_healthy }
       phoenix: { condition: service_healthy }
 

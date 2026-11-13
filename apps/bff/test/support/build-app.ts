@@ -1,19 +1,31 @@
-import { createApp } from '../../src/app.js';
+import { pino } from 'pino';
+import { createApp, type AppDeps } from '../../src/app.js';
 import { TokenIssuer } from '../../src/features/idp/token-issuer.js';
+import { MemoryThreadLog } from './memory-thread-log.js';
 
 export const TEST_ISSUER = 'http://idp.test';
 export const TEST_BOT_SECRET = 'test-bot-secret-0123456789';
 
-export async function buildTestApp(botAgentUrl = 'http://bot.invalid/agent') {
-  const issuer = await TokenIssuer.create(TEST_ISSUER);
-  const app = createApp({
+export const silentLogger = pino({ level: 'silent' });
+
+/** App dependencies for tests: an in-memory thread log and a silent logger unless overridden. */
+export function testDeps(issuer: TokenIssuer, overrides: Partial<AppDeps> = {}): AppDeps {
+  return {
     issuer,
-    botAgentUrl,
+    botAgentUrl: 'http://bot.invalid/agent',
     cookieSecure: false,
     clients: { bot: TEST_BOT_SECRET },
     stepUpPin: '123456',
-  });
-  return { app, issuer };
+    threadLog: new MemoryThreadLog(),
+    logger: silentLogger,
+    ...overrides,
+  };
+}
+
+export async function buildTestApp(botAgentUrl = 'http://bot.invalid/agent', overrides: Partial<AppDeps> = {}) {
+  const issuer = await TokenIssuer.create(TEST_ISSUER);
+  const deps = testDeps(issuer, { botAgentUrl, ...overrides });
+  return { app: createApp(deps), issuer, deps };
 }
 
 /** Logs in through the real route and returns the Cookie header value. */

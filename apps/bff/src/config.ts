@@ -6,6 +6,8 @@ const configSchema = z.object({
   /** `iss` of every token the mock IdP signs; the bot and MCP servers check it. */
   idpIssuer: z.url().default('http://localhost:3000'),
   botAgentUrl: z.url().default('http://localhost:8000/agent'),
+  /** The thread log: run events, owners and run leases (docs/decisions/015-resumable-streams.md). */
+  redisUrl: z.url().default('redis://localhost:6379'),
   /** Set to true behind HTTPS; local dev runs on plain HTTP. */
   cookieSecure: z.stringbool().default(false),
   /** Secret the bot authenticates with at the token endpoint. */
@@ -25,6 +27,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: env.LOG_LEVEL,
     idpIssuer: env.IDP_ISSUER,
     botAgentUrl: env.BOT_AGENT_URL,
+    redisUrl: env.REDIS_URL,
     cookieSecure: env.COOKIE_SECURE,
     botClientSecret: env.BOT_CLIENT_SECRET,
     stepUpPin: env.STEP_UP_PIN,
