@@ -17,6 +17,9 @@ const verify = createJwtVerifier({
 });
 
 serve(
-  { fetch: createApp({ verify, accounts: new PgAccountsRepository(pool), logger }).fetch, port: config.port },
+  {
+    fetch: createApp({ verify, accounts: new PgAccountsRepository(pool, config.bankTimeZone), logger }).fetch,
+    port: config.port,
+  },
   (info) => logger.info({ port: info.port }, 'listening'),
 );

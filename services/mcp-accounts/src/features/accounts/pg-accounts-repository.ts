@@ -7,11 +7,19 @@ import type {
   Transaction,
   TransactionQuery,
 } from './accounts-repository.js';
+import { toBankIso } from './bank-time.js';
 
 const ACCOUNT_COLUMNS = `id, customer_id AS "customerId", kind, currency, alias, number, balance::text AS balance`;
 
+/**
+ * `from` and `to` are whole bank-local days, both inclusive. The zone is a query parameter rather than the
+ * pool's session `TimeZone` so the bounds stay right on any pool handed in, including a test's.
+ */
 export class PgAccountsRepository implements AccountsRepository {
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly timeZone: string,
+  ) {}
 
   async listAccounts(customerId: string): Promise<Account[]> {
     const { rows } = await this.pool.query<Account>(
@@ -35,14 +43,14 @@ export class PgAccountsRepository implements AccountsRepository {
          FROM bank.transactions t JOIN bank.accounts a ON a.id = t.account_id
         WHERE a.customer_id = $1
           AND ($2::text IS NULL OR t.account_id = $2)
-          AND ($3::date IS NULL OR t.booked_at >= $3::date)
-          AND ($4::date IS NULL OR t.booked_at < $4::date + 1)
+          AND ($3::date IS NULL OR t.booked_at >= ($3::date::timestamp AT TIME ZONE $7::text))
+          AND ($4::date IS NULL OR t.booked_at < (($4::date + 1)::timestamp AT TIME ZONE $7::text))
           AND ($5::text IS NULL OR t.category = $5)
         ORDER BY t.booked_at DESC
         LIMIT $6`,
-      [q.customerId, q.accountId ?? null, q.from ?? null, q.to ?? null, q.category ?? null, q.limit],
+      [q.customerId, q.accountId ?? null, q.from ?? null, q.to ?? null, q.category ?? null, q.limit, this.timeZone],
     );
-    return rows.map((row) => ({ ...row, bookedAt: new Date(row.bookedAt).toISOString() }));
+    return rows.map((row) => ({ ...row, bookedAt: toBankIso(new Date(row.bookedAt), this.timeZone) }));
   }
 
   async spendingByCategory(q: SpendingQuery): Promise<CategorySpend[]> {
@@ -51,11 +59,12 @@ export class PgAccountsRepository implements AccountsRepository {
          FROM bank.transactions t JOIN bank.accounts a ON a.id = t.account_id
         WHERE a.customer_id = $1
           AND ($2::text IS NULL OR t.account_id = $2)
-          AND t.booked_at >= $3::date AND t.booked_at < $4::date + 1
+          AND t.booked_at >= ($3::date::timestamp AT TIME ZONE $5::text)
+          AND t.booked_at < (($4::date + 1)::timestamp AT TIME ZONE $5::text)
           AND t.amount < 0
         GROUP BY t.category, a.currency
         ORDER BY a.currency, sum(t.amount)`,
-      [q.customerId, q.accountId ?? null, q.from, q.to],
+      [q.customerId, q.accountId ?? null, q.from, q.to, this.timeZone],
     );
     return rows;
   }
