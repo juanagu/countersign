@@ -1,0 +1,61 @@
+.approval {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 28rem;
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.approval__question {
+  margin: 0;
+}
+
+.approval__actions,
+.pin-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.pin-dialog {
+  width: min(22rem, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-6);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.pin-dialog::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.pin-dialog__form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.pin-dialog__title {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.pin-dialog__input {
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-xl);
+  letter-spacing: 0.5em;
+  text-align: center;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.pin-dialog__error {
+  margin: 0;
+  font-size: var(--text-sm);
+}

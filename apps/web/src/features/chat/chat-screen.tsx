@@ -1,4 +1,5 @@
 import { CopilotChat, CopilotKitProvider } from '@copilotkit/react-core/v2';
+import { TransferApproval } from '../approval/transfer-approval';
 import { bankTemplateRenderer } from '../genui/bank-templates';
 import { bankCatalog } from '../genui/catalog';
 import { ChatActionsProvider } from '../genui/chat-actions';
@@ -56,6 +57,7 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
             if (shouldRecheckSession(code)) onRuntimeRequestFailed();
           }}
         >
+          <TransferApproval />
           <ChatActionsProvider>
             <CopilotChat labels={CHAT_LABELS} />
           </ChatActionsProvider>
