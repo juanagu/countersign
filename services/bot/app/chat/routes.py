@@ -3,7 +3,7 @@ from http import HTTPStatus
 
 from fastapi import APIRouter, Request, Response
 from pydantic import ValidationError
-from pydantic_ai import CancellationToken, DeferredToolRequests
+from pydantic_ai import CancellationToken, DeferredToolRequests, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.ag_ui import AGUIAdapter
@@ -11,6 +11,7 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
+from app.chat.interrupt_answers import without_interrupt_answers
 from app.genui.render_ui import RENDER_UI_TOOL
 from app.guardrails.messages import (
     customer_spoke_since_last_response,
@@ -30,15 +31,25 @@ NON_EVIDENCE_TOOLS = frozenset({LOAD_SKILL, RENDER_UI_TOOL})
 
 
 class BankAGUIAdapter(AGUIAdapter[BotDeps, str | DeferredToolRequests]):
-    """Ignores tools declared by the client, and masks PII in the customer's turns before the model sees them."""
+    """Ignores tools declared by the client, drops its interrupt answers, and masks PII in the customer's turns."""
 
     @property
     def toolset(self) -> AbstractToolset[BotDeps] | None:
         return None  # The browser is untrusted and must not add callable tools.
 
     @cached_property
+    def resumed_calls(self) -> frozenset[str]:
+        """The tool call ids this run's `resume` entries answer."""
+        try:
+            results = self.deferred_tool_results
+        except UserError:
+            return frozenset()  # Malformed: the run stream reports it to the client as a RUN_ERROR.
+        return frozenset(results.approvals) if results else frozenset()
+
+    @cached_property
     def messages(self) -> list[ModelMessage]:
-        return redact_customer_turns(super().messages)
+        client = without_interrupt_answers(self.run_input.messages, self.resumed_calls)
+        return redact_customer_turns(self.load_messages(client, preserve_file_data=self.preserve_file_data))
 
 
 def _invalid_body(error: ValidationError) -> Response:

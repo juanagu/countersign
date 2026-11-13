@@ -10,6 +10,8 @@ Human approval plus step-up for money movement (security rule 3).
 - `lib/step-up-api.ts`: `requestStepUp(draft, pin)` → step-up token (`POST /api/auth/step-up`).
 - `lib/find-confirm-card.ts`: `findConfirmCard(messages, draftId)`.
 - `lib/approval-decision.ts`: `confirmTransfer(guard, draft, pin, deps)`, `cancelTransfer(guard, onDecide)`.
+- `lib/interrupt-answer.ts`: `withoutStepUpAnswers(messages)`, run once `resolve` settles: CopilotKit's answer
+  message carries the step-up token and would otherwise ride along with every later request.
 
 ## Data flow
 
