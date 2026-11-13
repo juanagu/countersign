@@ -67,3 +67,9 @@ def test_input_check_allows_clean_text() -> None:
 def test_redacts_nested_values() -> None:
     value = {"a": ["CBU 2850590940090418135201", 3], "b": ("ana@example.com",), "c": None}
     assert redact_value(value) == {"a": ["CBU [cbu]", 3], "b": ("[email]",), "c": None}
+
+
+def test_package_versions_in_logs_are_not_emails() -> None:
+    assert (
+        redact("hono@4.13.18 and copilotkit+runtime@1.87.0_f8bf") == "hono@4.13.18 and copilotkit+runtime@1.87.0_f8bf"
+    )

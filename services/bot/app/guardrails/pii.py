@@ -48,7 +48,7 @@ class Detector:
 # Order matters: longer and checksum-backed formats go first, so a card number is never half-read as an account.
 DETECTORS: tuple[Detector, ...] = (
     Detector("token", re.compile(r"\beyJ[\w-]{5,}\.[\w-]{5,}\.[\w-]*|\bBearer\s+[\w.~+/-]+=*")),
-    Detector("email", re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")),
+    Detector("email", re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b")),
     Detector("cbu", re.compile(r"(?<!\d)\d{22}(?!\d)")),
     Detector(
         "tarjeta",
