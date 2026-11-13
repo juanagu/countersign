@@ -18,7 +18,7 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | 5 — Approval and step-up | in progress | `feat/p5-approval` | Scenario 3 verified live; not reviewed yet. |
 | 6 — Guardrails | in progress | `feat/p6-guardrails` | Being built. |
 | 7 — Resumable streams | in progress | `feat/p7-resumable-streams` | Redis-backed runner + Postgres history (ADR 015); Scenario 5 verified live and in tests; not reviewed yet. |
-| 8 — Evals and demo polish | todo | — | `make eval` already runs the KB cases; red-team set lands in Phase 6. |
+| 8 — Evals and demo polish | in review | `feat/p8-evals-demo` | Live `make eval` (golden scenarios, KB grounding, tool selection, LLM judge, red team) gated by `thresholds.yaml`; `make metrics`; `docs/DEMO.md` (ADR 016). Passed from a clean clone; not reviewed yet. |
 
 ## Follow-ups
 
@@ -46,3 +46,7 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F20 | BFF runner: make `stop` reach a run on another BFF replica (Redis pub/sub), and let a run outlive its BFF process (the bot writing the log, as the plan first proposed). | todo | Phase 7 |
 | F21 | Restore past the replay window: keep the cards (template/A2UI activity) and a pending approval, e.g. by persisting the display transcript with the conversation. | todo | Phase 7 |
 | F22 | Thread log size: `RUN_STARTED` carries the client's whole message list on every run; store only the new turn and rebuild earlier turns from the previous runs. | todo | Phase 7 |
+| F23 | Demo in a real browser: walk `docs/DEMO.md` at 5173, including the DevTools Offline toggle and reload (Scenario 5) and the PIN dialog; only its HTTP equivalent was run. | todo | Phase 8 |
+| F24 | Knowledge skill: the model often puts the KB answer on a card and writes only "te dejé el detalle en la tarjeta". Decide whether the answer belongs in the text (skill wording) and add an eval check for it. | todo | Phase 8 |
+| F25 | Evals: a `make eval` run costs real tokens and resets the shared bank data (`make seed`). Give it its own database or schema so it can run while a demo is open. | todo | Phase 8 |
+| F26 | Metrics: tokens per run counts only pydantic-ai `chat` spans in the bot; the red-team judge and the eval judge run outside the stack and are not counted. Add cost per run (`operation.cost`) to `make metrics`. | todo | Phase 8 |

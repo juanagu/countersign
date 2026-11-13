@@ -189,3 +189,66 @@ client. Follow-ups may restate figures from earlier tool results in the history.
 `BankClock`. An approval resume with no new customer message isn't re-classified. ADR 014 has each.
 **Open (review fixes):** the live re-run (Scenario 3 after a KB question, `make redteam`, `make pii-scan` after
 live traffic) hasn't been done on these fixes yet; it is planned on the integrated stack with Phase 7.
+
+## Phase 8 — Evals and demo polish
+
+**Built:**
+- A live `pydantic-evals` suite (`evals/run.py`, ADR 016) that drives the stack through the BFF like a browser,
+  on the red team's `agui_client.py`. Golden cases:
+  - Scenario 1: fee answer, a Citation on an `a2ui-surface`, and no `render_ui` call reaching the client;
+  - Scenario 2: BarChart and List equal to `spending_summary`'s totals;
+  - Scenario 3: confirm card → interrupt → step-up → resume → receipt. The resume sends CopilotKit's `role: "tool"`
+    message plus `resume`, and the Postgres ledger shows one debit of amount + fee, one transfer and one movement;
+  - Scenario 5: the socket drops at the first delta, then two `connect`s;
+  - Scenario 4 is the red-team set.
+- Also 5 KB grounding cases (2 unanswerable) and 6 tool-selection cases (skill, tool and arguments from the
+  `TOOL_CALL_*` events). The direct-agent `kb_cases.py` folded into it.
+- An LLM judge on `GUARD_MODEL` (`judge_input_output`) scores `judge_quality` and `judge_citation` on the KB cases.
+- `make eval` re-seeds, prints the pydantic-evals report, the red team and a gate table, and fails under
+  `evals/thresholds.yaml`, which `make redteam` now reads too.
+- A `bot.stream` span (and a `bot.stream.timing` log line) per run with time to first token and first surface,
+  from `guarded_stream`.
+- `make metrics` (`evals/metrics.py`): p50/p95 latency, tokens per run, and guardrail events by kind, from
+  Phoenix and the bot's logs. Saved Phoenix filters are in `docs/DEMO.md`.
+- `docs/DEMO.md`: setup, a click-by-click script for the five scenarios, Phoenix, architecture, limitations and
+  next steps. It is linked from the README.
+
+**Verified:**
+- **Clean clone** of `feat/p8-evals-demo` at `9ab73a8`, with the `.env` copied: `make install` 4 s,
+  `make up` 132 s, `make seed` 0 s, `make ingest` 16 s (86 chunks), `make eval` 107 s, every step exit 0. The
+  `column "embedding" does not exist` error did not appear.
+- **Gates** (clean clone): scenario 4/4, kb_grounding 5/5, tool_selection 6/6, red team 27/27 (100 %), controls
+  3/3. Judge means: `judge_quality` 0.94 and `judge_citation` 0.93 (lowest 0.6: in Scenario 1 one sentence came
+  from a retrieved passage the Citation did not list). An earlier run in the worktree also passed every gate: 0.96 / 0.95, red team
+  27/27.
+- **`make metrics`** over those runs (105 runs, last 30 min): time to first token p50 2,511 ms and p95 8,806 ms
+  (n=97); time to first surface p50 5,127 ms and p95 7,374 ms (n=41); tokens per run p50 6,193 and p95 28,988.
+  Guardrail events: 9 prompt_injection, 6 other_customer_data, 6 credentials, 3 jailbreak, 1 off_topic, 3
+  output.ungrounded. The five filters were checked against Phoenix's GraphQL `filterCondition`.
+- **`docs/DEMO.md`, through the same HTTP calls as the browser:**
+  - Scenario 1 fee answer, and "No tengo esa información" for the loan rate in the same thread;
+  - the four Scenario 4 prompts got their safe replies with no tool call, and the memo was reported and ignored;
+  - Scenario 3 confirm card ($ 50.000,00, fee $ 0,00, from ****7810);
+  - a wrong PIN got 401 `invalid_pin`;
+  - Cancelar got "La transferencia no se envió, porque la cancelaste.";
+  - the balance after the eval's transfer was $ 436.750,25.
+- **Checks.** `make pii-scan` was clean after this traffic (12,361 log lines). No step-up token was found in
+  `chat.conversation_entries` (read-only query). `make test`: BFF 80, web 40, mcp-accounts 42, mcp-payments
+  58, bot 263 pytest (13 new in this phase). `make lint` is clean.
+
+**Deviated:**
+- The judge is pydantic-evals' `judge_input_output` in a small `Judge` evaluator, not `LLMJudge`, so it sees
+  only the question, answer, cards, citations and passages (ADR 016).
+- Text checks read the text plus the surface values, because the model often puts the KB answer on the card
+  (F24).
+- Phoenix has no dashboard API, so the "dashboard" is `make metrics` plus saved filters.
+- `make eval` depends on `make seed`.
+
+**Open:**
+- None of the demo was seen in a browser: the cards, the PIN dialog, the DevTools Offline toggle and the
+  reload (F23, with F7 and F19).
+- The orchestrator reported that CopilotKit 1.87's `resolve` adds a tool message, which the bot rejected on
+  `feat/p6-guardrails`. The eval now sends that message. On this branch the resume succeeds, the receipt is
+  shown and money moves once, so the case passes here; the reported rejection did not reproduce.
+- One judge citation score was 0.6 on a passing case: the deterministic check accepts any one correct doc id,
+  while the judge also wants every sentence's passage cited.

@@ -15,6 +15,8 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 - `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`.
 - `RedactingFilter` (logging) and `RedactingSpanExporter` (OpenTelemetry), wired in `app/main.py`.
 - `SAFE_REPLIES` (Spanish replies per blocked category), metric names `guardrail.*`.
+- `StreamTimer` (`stream_timing.py`): `guarded_stream` records a `bot.stream` span per run with the time to the
+  first text delta and the first UI surface the client receives (timings only), read by `make metrics`.
 
 ## Data flow
 
@@ -27,5 +29,7 @@ span passes `RedactingSpanExporter` before Phoenix.
 
 ## Evals
 
-`evals/redteam.yaml` + `evals/redteam.py` (`make redteam`) drive the live stack through the BFF;
-`evals/pii_scan.py` (`make pii-scan`) greps container logs and Phoenix spans for the seed's PII, names included.
+`evals/redteam.yaml` + `evals/redteam.py` (`make redteam`) drive the live stack through the BFF and are part of
+`make eval` (Scenario 4, ADR 016); `evals/pii_scan.py` (`make pii-scan`) greps container logs and Phoenix spans for
+the seed's PII, names included; `evals/metrics.py` (`make metrics`) reads the `bot.stream` spans and the
+`guardrail.*` log lines.

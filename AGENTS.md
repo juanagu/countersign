@@ -135,8 +135,10 @@ make contracts-check  # fail if generated contracts are stale (pre-push)
 make seed        # load mock bank data
 make ingest      # chunk + embed data/kb into pgvector
 make test        # all unit/integration tests
-make eval        # KB evals + red-team set (needs ANTHROPIC_API_KEY and the live stack)
-make redteam     # red-team prompts through the live BFF; fails under 95% blocked or safely handled
+make eval        # re-seeds, then live golden scenarios, KB grounding, tool selection, LLM judge and red team;
+                 # fails under services/bot/evals/thresholds.yaml (needs ANTHROPIC_API_KEY, make up, make ingest)
+make redteam     # red-team prompts through the live BFF; fails under the redteam/controls thresholds
+make metrics     # p50/p95 time to first token / first surface, tokens per run, guardrail blocks (Phoenix + logs)
 make pii-scan    # fail if synthetic PII appears in container logs or Phoenix traces
 make lint        # eslint, prettier, tsc, ruff, mypy
 ```

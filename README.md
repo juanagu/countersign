@@ -3,7 +3,8 @@
 A proof of concept for a banking-grade chatbot: streamed answers over SSE, generative UI,
 RAG with citations, an agent calling domain tools over MCP, guardrails and a human-approved
 money-movement flow. All data is synthetic. The brief is [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` imports it); the build
-plan is [`docs/PLAN.md`](docs/PLAN.md); decisions are in [`docs/decisions/`](docs/decisions/).
+plan is [`docs/PLAN.md`](docs/PLAN.md); decisions are in [`docs/decisions/`](docs/decisions/). To run the
+five demo scenarios in the browser, follow [`docs/DEMO.md`](docs/DEMO.md).
 
 ## Prerequisites
 
@@ -44,7 +45,8 @@ make contracts        # regenerate TS + Python types from packages/contracts/sch
 make lint             # eslint, prettier, tsc, ruff, mypy
 make test             # vitest + pytest
 make seed / ingest    # load mock bank data / embed the knowledge base
-make eval             # KB evals + red-team set against the live stack
+make eval             # live evals: golden scenarios, KB grounding, tool selection, LLM judge, red team; gated by thresholds
+make metrics          # p50/p95 time to first token and first UI surface, tokens per run, guardrail blocks
 make pii-scan         # check logs and traces for unredacted synthetic PII
 ```
 
