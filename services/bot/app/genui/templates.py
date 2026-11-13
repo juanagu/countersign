@@ -28,6 +28,7 @@ def transfer_confirm(draft: Mapping[str, Any]) -> TransferConfirmTemplate:
         total=draft["total"],
         currency=draft["currency"],
         sourceAccount={"alias": source["alias"], "number": source["number"]},
+        beneficiaryId=beneficiary["id"],
         beneficiary={"name": beneficiary["name"], "bank": beneficiary.get("bank"), "account": beneficiary["account"]},
         expiresAt=draft["expires_at"],
     )

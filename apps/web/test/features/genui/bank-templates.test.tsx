@@ -17,6 +17,7 @@ const confirm: BankTemplate = {
     total: '50000.00',
     currency: 'ARS',
     sourceAccount: { alias: 'Cuenta corriente en pesos', number: '****7810' },
+    beneficiaryId: 'ben-juan-ana',
     beneficiary: { name: 'Ana Gómez', bank: 'Banco Demo', account: '****5211' },
     expiresAt: '2026-11-13T12:05:00.000Z',
   },

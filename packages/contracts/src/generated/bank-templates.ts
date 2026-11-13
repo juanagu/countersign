@@ -28,6 +28,10 @@ export interface TransferConfirmData {
     account: string;
   };
   expiresAt: string;
+  /**
+   * Bound into the step-up token's authorization_details.
+   */
+  beneficiaryId: string;
 }
 export interface TransferReceiptTemplate {
   template: "transfer-receipt";

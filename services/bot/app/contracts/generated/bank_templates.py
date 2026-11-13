@@ -41,6 +41,9 @@ class TransferConfirmData(BaseModel):
     sourceAccount: SourceAccount
     beneficiary: Beneficiary
     expiresAt: AwareDatetime
+    beneficiaryId: Annotated[
+        str, Field(description="Bound into the step-up token's authorization_details.", max_length=64)
+    ]
 
 
 class TransferReceiptData(BaseModel):
