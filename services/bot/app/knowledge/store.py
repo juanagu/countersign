@@ -1,10 +1,15 @@
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
+from psycopg import AsyncConnection
+from psycopg.errors import UndefinedTable
 from psycopg_pool import AsyncConnectionPool
 
 from app.knowledge.chunker import Audience, Chunk
+
+logger = logging.getLogger(__name__)
 
 # Reciprocal rank fusion constant (Cormack et al.); 60 is the usual default.
 RRF_K = 60
@@ -81,35 +86,45 @@ class PgKnowledgeStore:
     async def hybrid_search(
         self, query: str, query_embedding: list[float], audiences: Sequence[Audience], k: int
     ) -> list[SearchHit]:
-        allowed = list(audiences)
-        async with self._pool.connection() as conn:
-            vector_rows = await (
-                await conn.execute(
-                    """SELECT id FROM kb.chunks WHERE audience = ANY(%s)
-                       ORDER BY embedding <=> %s::vector LIMIT %s""",
-                    (allowed, _vector_literal(query_embedding), CANDIDATES_PER_RETRIEVER),
-                )
-            ).fetchall()
-            text_rows = await (
-                await conn.execute(
-                    # Any query term may match (OR): questions are full sentences, and requiring every
-                    # lexeme (websearch/plainto semantics) leaves the keyword retriever almost always empty.
-                    """SELECT id FROM kb.chunks,
-                              (SELECT replace(plainto_tsquery('spanish', %s)::text, '&', '|')::tsquery AS q) query
-                       WHERE audience = ANY(%s) AND tsv @@ query.q
-                       ORDER BY ts_rank_cd(tsv, query.q) DESC LIMIT %s""",
-                    (query, allowed, CANDIDATES_PER_RETRIEVER),
-                )
-            ).fetchall()
-            fused = rrf_merge([[r[0] for r in vector_rows], [r[0] for r in text_rows]], k)
-            if not fused:
-                return []
-            rows = await (
-                await conn.execute(
-                    "SELECT id, doc_id, title, heading, anchor, content FROM kb.chunks WHERE id = ANY(%s)",
-                    ([chunk_id for chunk_id, _ in fused],),
-                )
-            ).fetchall()
+        try:
+            async with self._pool.connection() as conn:
+                return await self._search(conn, query, query_embedding, list(audiences), k)
+        except UndefinedTable:
+            # Before `make ingest` there is no kb.chunks: no hits lets the skill say "No tengo esa información"
+            # instead of failing the whole chat run.
+            logger.warning("knowledge base not ingested; search returns no hits")
+            return []
+
+    async def _search(
+        self, conn: AsyncConnection[Any], query: str, query_embedding: list[float], allowed: list[str], k: int
+    ) -> list[SearchHit]:
+        vector_rows = await (
+            await conn.execute(
+                """SELECT id FROM kb.chunks WHERE audience = ANY(%s)
+                   ORDER BY embedding <=> %s::vector LIMIT %s""",
+                (allowed, _vector_literal(query_embedding), CANDIDATES_PER_RETRIEVER),
+            )
+        ).fetchall()
+        text_rows = await (
+            await conn.execute(
+                # Any query term may match (OR): questions are full sentences, and requiring every
+                # lexeme (websearch/plainto semantics) leaves the keyword retriever almost always empty.
+                """SELECT id FROM kb.chunks,
+                          (SELECT replace(plainto_tsquery('spanish', %s)::text, '&', '|')::tsquery AS q) query
+                   WHERE audience = ANY(%s) AND tsv @@ query.q
+                   ORDER BY ts_rank_cd(tsv, query.q) DESC LIMIT %s""",
+                (query, allowed, CANDIDATES_PER_RETRIEVER),
+            )
+        ).fetchall()
+        fused = rrf_merge([[r[0] for r in vector_rows], [r[0] for r in text_rows]], k)
+        if not fused:
+            return []
+        rows = await (
+            await conn.execute(
+                "SELECT id, doc_id, title, heading, anchor, content FROM kb.chunks WHERE id = ANY(%s)",
+                ([chunk_id for chunk_id, _ in fused],),
+            )
+        ).fetchall()
         by_id = {row[0]: row for row in rows}
         return [
             SearchHit(doc_id=r[1], title=r[2], heading=r[3], anchor=r[4], content=r[5], score=score)

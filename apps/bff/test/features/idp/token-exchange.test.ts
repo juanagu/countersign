@@ -45,6 +45,8 @@ describe('POST /token (token exchange)', () => {
     ['a scope the audience does not allow', { scope: 'accounts:read transfers:prepare' }, 'invalid_scope'],
     ['an unknown audience', { audience: 'mcp-evil' }, 'invalid_target'],
     ['the bot itself as audience', { audience: 'bot' }, 'invalid_target'],
+    ['an Object.prototype key as audience', { audience: 'constructor' }, 'invalid_target'],
+    ['another prototype key as audience', { audience: '__proto__' }, 'invalid_target'],
     ['a wrong grant type', { grant_type: 'client_credentials' }, 'unsupported_grant_type'],
     ['a garbage subject token', { subject_token: 'not-a-jwt' }, 'invalid_grant'],
   ])('rejects %s', async (_, fields, error) => {
@@ -73,6 +75,7 @@ describe('POST /token (token exchange)', () => {
     ['no client credentials', ''],
     ['a wrong secret', basic('bot', 'nope')],
     ['an unknown client', basic('mallory', TEST_BOT_SECRET)],
+    ['an Object.prototype key as client id', basic('constructor', 'x')],
   ])('rejects %s with 401', async (_, authorization) => {
     const { res } = await exchange({}, authorization);
     expect(res.status).toBe(401);
