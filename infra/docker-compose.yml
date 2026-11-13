@@ -32,6 +32,9 @@ services:
 
   phoenix:
     image: arizephoenix/phoenix:21.1.0
+    environment:
+      # Local, loopback-bound, synthetic data only (docs/decisions/005-phoenix-auth-off-locally.md).
+      PHOENIX_ENABLE_AUTH: 'false'
     ports:
       - '127.0.0.1:6006:6006' # UI + OTLP/HTTP (/v1/traces)
       - '127.0.0.1:4317:4317' # OTLP/gRPC
@@ -65,6 +68,11 @@ services:
   bot:
     <<: *node-service
     build: { context: ../services/bot }
+    environment:
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: bot
     ports: ['127.0.0.1:${BOT_HOST_PORT:-8000}:8000']
     depends_on:
       redis: { condition: service_healthy }
@@ -75,9 +83,15 @@ services:
   bff:
     <<: *node-service
     build: { context: .., dockerfile: apps/bff/Dockerfile }
+    environment:
+      IDP_ISSUER: http://bff:3000
+      BOT_AGENT_URL: http://bot:8000/agent
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: bff
     ports: ['127.0.0.1:${BFF_HOST_PORT:-3000}:3000']
     depends_on:
       bot: { condition: service_healthy }
+      phoenix: { condition: service_healthy }
 
   web:
     build: { context: .., dockerfile: apps/web/Dockerfile }
