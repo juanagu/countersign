@@ -97,7 +97,7 @@ class GuardModelClassifier:
             return block("no customer message to classify", category="unchecked", text=SAFE_REPLIES["unchecked"])
         try:
             async with asyncio.timeout(CLASSIFIER_TIMEOUT_SECONDS):
-                result = await self._agent.run(_prompt(text, user_id), model_settings={"temperature": 0})
+                result = await self._agent.run(_prompt(text, user_id))
         except Exception:
             logger.warning("input classifier failed", exc_info=True, extra={"metric": CLASSIFIER_ERROR_METRIC})
             return block("the classifier failed", category="error", text=SAFE_REPLIES["error"])

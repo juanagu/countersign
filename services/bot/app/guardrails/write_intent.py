@@ -56,7 +56,7 @@ class GuardModelWriteIntent:
         try:
             async with asyncio.timeout(CHECK_TIMEOUT_SECONDS):
                 prompt = _prompt(customer_messages, tool, args)
-                result = await self._agent.run(prompt, model_settings={"temperature": 0})
+                result = await self._agent.run(prompt)
         except Exception:
             logger.warning("write-intent check failed", exc_info=True, extra={"metric": DENIED_METRIC})
             return block("the write-intent check failed", category="error")
