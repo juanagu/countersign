@@ -49,7 +49,8 @@ tool may run, and no text may reach the client, before its verdict.
   streamed back to the customer who forged it: it moves no money (writes go through the tool policy and the
   MCP servers, which read the bank's own data) and reaches no one else. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
   `1254300.50`, `****4521` by its last digits, `15 de octubre`, `15/10`, ISO dates). A failing sentence becomes a
-  fallback; an `a2ui-surface` with an ungrounded number is dropped for a text fallback (ADR 012's promise).
+  fallback; an `a2ui-surface` has PII masked in every string it shows (ids and references left intact), then
+  is dropped for a text fallback if a number is ungrounded (ADR 012's promise).
   `bank-template` cards pass untouched. The raw `render_ui` call (its `TOOL_CALL_*` events and result) and
   every `REASONING_*` event are withheld: the model's unvalidated tree and its reasoning never leave the bot
   (rule 5), and the validated `a2ui-surface` is all the client needs. Other tool calls still reach the client:
