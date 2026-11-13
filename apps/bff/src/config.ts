@@ -8,6 +8,8 @@ const configSchema = z.object({
   botAgentUrl: z.url().default('http://localhost:8000/agent'),
   /** Set to true behind HTTPS; local dev runs on plain HTTP. */
   cookieSecure: z.stringbool().default(false),
+  /** Secret the bot authenticates with at the token endpoint. */
+  botClientSecret: z.string().min(16),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -19,5 +21,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     idpIssuer: env.IDP_ISSUER,
     botAgentUrl: env.BOT_AGENT_URL,
     cookieSecure: env.COOKIE_SECURE,
+    botClientSecret: env.BOT_CLIENT_SECRET,
   });
 }

@@ -2,10 +2,11 @@ import { createApp } from '../../src/app.js';
 import { TokenIssuer } from '../../src/features/idp/token-issuer.js';
 
 export const TEST_ISSUER = 'http://idp.test';
+export const TEST_BOT_SECRET = 'test-bot-secret-0123456789';
 
 export async function buildTestApp(botAgentUrl = 'http://bot.invalid/agent') {
   const issuer = await TokenIssuer.create(TEST_ISSUER);
-  const app = createApp({ issuer, botAgentUrl, cookieSecure: false });
+  const app = createApp({ issuer, botAgentUrl, cookieSecure: false, clients: { bot: TEST_BOT_SECRET } });
   return { app, issuer };
 }
 

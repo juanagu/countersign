@@ -11,12 +11,16 @@ describe('bff', () => {
   });
 
   it('defaults to port 3000 and insecure cookies for local dev', () => {
-    const config = loadConfig({});
+    const config = loadConfig({ BOT_CLIENT_SECRET: 'x'.repeat(16) });
     expect(config.port).toBe(3000);
     expect(config.cookieSecure).toBe(false);
   });
 
   it('rejects a non-numeric port', () => {
-    expect(() => loadConfig({ BFF_PORT: 'abc' })).toThrow();
+    expect(() => loadConfig({ BFF_PORT: 'abc', BOT_CLIENT_SECRET: 'x'.repeat(16) })).toThrow();
+  });
+
+  it('requires a bot client secret', () => {
+    expect(() => loadConfig({})).toThrow();
   });
 });

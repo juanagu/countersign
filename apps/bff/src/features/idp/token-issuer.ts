@@ -15,6 +15,23 @@ export const SESSION_AUDIENCE = 'bff';
 export const BOT_AUDIENCE = 'bot';
 export const SESSION_TTL_SECONDS = 30 * 60;
 const BOT_TOKEN_TTL_SECONDS = 5 * 60;
+const EXCHANGED_TOKEN_TTL_SECONDS = 5 * 60;
+
+export interface BotTokenClaims {
+  sub: string;
+  /** Seconds since epoch. */
+  exp: number;
+}
+
+export interface ExchangedTokenRequest {
+  sub: string;
+  audience: string;
+  scopes: readonly string[];
+  /** The client acting for the user (RFC 8693 `act.sub`). */
+  actor: string;
+  /** Upper bound on expiry: never outlive the subject token. */
+  notAfter: number;
+}
 
 export interface SessionClaims {
   sub: string;
@@ -47,6 +64,29 @@ export class TokenIssuer {
   /** Short-lived token the BFF forwards to the bot, so the bot never sees the session token. */
   issueBotToken(session: SessionClaims): Promise<string> {
     return this.sign({ scope: 'chat' }, session.sub, BOT_AUDIENCE, BOT_TOKEN_TTL_SECONDS);
+  }
+
+  /** Mints an audience-bound token for one downstream resource server. Returns it with its lifetime. */
+  async issueExchanged(req: ExchangedTokenRequest): Promise<{ token: string; expiresIn: number }> {
+    const now = Math.floor(Date.now() / 1000);
+    const expiresIn = Math.max(0, Math.min(EXCHANGED_TOKEN_TTL_SECONDS, req.notAfter - now));
+    const token = await this.sign(
+      { scope: req.scopes.join(' '), act: { sub: req.actor } },
+      req.sub,
+      req.audience,
+      expiresIn,
+    );
+    return { token, expiresIn };
+  }
+
+  async verifyBotToken(token: string): Promise<BotTokenClaims> {
+    const { payload } = await jwtVerify(token, this.publicKey, {
+      issuer: this.issuer,
+      audience: BOT_AUDIENCE,
+      algorithms: [ALG],
+      requiredClaims: ['sub', 'exp'],
+    });
+    return { sub: payload.sub as string, exp: payload.exp as number };
   }
 
   async verifySession(token: string): Promise<SessionClaims> {
