@@ -39,8 +39,9 @@ function safeEqual(a: string, b: string): boolean {
 function authenticateClient(header: string | undefined, clients: TokenExchangeOptions['clients']): string | undefined {
   if (!header?.startsWith('Basic ')) return undefined;
   const [id = '', secret = ''] = Buffer.from(header.slice('Basic '.length), 'base64').toString().split(':');
-  const expected = clients[id];
-  return expected !== undefined && safeEqual(secret, expected) ? id : undefined;
+  // Own keys only: `in` or a plain lookup would also match Object.prototype names like `constructor`.
+  if (!Object.hasOwn(clients, id)) return undefined;
+  return safeEqual(secret, clients[id] ?? '') ? id : undefined;
 }
 
 function grantedScopes(audience: string, requested: string | undefined): string[] | undefined {
@@ -69,7 +70,7 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
       return oauthError(c, 'invalid_request');
     }
     const audience = field('audience') ?? '';
-    if (!(audience in AUDIENCE_SCOPES)) return oauthError(c, 'invalid_target');
+    if (!Object.hasOwn(AUDIENCE_SCOPES, audience)) return oauthError(c, 'invalid_target');
     const scopes = grantedScopes(audience, field('scope'));
     if (!scopes) return oauthError(c, 'invalid_scope');
 
