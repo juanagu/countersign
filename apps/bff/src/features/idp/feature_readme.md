@@ -14,4 +14,5 @@ Keys are ES256, generated per process (a restart ends every session and rotates 
 
 Login sets the `session` cookie (HttpOnly, SameSite=Strict) holding the `aud=bff` JWT. Each chat run
 re-verifies it and mints a fresh `aud=bot` token; the session token never leaves the BFF.
-Token exchange (`/token`, Phase 2) and step-up (`/auth/step-up`, Phase 5) land here.
+`POST /token` (RFC 8693 exchange, ADR 008) and `POST /auth/step-up` (PIN → a 2-minute, single-use token
+bound to one transfer draft via `authorization_details`, ADR 013) live here too.

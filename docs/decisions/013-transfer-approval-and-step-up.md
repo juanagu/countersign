@@ -1,0 +1,34 @@
+# 013 — Transfer approval: AG-UI interrupt, step-up token in the approved arguments, RAR binding checked by the resource server
+
+## Context
+Security rule 3: `execute_transfer` needs human approval plus step-up, and `mcp-payments` executes only if
+the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` all match the stored draft.
+
+## Decision
+- **Pause:** the tool policy marks T3 calls `needs_approval`. `PolicyToolset` raises `ApprovalRequired`
+  with metadata `{tool, draft_id}` built in code. The agent's output type includes `DeferredToolRequests`,
+  so `AGUIAdapter` ends the run as an AG-UI interrupt (`RUN_FINISHED` with `outcome.type = "interrupt"`).
+  CopilotKit v2's `useInterrupt` renders the approval in the chat. No workaround was needed.
+- **The model never holds the step-up token:** `step_up_token` is removed from the T3 tool schema the model
+  sees, and any model-supplied `step_up_token` on a non-approval call is refused. The web app resumes with
+  `{approved: true, editedArgs: {draft_id, step_up_token}}` (`status: "resolved"`), which Pydantic AI
+  turns into `ToolApproved(override_args=…)`. A cancel resumes with `approved: false`.
+- **The panel shows server data:** the approval panel looks up the `transfer-confirm` server template for
+  the interrupt's `draft_id` in the thread. It never displays the interrupt's model-proposed arguments.
+- **Step-up:** `POST /auth/step-up` (session, JSON, PIN `123456`, three failures lock it for 5 min) signs
+  exactly the draft values the app sends as `authorization_details: [{type: "transfer", draft_id, amount,
+  currency, beneficiary_id}]`. The token has `aud=mcp-payments`, a 2-minute TTL, `token_use: "step_up"` and
+  no `act`, so it can't pass as an access token. The IdP doesn't read the payments database: the resource
+  server is the one that compares the grant with its stored draft, as RAR intends.
+- **Execute (`mcp-payments`):** check the token (signature, issuer, `aud`, `exp`, `token_use`), then that
+  `sub` is the caller and the draft id matches. Claim the `jti` before anything else can fail (single use,
+  so a double click is refused). Then the grant must equal the draft (amount, currency, beneficiary) and
+  the draft must be pending and unexpired. Execution runs in one transaction under the draft's row lock;
+  a second valid token for an executed draft returns the same receipt without a second debit.
+- **Resume needs its skill:** each run restores the skills loaded by earlier `load_skill` calls in its
+  history. Otherwise the resumed `execute_transfer` would not be visible. Pre-loading grants no capability
+  beyond the user's tokens and the policy. History becomes server-owned in Phase 7.
+
+## Consequences
+Scenario 3 runs end to end. A forged history can at most pre-load skill instructions. The receipt card
+comes from the `execute_transfer` result through `TemplateToolset`, like the confirm card.

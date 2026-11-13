@@ -66,3 +66,21 @@ invalid tree fall back to text and log `a2ui.invalid_payload`. KB eval 3/3 with 
 of `generate_a2ui` (ADR 012). Built without a designer artboard: the card styling uses the existing tokens
 and needs a visual review.
 **Open:** browser rendering not seen yet (Playwright screenshots planned).
+
+## Phase 5 — Transfer flow with human approval and step-up (#6)
+
+**Built:** T3 approval in the tool policy (`ApprovalRequired` → AG-UI interrupt, `step_up_token` hidden from
+the model); skills restored from history so a resume sees its tools; mock IdP `POST /auth/step-up`
+(PIN, lockout, RAR-shaped `authorization_details`, 2-minute single-use token); `mcp-payments`
+`executeTransfer` (verify, `jti` claim, grant equals draft, pending and unexpired, one transaction under a
+row lock, idempotent receipt); receipt card from the result; web approval panel (server card lookup,
+Confirmar → PIN dialog → step-up → resume, Cancelar → denial, double-click guard).
+**Verified:** Scenario 3 live through the CopilotKit runtime: "Mandale 50.000 a Ana" (as Juan) →
+prepare + confirm card → interrupt → step-up → resume → receipt card `BD-…`; the balance went from
+486.750,25 to 436.750,25, with one transfer row. Rejected in tests: tampered amount, tampered beneficiary,
+expired draft, expired token, reused `jti` (the double click), a token for another draft, another user's
+token, an access token in place of a step-up token, wrong audience. Two concurrent executions on the real
+Postgres debit once.
+**Deviated:** the IdP signs the draft values the app sends, and the resource server checks them against its
+stored draft (ADR 013), instead of the IdP reading the payments database.
+**Open:** the PIN dialog and approval panel haven't been seen in a browser yet.
