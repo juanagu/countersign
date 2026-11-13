@@ -42,6 +42,7 @@ function stepUp(overrides: Record<string, unknown> = {}, grant: Record<string, u
     aud: 'mcp-payments',
     sub: 'juan',
     token_use: 'step_up',
+    scope: 'transfers:execute',
     act: undefined,
     authorization_details: [{ ...GRANT, ...grant }],
     ...overrides,
@@ -74,6 +75,8 @@ describe('executeTransfer', () => {
       ["the token is another user's", { sub: 'ana' }, {}, 'not_authorised'],
       ['the token is an access token, not a step-up', { token_use: undefined }, {}, 'not_authorised'],
       ['the token is for another audience', { aud: 'mcp-accounts' }, {}, 'not_authorised'],
+      ['the step-up token has no scope', { scope: undefined }, {}, 'not_authorised'],
+      ['the step-up token lacks transfers:execute', { scope: 'transfers:prepare' }, {}, 'not_authorised'],
     ])('%s', async (_, claims, grant, code) => {
       const result = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(claims, grant));
       expect(result).toMatchObject({ ok: false, error: { code } });
@@ -82,7 +85,13 @@ describe('executeTransfer', () => {
 
     it('the step-up token expired', async () => {
       const token = await keys.sign(
-        { aud: 'mcp-payments', sub: 'juan', token_use: 'step_up', authorization_details: [GRANT] },
+        {
+          aud: 'mcp-payments',
+          sub: 'juan',
+          token_use: 'step_up',
+          scope: 'transfers:execute',
+          authorization_details: [GRANT],
+        },
         -1,
       );
       expect(await executeTransfer(deps(), 'juan', DRAFT.id, token)).toMatchObject({

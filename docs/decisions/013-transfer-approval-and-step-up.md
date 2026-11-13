@@ -15,12 +15,13 @@ the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` al
   turns into `ToolApproved(override_args=…)`. A cancel resumes with `approved: false`.
 - **The panel shows server data:** the approval panel looks up the `transfer-confirm` server template for
   the interrupt's `draft_id` in the thread. It never displays the interrupt's model-proposed arguments.
-- **Step-up:** `POST /auth/step-up` (session, JSON, PIN `123456`, three failures lock it for 5 min) signs
+- **Step-up:** `POST /auth/step-up` (session, JSON, PIN `123456`, the third wrong PIN in a row locks it for 5 min from that failure) signs
   exactly the draft values the app sends as `authorization_details: [{type: "transfer", draft_id, amount,
   currency, beneficiary_id}]`. The token has `aud=mcp-payments`, a 2-minute TTL, `token_use: "step_up"` and
   no `act`, so it can't pass as an access token. The IdP doesn't read the payments database: the resource
   server is the one that compares the grant with its stored draft, as RAR intends.
-- **Execute (`mcp-payments`):** check the token (signature, issuer, `aud`, `exp`, `token_use`), then that
+- **Execute (`mcp-payments`):** the caller's access token needs scope `transfers:execute`. Then check the
+  step-up token (signature, issuer, `aud`, `exp`, `token_use`, scope `transfers:execute`), then that
   `sub` is the caller and the draft id matches. Claim the `jti` before anything else can fail (single use,
   so a double click is refused). Then the grant must equal the draft (amount, currency, beneficiary) and
   the draft must be pending and unexpired. Execution runs in one transaction under the draft's row lock;
