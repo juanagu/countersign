@@ -12,7 +12,13 @@ from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
 from app.genui.render_ui import RENDER_UI_TOOL
-from app.guardrails.messages import customer_texts, redact_customer_turns, tool_results_in, tools_returned_in
+from app.guardrails.messages import (
+    customer_spoke_since_last_response,
+    customer_texts,
+    redact_customer_turns,
+    tool_results_in,
+    tools_returned_in,
+)
 from app.guardrails.pipeline import Guardrails
 from app.guardrails.stream import guarded_stream
 from app.policy.policy_toolset import THIRD_PARTY_TEXT_TOOLS
@@ -58,6 +64,7 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails) 
             customer_messages=customer_texts(history),
             third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
             earlier_tool_results=tool_results_in(history, excluding=NON_EVIDENCE_TOOLS),
+            resume_only=bool(adapter.run_input.resume) and not customer_spoke_since_last_response(history),
         )
         deps = BotDeps(
             user_id=principal.user_id,

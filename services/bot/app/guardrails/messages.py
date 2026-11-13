@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart
 
 from app.guardrails.pii import redact
 
@@ -63,3 +63,13 @@ def tool_results_in(messages: Sequence[ModelMessage], *, excluding: frozenset[st
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name not in excluding
     ]
+
+
+def customer_spoke_since_last_response(messages: Sequence[ModelMessage]) -> bool:
+    """True when a customer prompt follows the model's last response, or the model never responded."""
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            return False
+        if any(isinstance(part, UserPromptPart) for part in message.parts):
+            return True
+    return True

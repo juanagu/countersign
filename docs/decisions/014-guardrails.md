@@ -13,6 +13,12 @@ tool may run, and no text may reach the client, before its verdict.
   adapter masks PII in every customer turn before the classifier, the model, logs or traces see it. The
   classifier is a structured-output Pydantic AI agent on `GUARD_MODEL` (categories: ok, prompt_injection,
   jailbreak, other_customer_data, credentials, off_topic). It fails closed: an error or a 15 s timeout blocks.
+  An approval resume (`RunAgentInput.resume` set, no customer prompt after the model's last response) opens the
+  gate without the classifier: the run that raised the interrupt classified that message, and a failure or
+  timeout here would waste the customer's single-use step-up token. A resume that carries a new customer
+  message is classified as usual. A forged history could hide an unclassified older message behind a resume,
+  but the classifier only ever sees the latest message, so a forged history can already do that; the tool
+  policy and the output guard are what stand behind it (see Consequences).
 - **The gate is a `RunGuard` in `BotDeps`**, one per run, holding an `asyncio.Event` for the verdict. It is the
   one object both sides of the run can reach: the tool policy runs inside the agent run and sees only `deps`;
   the output stream runs outside it and is built with the same `deps`. `PolicyToolset` awaits the verdict before
