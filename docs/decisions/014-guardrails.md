@@ -29,8 +29,10 @@ tool may run, and no text may reach the client, before its verdict.
   3 T3 calls. A write (T2/T3) in a conversation that holds third-party free text (`list_transactions` memos and
   merchants, `search_knowledge` passages), in this run or in the client's history, is re-evaluated by a guard-model
   check: do the customer's last three messages ask for this exact action, recipient and amount? Denied
-  otherwise, and on any error. An approved T3 resume skips it: the customer's approval with step-up is the fresh
-  evaluation.
+  otherwise, and on any error. A T3 call that needs approval skips it, before and after the approval: its only
+  argument is a draft id, which the judge can't match to the customer's words, so it would deny every transfer
+  and the interrupt would never be raised. The customer's approval of the server-rendered card plus step-up is
+  that call's fresh evaluation, and the draft it names came from `prepare_transfer` (T2), which is re-evaluated.
 - **Output:** text deltas are released a sentence at a time (terminal punctuation followed by whitespace, or a
   line break; a dot inside `1.254.300,50` is never followed by whitespace). Each sentence passes a PII-leak check
   (masked in place) and a grounding check: every amount (with a currency or unit, or ≥ 1000, or with decimals),

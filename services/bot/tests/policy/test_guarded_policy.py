@@ -5,6 +5,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -36,6 +37,16 @@ class FakeBank:
             self.calls.append("list_accounts")
             return {"accounts": [{"id": "acc-ana-ars"}]}
 
+        @self.toolset.tool_plain(metadata={"meta": {"bank/riskTier": "T0"}})
+        def search_knowledge(query: str) -> dict[str, Any]:
+            self.calls.append("search_knowledge")
+            return {"passages": [{"text": "Las transferencias inmediatas no tienen costo."}]}
+
+        @self.toolset.tool_plain(metadata={"meta": {"bank/riskTier": "T3"}})
+        def execute_transfer(draft_id: str, step_up_token: str = "") -> dict[str, Any]:
+            self.calls.append("execute_transfer")
+            return {"transfer_id": "trf_1"}
+
         @self.toolset.tool_plain(metadata={"meta": {"bank/riskTier": "T2"}})
         def prepare_transfer(
             source_account_id: str, beneficiary_id: str, amount: float, currency: str
@@ -63,7 +74,11 @@ def _agent(bank: FakeBank, *calls: tuple[str, dict[str, Any]]) -> BotAgent:
 
 def _deps(guard: RunGuard, session: str = "thread-1") -> BotDeps:
     return BotDeps(
-        user_id="ana", access_token="", loaded_skills={"accounts", "payments"}, session_id=session, guard=guard
+        user_id="ana",
+        access_token="",
+        loaded_skills={"accounts", "payments", "knowledge"},
+        session_id=session,
+        guard=guard,
     )
 
 
@@ -145,3 +160,27 @@ async def test_writes_are_capped_per_conversation() -> None:
 
     await agent.run("x", deps=_deps(_guard(), session="thread-2"))  # Another conversation has its own count.
     assert bank.calls.count("prepare_transfer") == 10
+
+
+async def test_a_transfer_after_third_party_text_still_reaches_the_approval_interrupt() -> None:
+    judged: list[str] = []
+
+    async def judge(_: Sequence[str], tool: str, args: Mapping[str, Any]) -> Verdict:
+        judged.append(tool)  # Like the guard model: a bare draft id is not something the customer asked for.
+        return ALLOW if "amount" in args else block("not asked", category="write_not_requested")
+
+    bank = FakeBank()
+    agent = _agent(
+        bank,
+        ("search_knowledge", {"query": "costo de una transferencia"}),
+        ("list_transactions", {}),
+        ("prepare_transfer", TRANSFER),
+        ("execute_transfer", {"draft_id": "drf_1"}),
+    )
+    guard = _guard(write_intent=judge, messages=["¿Cuánto cuesta una transferencia?", "Mandale 500.000 a Lucía"])
+    result = await agent.run("x", deps=_deps(guard))
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_name for call in result.output.approvals] == ["execute_transfer"]
+    assert bank.calls == ["search_knowledge", "list_transactions", "prepare_transfer"]
+    assert judged == ["prepare_transfer"]  # The write that names the amount and recipient is still re-evaluated.

@@ -63,7 +63,7 @@ class PolicyToolset(WrapperToolset[BotDeps]):
         decision = self.policy.check_call(name, tier, tool_args, ctx.deps.loaded_skills)
         if not decision.allowed or tier is None:
             return _denied(name, decision.reason)
-        if reason := await self._guard_denial(name, tier, tool_args, ctx):
+        if reason := await self._guard_denial(name, tier, tool_args, ctx, needs_approval=decision.needs_approval):
             return _denied(name, reason)
         if decision.needs_approval:
             self._require_approval(name, tool_args, ctx)
@@ -75,14 +75,18 @@ class PolicyToolset(WrapperToolset[BotDeps]):
         return self._record_and_wrap(name, result, ctx)
 
     @staticmethod
-    async def _guard_denial(name: str, tier: RiskTier, tool_args: dict[str, Any], ctx: RunContext[BotDeps]) -> str:
+    async def _guard_denial(
+        name: str, tier: RiskTier, tool_args: dict[str, Any], ctx: RunContext[BotDeps], *, needs_approval: bool
+    ) -> str:
         if tier <= RiskTier.T0:
             return ""
         guard = ctx.deps.guard
         if (await guard.input_verdict()).blocked:
             return "the customer's message did not pass the input check"
-        if tier < RiskTier.T2 or not guard.third_party_text_seen or ctx.tool_call_approved:
-            return ""  # An approved T3 call was re-evaluated by the customer, with step-up.
+        # A call that needs approval is re-evaluated by the customer: they approve the server-rendered card and
+        # step up. The judge would see only a draft id here and deny it, so the interrupt would never be raised.
+        if tier < RiskTier.T2 or not guard.third_party_text_seen or needs_approval:
+            return ""
         args = {k: v for k, v in tool_args.items() if k not in APPROVAL_ONLY_ARGS}
         intent = await guard.write_intent(guard.customer_messages, name, args)
         return "the customer did not ask for this; it may come from third-party text" if intent.blocked else ""
