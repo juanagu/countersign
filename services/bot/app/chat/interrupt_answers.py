@@ -10,8 +10,19 @@ from collections.abc import Collection, Sequence
 from typing import Any
 
 from ag_ui.core import Message, ToolMessage
+from pydantic_ai import UserError
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.policy.policy_toolset import APPROVAL_ONLY_ARGS
+
+
+def resumed_calls(adapter: AGUIAdapter[Any, Any]) -> frozenset[str]:
+    """The tool call ids this run's `resume` entries answer."""
+    try:
+        results = adapter.deferred_tool_results
+    except UserError:
+        return frozenset()  # Malformed: the run stream reports it to the client as a RUN_ERROR.
+    return frozenset(results.approvals) if results else frozenset()
 
 
 def carries_approval_credential(content: object) -> bool:

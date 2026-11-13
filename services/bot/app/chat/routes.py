@@ -3,7 +3,7 @@ from http import HTTPStatus
 
 from fastapi import APIRouter, Request, Response
 from pydantic import ValidationError
-from pydantic_ai import CancellationToken, DeferredToolRequests, UserError
+from pydantic_ai import CancellationToken, DeferredToolRequests
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.ag_ui import AGUIAdapter
@@ -11,7 +11,7 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
-from app.chat.interrupt_answers import without_interrupt_answers
+from app.chat.interrupt_answers import resumed_calls, without_interrupt_answers
 from app.genui.render_ui import RENDER_UI_TOOL
 from app.guardrails.messages import (
     customer_spoke_since_last_response,
@@ -20,6 +20,7 @@ from app.guardrails.messages import (
     tool_results_in,
     tools_returned_in,
 )
+from app.guardrails.pending_approvals import recording_interrupts
 from app.guardrails.pipeline import Guardrails
 from app.guardrails.stream import guarded_stream
 from app.policy.policy_toolset import THIRD_PARTY_TEXT_TOOLS
@@ -38,17 +39,8 @@ class BankAGUIAdapter(AGUIAdapter[BotDeps, str | DeferredToolRequests]):
         return None  # The browser is untrusted and must not add callable tools.
 
     @cached_property
-    def resumed_calls(self) -> frozenset[str]:
-        """The tool call ids this run's `resume` entries answer."""
-        try:
-            results = self.deferred_tool_results
-        except UserError:
-            return frozenset()  # Malformed: the run stream reports it to the client as a RUN_ERROR.
-        return frozenset(results.approvals) if results else frozenset()
-
-    @cached_property
     def messages(self) -> list[ModelMessage]:
-        client = without_interrupt_answers(self.run_input.messages, self.resumed_calls)
+        client = without_interrupt_answers(self.run_input.messages, resumed_calls(self))
         return redact_customer_turns(self.load_messages(client, preserve_file_data=self.preserve_file_data))
 
 
@@ -70,12 +62,16 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails) 
         raw_messages = body.get("messages") if isinstance(body, dict) else None
         restored = skills_loaded_in(raw_messages if isinstance(raw_messages, list) else [])
         history = adapter.messages
+        conversation = (principal.user_id, adapter.run_input.thread_id)
+        # A client-built resume proves nothing: only answering an interrupt raised here skips the classifier.
+        resumed = resumed_calls(adapter)
+        genuine_resume = bool(resumed) and guardrails.pending_approvals.consume(conversation, resumed)
         guard = guardrails.start_run(
             user_id=principal.user_id,
             customer_messages=customer_texts(history),
             third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
             earlier_tool_results=tool_results_in(history, excluding=NON_EVIDENCE_TOOLS),
-            resume_only=bool(adapter.run_input.resume) and not customer_spoke_since_last_response(history),
+            resume_only=genuine_resume and not customer_spoke_since_last_response(history),
         )
         deps = BotDeps(
             user_id=principal.user_id,
@@ -92,6 +88,6 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails) 
             raise
         run = adapter.run_input
         guarded = guarded_stream(events, guard, thread_id=run.thread_id, run_id=run.run_id, cancel_run=token.cancel)
-        return adapter.streaming_response(guarded)
+        return adapter.streaming_response(recording_interrupts(guarded, guardrails.pending_approvals, conversation))
 
     return router
