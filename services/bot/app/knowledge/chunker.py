@@ -8,9 +8,8 @@ from pydantic import BaseModel
 
 Audience = Literal["public", "customer"]
 
-# Small neighbouring sections merge up to this size. Our docs are short (~450 words), so a 400-600 target
-# would make one chunk per doc and blur both retrieval and citation anchors.
-TARGET_TOKENS = 150
+# Each `##` section is its own chunk, never merged, so a citation's heading and anchor name the section the
+# text came from. Only a section over this size is split.
 MAX_TOKENS = 600
 # Rough Spanish ratio; the embedder truncates anyway, so this only shapes chunk sizes.
 TOKENS_PER_WORD = 1.3
@@ -80,26 +79,8 @@ def _split_long(text: str) -> list[str]:
 
 def chunk_doc(text: str) -> list[Chunk]:
     meta, body = parse_doc(text)
-    chunks: list[Chunk] = []
-    pending: list[tuple[str, str]] = []
-
-    def flush() -> None:
-        if not pending:
-            return
-        heading = pending[0][0]
-        content = "\n\n".join(f"{h}\n{c}" if i else c for i, (h, c) in enumerate(pending))
-        chunks.append(Chunk(meta.id, meta.title, meta.audience, heading, slugify(heading), content))
-        pending.clear()
-
-    for heading, content in _sections(body, meta.title):
-        if _tokens(content) > MAX_TOKENS:
-            flush()
-            for part in _split_long(content):
-                chunks.append(Chunk(meta.id, meta.title, meta.audience, heading, slugify(heading), part))
-            continue
-        # Small neighbouring sections are merged up to the target size; the first heading names the chunk.
-        if pending and _tokens("\n".join(c for _, c in pending) + content) > TARGET_TOKENS:
-            flush()
-        pending.append((heading, content))
-    flush()
-    return chunks
+    return [
+        Chunk(meta.id, meta.title, meta.audience, heading, slugify(heading), part)
+        for heading, content in _sections(body, meta.title)
+        for part in (_split_long(content) if _tokens(content) > MAX_TOKENS else [content])
+    ]

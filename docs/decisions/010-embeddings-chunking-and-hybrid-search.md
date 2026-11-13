@@ -9,8 +9,10 @@ interface. The synthetic KB is 12 short documents (~450 words each).
   `EMBEDDING_MODEL`. `multilingual-e5-large` (1024 dims) needs ~2.2 GB of RAM in the bot container beside
   the rest of the stack, and the smaller MiniLM missed more of the known questions. The model is cached in
   the `models` volume and loaded lazily, so `/health` never waits for a download.
-- **Chunks:** one per `##` section, small neighbours merged up to ~150 tokens, a hard cap of 600 with
-  paragraph overlap when a section is longer. The plan's 400–600 target would make one chunk per
+- **Chunks:** one per `##` section, never merged, so a citation's heading and anchor always name the
+  section the text came from (merging small neighbours under the first heading cited the wrong one). The
+  intro before the first `##` is a chunk under the doc title. A hard cap of 600 tokens, with paragraph
+  overlap, splits a longer section. The plan's 400–600 target would make one chunk per
   document here: with whole-document chunks the PIN question missed the security policy in the top 3.
 - **Search:** vector (cosine, HNSW) and Spanish full-text each return 20 candidates, fused with
   reciprocal rank fusion (k=60), filtered by audience in both queries. The full-text query ORs the

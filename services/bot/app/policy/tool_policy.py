@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from app.core.clock import BankClock
 from app.policy.risk_tier import RiskTier
 from app.skills.registry import SkillRegistry
 
@@ -12,8 +13,8 @@ MAX_PERIOD_DAYS = 400
 TRANSFER_CAPS = {"ARS": 2_000_000, "USD": 10_000}
 _ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
-ArgCheck = Callable[[Mapping[str, Any]], str | None]
-"""Returns a denial reason, or None when the arguments are within bounds."""
+ArgCheck = Callable[[Mapping[str, Any], date], str | None]
+"""Given the arguments and the bank's today, returns a denial reason, or None when they are within bounds."""
 
 
 @dataclass(frozen=True)
@@ -32,9 +33,9 @@ def _day(args: Mapping[str, Any], key: str) -> date | None:
     return date.fromisoformat(value)
 
 
-def _period_bounds(args: Mapping[str, Any], *, start_required: bool) -> str | None:
+def _period_bounds(args: Mapping[str, Any], today: date, *, start_required: bool) -> str | None:
     try:
-        start, end = _day(args, "from"), _day(args, "to") or date.today()  # Open-ended runs up to today.
+        start, end = _day(args, "from"), _day(args, "to") or today  # Open-ended runs up to today.
     except ValueError:
         return "dates must be YYYY-MM-DD"
     if start is None:
@@ -45,19 +46,19 @@ def _period_bounds(args: Mapping[str, Any], *, start_required: bool) -> str | No
     return f"periods are limited to {MAX_PERIOD_DAYS} days" if days > MAX_PERIOD_DAYS else None
 
 
-def _summary_bounds(args: Mapping[str, Any]) -> str | None:
-    return _period_bounds(args, start_required=True)
+def _summary_bounds(args: Mapping[str, Any], today: date) -> str | None:
+    return _period_bounds(args, today, start_required=True)
 
 
-def _transactions_bounds(args: Mapping[str, Any]) -> str | None:
+def _transactions_bounds(args: Mapping[str, Any], today: date) -> str | None:
     limit = args.get("limit", 1)
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_TRANSACTIONS:
         return f"limit must be a whole number from 1 to {MAX_TRANSACTIONS}"
     # Without a start date the period is bounded by the limit alone.
-    return _period_bounds(args, start_required=False)
+    return _period_bounds(args, today, start_required=False)
 
 
-def _transfer_bounds(args: Mapping[str, Any]) -> str | None:
+def _transfer_bounds(args: Mapping[str, Any], _today: date) -> str | None:
     amount, currency = args.get("amount"), args.get("currency")
     cap = TRANSFER_CAPS.get(currency) if isinstance(currency, str) else None
     if cap is None:
@@ -77,9 +78,15 @@ DEFAULT_ARG_CHECKS: Mapping[str, ArgCheck] = {
 class ToolPolicy:
     """The single gate for domain tools: risk tier, loaded skill and argument bounds (security rule 2)."""
 
-    def __init__(self, skills: SkillRegistry, arg_checks: Mapping[str, ArgCheck] = DEFAULT_ARG_CHECKS):
+    def __init__(
+        self,
+        skills: SkillRegistry,
+        arg_checks: Mapping[str, ArgCheck] = DEFAULT_ARG_CHECKS,
+        clock: BankClock | None = None,
+    ):
         self._skills = skills
         self._arg_checks = arg_checks
+        self._clock = clock or BankClock()
 
     def visible(self, tool: str, tier: RiskTier | None, loaded: set[str]) -> bool:
         return tier is not None and self._granted(tool, tier, loaded)
@@ -92,7 +99,7 @@ class ToolPolicy:
         if tier is RiskTier.T3:
             return Decision(False, "money movement needs the customer's approval in the app")
         check = self._arg_checks.get(tool)
-        reason = check(args) if check else None
+        reason = check(args, self._clock.today()) if check else None
         return Decision(False, reason) if reason else Decision(True)
 
     def _granted(self, tool: str, tier: RiskTier, loaded: set[str]) -> bool:
