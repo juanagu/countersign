@@ -9,6 +9,8 @@ import type { SessionUser } from '../auth/lib/auth-api';
 import { Button } from '../../shared/ui/button';
 import { CHAT_LABELS } from './chat-labels';
 import { shouldRecheckSession } from './lib/session-recheck';
+import { forgetThread, threadIdFor } from './lib/thread-id';
+import { StreamReconnect } from './stream-reconnect';
 import './chat-screen.css';
 
 const RUNTIME_URL = '/api/copilotkit';
@@ -26,10 +28,14 @@ export interface ChatScreenProps {
 
 export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScreenProps) {
   const [signOutFailed, setSignOutFailed] = useState(false);
+  // One thread per signed-in user, restored on reload; sign-out starts a new one.
+  const [threadId] = useState(() => threadIdFor(user.id));
 
   function signOut() {
     setSignOutFailed(false);
-    onSignOut().catch(() => setSignOutFailed(true));
+    onSignOut()
+      .then(() => forgetThread(user.id))
+      .catch(() => setSignOutFailed(true));
   }
 
   return (
@@ -57,9 +63,10 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
             if (shouldRecheckSession(code)) onRuntimeRequestFailed();
           }}
         >
+          <StreamReconnect />
           <TransferApproval />
           <ChatActionsProvider>
-            <CopilotChat labels={CHAT_LABELS} />
+            <CopilotChat labels={CHAT_LABELS} threadId={threadId} />
           </ChatActionsProvider>
         </CopilotKitProvider>
       </main>
