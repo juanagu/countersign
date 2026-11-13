@@ -113,7 +113,7 @@ export class InMemoryAccountsRepository implements AccountsRepository {
         owned.has(t.accountId) &&
         (!q.accountId || t.accountId === q.accountId) &&
         inPeriod(bankDay(new Date(t.bookedAt), this.timeZone), q.from, q.to) &&
-        (!q.category || t.category === q.category),
+        (!q.category || t.category.toLowerCase() === q.category.toLowerCase()),
     )
       .sort((a, b) => b.bookedAt.localeCompare(a.bookedAt))
       .slice(0, q.limit)

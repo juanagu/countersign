@@ -1,7 +1,9 @@
 import { createJwtVerifier } from '@poc/mcp-kit';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { AUDIENCE, createApp } from '../../../src/app.js';
+import { TRANSACTION_CATEGORIES } from '../../../src/features/accounts/categories.js';
 import { InMemoryAccountsRepository } from '../../support/in-memory-accounts.js';
 import { connectClient, parseText } from '../../support/mcp-client.js';
 
@@ -92,6 +94,16 @@ describe('mcp-accounts tools', () => {
       expect(ids(await listTransactions({ category: 'supermercado' }))).toEqual(['5', '1']);
     });
 
+    it('matches a valid category whatever its case', async () => {
+      expect(ids(await listTransactions({ category: ' Supermercado ' }))).toEqual(['5', '1']);
+    });
+
+    it.each(['comida', 'super', ''])('rejects the unknown category %j at the schema', async (category) => {
+      const client = await connectClient(app, await anaToken());
+      const result = await client.callTool({ name: 'list_transactions', arguments: { category } });
+      expect(result.isError).toBe(true);
+    });
+
     it('totals only the debits inside the period, by category', async () => {
       const client = await connectClient(app, await anaToken());
       const body = parseText(
@@ -127,6 +139,26 @@ describe('mcp-accounts tools', () => {
         }[];
         expect(first?.bookedAt).toBe('2026-10-31T22:30:00.000-03:00');
       });
+    });
+  });
+
+  describe('publishes the categories where the model reads them', () => {
+    it('as an enum on list_transactions and in both descriptions', async () => {
+      const { tools } = await (await connectClient(app, await anaToken())).listTools();
+      const byName = new Map(tools.map((t) => [t.name, t]));
+      const property = byName.get('list_transactions')?.inputSchema.properties?.category as { enum?: string[] };
+      expect(property.enum).toEqual([...TRANSACTION_CATEGORIES]);
+      for (const name of ['list_transactions', 'spending_summary']) {
+        const description = byName.get(name)?.description ?? '';
+        for (const c of TRANSACTION_CATEGORIES) expect(description).toContain(c);
+        expect(description).toContain("Map the customer's words to one of these");
+      }
+    });
+
+    it("in the bot's accounts skill", async () => {
+      const skill = await readFile(new URL('../../../../bot/skills/accounts.md', import.meta.url), 'utf8');
+      for (const c of TRANSACTION_CATEGORIES) expect(skill).toContain(c);
+      expect(skill).toContain("Map the customer's words to one of these");
     });
   });
 

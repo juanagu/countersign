@@ -45,7 +45,7 @@ export class PgAccountsRepository implements AccountsRepository {
           AND ($2::text IS NULL OR t.account_id = $2)
           AND ($3::date IS NULL OR t.booked_at >= ($3::date::timestamp AT TIME ZONE $7::text))
           AND ($4::date IS NULL OR t.booked_at < (($4::date + 1)::timestamp AT TIME ZONE $7::text))
-          AND ($5::text IS NULL OR t.category = $5)
+          AND ($5::text IS NULL OR lower(t.category) = lower($5))
         ORDER BY t.booked_at DESC
         LIMIT $6`,
       [q.customerId, q.accountId ?? null, q.from ?? null, q.to ?? null, q.category ?? null, q.limit, this.timeZone],

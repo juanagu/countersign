@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { TRANSACTION_CATEGORIES } from '../../../src/features/accounts/categories.js';
 import { PgAccountsRepository } from '../../../src/features/accounts/pg-accounts-repository.js';
 
 // Runs against the seeded compose Postgres (`make up && make seed`); skipped when it isn't reachable.
@@ -40,6 +41,19 @@ describe.skipIf(!reachable)('PgAccountsRepository (seeded Postgres)', () => {
     const spend = await repo.spendingByCategory({ customerId: 'ana', from, to });
     expect(spend.length).toBeGreaterThan(3);
     for (const row of spend) expect(Number(row.total)).toBeGreaterThan(0);
+  });
+
+  it('knows every category the seed books, and only those', async () => {
+    const { rows } = await (pool as pg.Pool).query<{ category: string }>(
+      'SELECT DISTINCT category FROM bank.transactions ORDER BY category',
+    );
+    expect(rows.map((r) => r.category)).toEqual([...TRANSACTION_CATEGORIES]);
+  });
+
+  it('matches a category whatever its case', async () => {
+    const mixed = await repo.listTransactions({ customerId: 'ana', category: 'SuperMercado', limit: 5 });
+    expect(mixed.length).toBeGreaterThan(0);
+    for (const t of mixed) expect(t.category).toBe('supermercado');
   });
 
   describe('a debit at 22:30 on 31 Oct in Buenos Aires (01:30 on 1 Nov in UTC)', () => {
