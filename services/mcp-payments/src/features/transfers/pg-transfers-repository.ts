@@ -82,7 +82,7 @@ export class PgTransfersRepository implements TransfersRepository {
     return rowCount === 1;
   }
 
-  async executeDraft(draftId: string, now: Date): Promise<ExecuteDraftOutcome> {
+  async executeDraft(draftId: string, now: () => Date): Promise<ExecuteDraftOutcome> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -98,7 +98,7 @@ export class PgTransfersRepository implements TransfersRepository {
   }
 
   /** Runs inside a transaction holding the draft's row lock, so concurrent calls serialise per draft. */
-  private async executeLocked(client: pg.PoolClient, draftId: string, now: Date): Promise<ExecuteDraftOutcome> {
+  private async executeLocked(client: pg.PoolClient, draftId: string, clock: () => Date): Promise<ExecuteDraftOutcome> {
     const { rows } = await client.query<TransferDraft>(
       `SELECT ${DRAFT_COLUMNS} FROM bank.transfer_drafts WHERE id = $1 FOR UPDATE`,
       [draftId],
@@ -112,6 +112,8 @@ export class PgTransfersRepository implements TransfersRepository {
       if (existing.rows[0]) return { status: 'already_executed', receipt: existing.rows[0] };
     }
     if (draft?.status !== 'pending') return { status: 'not_pending' };
+    const now = clock(); // After the lock: the wait for it may have outlived the draft.
+    if (new Date(draft.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
     const debit = await client.query(
       `UPDATE bank.accounts SET balance = balance - ($1::numeric + $2::numeric)
         WHERE id = $3 AND balance >= $1::numeric + $2::numeric`,

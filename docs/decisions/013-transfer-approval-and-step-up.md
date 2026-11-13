@@ -24,8 +24,10 @@ the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` al
   step-up token (signature, issuer, `aud`, `exp`, `token_use`, scope `transfers:execute`), then that
   `sub` is the caller and the draft id matches. Claim the `jti` before anything else can fail (single use,
   so a double click is refused). Then the grant must equal the draft (amount, currency, beneficiary) and
-  the draft must be pending and unexpired. Execution runs in one transaction under the draft's row lock;
-  a second valid token for an executed draft returns the same receipt without a second debit.
+  the draft must be pending and unexpired. Execution runs in one transaction under the draft's row lock,
+  which re-checks status and expiry with the clock read after the lock is taken, so a call that waited on the
+  lock can't execute a draft that expired meanwhile (`draft_expired`); a second valid token for an executed
+  draft returns the same receipt without a second debit.
 - **Resume needs its skill:** each run restores the skills loaded by earlier `load_skill` calls in its
   history. Otherwise the resumed `execute_transfer` would not be visible. Pre-loading grants no capability
   beyond the user's tokens and the policy. History becomes server-owned in Phase 7.

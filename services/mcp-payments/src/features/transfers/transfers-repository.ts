@@ -43,6 +43,8 @@ export type ExecuteDraftOutcome =
   /** Another call executed this draft first: same receipt, no second debit. */
   | { status: 'already_executed'; receipt: TransferReceipt }
   | { status: 'not_pending' }
+  /** The draft expired by the time its row lock was taken. */
+  | { status: 'expired' }
   | { status: 'insufficient_funds' };
 
 /** The transfers feature's port onto bank data. */
@@ -56,6 +58,9 @@ export interface TransfersRepository {
   findReceipt(draftId: string): Promise<TransferReceipt | undefined>;
   /** Records a step-up token id; false if it was already used (single use). */
   claimTokenId(jti: string): Promise<boolean>;
-  /** Debits, records the transfer and marks the draft executed, atomically and at most once per draft. */
-  executeDraft(draftId: string, now: Date): Promise<ExecuteDraftOutcome>;
+  /**
+   * Debits, records the transfer and marks the draft executed, atomically and at most once per draft. `now` is
+   * read once the draft is locked, so a call that waited on the lock still sees the draft's expiry.
+   */
+  executeDraft(draftId: string, now: () => Date): Promise<ExecuteDraftOutcome>;
 }

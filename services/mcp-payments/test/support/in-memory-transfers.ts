@@ -99,11 +99,13 @@ export class InMemoryTransfersRepository implements TransfersRepository {
     return true;
   }
 
-  async executeDraft(draftId: string, now: Date): Promise<ExecuteDraftOutcome> {
+  async executeDraft(draftId: string, clock: () => Date): Promise<ExecuteDraftOutcome> {
     const draft = this.drafts.find((d) => d.id === draftId);
     const existing = this.receipts.get(draftId);
     if (draft?.status === 'executed' && existing) return { status: 'already_executed', receipt: existing };
     if (draft?.status !== 'pending') return { status: 'not_pending' };
+    const now = clock();
+    if (new Date(draft.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
     draft.status = 'executed';
     this.debits.push({ draftId, amount: draft.amount });
     const receipt = { transferId: `trf_${draftId}`, draftId, reference: 'BD-TEST', executedAt: now.toISOString() };

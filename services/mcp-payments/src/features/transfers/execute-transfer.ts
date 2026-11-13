@@ -37,6 +37,12 @@ function matchesDraft(draft: TransferDraft, auth: { amount: string; currency: st
   return draft.amount === auth.amount && draft.currency === auth.currency && draft.beneficiaryId === auth.beneficiaryId;
 }
 
+const LOCKED_FAILURES = {
+  not_pending: 'draft_not_pending',
+  expired: 'draft_expired',
+  insufficient_funds: 'insufficient_funds',
+} as const satisfies Record<string, ExecuteTransferErrorCode>;
+
 /**
  * Executes one draft for `customerId` with a step-up token (security rule 3). The token must verify, belong
  * to the caller, name this draft and be unused; its authorised amount, currency and beneficiary must equal
@@ -64,9 +70,9 @@ export async function executeTransfer(
   if (draft.status !== 'pending') return failure('draft_not_pending');
   if (new Date(draft.expiresAt).getTime() <= now().getTime()) return failure('draft_expired');
 
-  const outcome = await repo.executeDraft(draftId, now());
+  const outcome = await repo.executeDraft(draftId, now);
   if (outcome.status === 'executed' || outcome.status === 'already_executed') {
     return { ok: true, value: { draft, receipt: outcome.receipt } };
   }
-  return failure(outcome.status === 'insufficient_funds' ? 'insufficient_funds' : 'draft_not_pending');
+  return failure(LOCKED_FAILURES[outcome.status]);
 }
