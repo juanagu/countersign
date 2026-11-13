@@ -22,9 +22,10 @@ Request → adapter masks PII in customer turns → `Guardrails.start_run` (clas
 background) → agent run in its own task. `PolicyToolset` awaits the verdict above T0, records each domain-tool
 result as evidence, and re-evaluates writes after third-party text with the write-intent check. The stream
 forwards `RUN_STARTED`, holds the rest until the verdict, then releases text a sentence at a time after the PII
-and grounding checks. Logs pass `RedactingFilter`; spans pass `RedactingSpanExporter` before Phoenix.
+and grounding checks. Logs pass `RedactingFilter`; agent spans carry no content (`include_content=False`, ADR 014) and every
+span passes `RedactingSpanExporter` before Phoenix.
 
 ## Evals
 
 `evals/redteam.yaml` + `evals/redteam.py` (`make redteam`) drive the live stack through the BFF;
-`evals/pii_scan.py` (`make pii-scan`) greps container logs and Phoenix spans for the seed's PII.
+`evals/pii_scan.py` (`make pii-scan`) greps container logs and Phoenix spans for the seed's PII, names included.

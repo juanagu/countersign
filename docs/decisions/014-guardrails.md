@@ -44,8 +44,13 @@ tool may run, and no text may reach the client, before its verdict.
   `guardrail.output.ungrounded`, `guardrail.output.pii_redacted`, `guardrail.output.surface_dropped`,
   `guardrail.policy.write_not_requested`.
 - **Logs and traces:** a `logging.Filter` redacts the formatted message, every `extra=` field and exception text.
-  A `RedactingSpanExporter` wraps the OTLP exporter and rebuilds each span with redacted attributes and events,
-  so pydantic-ai instrumentation now runs with `include_content=True`. `setup_telemetry` requires the wrapper.
+  Pydantic AI instrumentation runs with `include_content=False`: agent spans keep their structure (model, tool
+  names, tokens, timings) but no prompts, completions, tool arguments or results. Customer, beneficiary and
+  merchant names and memos are free text: a name pattern misses a lone first name, a memo or a lowercase
+  name, and over-redacts everything else, while rule 7 is not optional and content in traces is only a
+  debugging aid. A `RedactingSpanExporter` still wraps the OTLP exporter and redacts the attributes that
+  remain (URLs, error text), and `setup_telemetry` requires it. `make pii-scan` also looks for the seed's
+  customer and beneficiary names.
 
 ## Consequences
 - Latency: text waits for the classifier (Haiku, usually done before Sonnet's first tokens) and for each

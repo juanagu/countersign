@@ -29,5 +29,12 @@ def setup_telemetry(app: FastAPI, settings: Settings, wrap_exporter: ExporterWra
     # One span per request, not one per streamed SSE chunk.
     FastAPIInstrumentor.instrument_app(app, excluded_urls="health", exclude_spans=["receive", "send"])
     HTTPXClientInstrumentor().instrument()
-    # Prompts, completions and tool data are recorded; the exporter wrapper redacts them before export.
-    Agent.instrument_all(InstrumentationSettings(include_content=True))
+    Agent.instrument_all(agent_instrumentation(provider))
+
+
+def agent_instrumentation(tracer_provider: TracerProvider | None = None) -> InstrumentationSettings:
+    """Agent spans keep their structure (model, tools, tokens, timings) but no message or tool content.
+
+    Names, memos and merchants are free text that no pattern redacts reliably, so content never enters a span.
+    """
+    return InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
