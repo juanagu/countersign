@@ -12,7 +12,7 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | --- | --- | --- | --- |
 | 0 — Scaffold | in review | `feat/p0-scaffold`, PR #13 | Reviewed together with Phase 1. |
 | 1 — Streaming chat skeleton | in review | `feat/p1-streaming-chat`, PR #14 | Converged: high pass (10 fixed), medium pass (7 small fixed). |
-| 2 — Domain tools over MCP | in review | `feat/p2-mcp-tools` | Two review rounds fixed (21 findings); final medium pass running. PR after it converges. |
+| 2 — Domain tools over MCP | in review | `feat/p2-mcp-tools` | Three review rounds; last two main-path fixes (bank-day time zone, category list) in progress, then a confirming medium pass and the PR. |
 | 3 — RAG with citations | in review | `feat/p3-rag` | Reviewed with Phase 2. |
 | 4 — Generative UI | in progress | `feat/p4-genui` | Built, verified at the event level; not reviewed yet. |
 | 5 — Approval and step-up | in progress | `feat/p5-approval` | Scenario 3 verified live; not reviewed yet. |
@@ -32,3 +32,8 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F6 | Bot: wrap MCP error results as untrusted data too, like successful ones. | todo | Phase 2 fixes |
 | F7 | See the UI in a real browser: `pnpm --dir apps/web test:e2e` with the stack up, plus screenshots at 390 and 1280. Automation here could not capture screenshots. | todo | Phases 1, 4, 5 |
 | F8 | Visual review of the card, chart and approval styling (built from existing tokens, no designer artboard). | todo | Phase 4 |
+| F9 | Knowledge search: degrade to "no tengo esa información" on any store or embedder failure (Postgres down, an embedding dimension mismatch), not only before ingest. | todo | Phase 2–3 review 3 |
+| F10 | `mcp-kit`: report a JWKS fetch failure as a server error (503), not `invalid_token`. | todo | Phase 2–3 review 3 |
+| F11 | Retrieval test skip guard: check `count > 0` (`fetchone()` is always truthy). | todo | Phase 2–3 review 3 |
+| F12 | Transfer limits: one source for the bot policy, `mcp-payments` and the KB (a contract constant). | todo | Phase 2–3 review 3 |
+| F13 | Cleanups: run hybrid search in one SQL statement (RRF in CTEs); move the MCP test client and account masking into `@poc/mcp-kit`; stop building a full `McpServer` per HTTP message. | todo | Phase 2–3 review 3 |
