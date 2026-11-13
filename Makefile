@@ -6,7 +6,7 @@ export TEST_DATABASE_URL ?= postgres://bank:bank@localhost:$(POSTGRES_HOST_PORT)
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 BOT := uv run --directory services/bot
 
-.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval redteam pii-scan lint format
+.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval redteam pii-scan metrics lint format
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -58,6 +58,9 @@ redteam: ## Red-team prompts through the live BFF, scored blocked/safely handled
 
 pii-scan: ## Fail if synthetic PII appears in container logs or Phoenix traces (run after make eval)
 	$(BOT_ENV) uv run python -m evals.pii_scan
+
+metrics: ## Latency (time to first token / first surface), tokens per run and guardrail blocks, from Phoenix and bot logs
+	$(BOT_ENV) uv run python -m evals.metrics $(METRICS_ARGS)
 
 lint: ## Lint, format check and typecheck, TS and Python
 	pnpm lint
