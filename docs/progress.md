@@ -36,3 +36,16 @@ tokens rejected by both servers; the bot's incoming token never reaches an MCP s
 over HTTP). Tool calls appear as `execute_tool …` child spans with MCP calls under them in Phoenix.
 **Deviated:** logical audiences (ADR 008); both MCP servers on one database, shared `@poc/mcp-kit`
 (ADR 009). Skills are loaded per turn, not remembered across turns.
+
+## Phase 3 — RAG with citations (#4)
+
+**Built:** 12 synthetic Spanish KB documents (9 public, 3 customer) with consistent fees and limits;
+`make ingest` (chunk per section, fastembed embeddings, pgvector + Spanish `tsvector`, run inside the bot
+container); `search_knowledge` (T0) behind the tool policy with hybrid vector + full-text search fused by
+RRF and an audience filter; the knowledge skill's citation format; first `pydantic-evals` cases (`make eval`).
+**Verified:** Scenario 1 live, "¿Cuánto cuesta una transferencia internacional?" → US$ 25 + 0,5 %
+(min. US$ 30) citing `kb:comisiones#transferencias`. Retrieval test: the top 3 holds the right doc for the 5
+known questions, and a public-only caller never gets a customer doc. Eval: 3/3, including two
+unanswerable questions answered "No tengo esa información" with no figure.
+**Deviated:** smaller chunks than the plan's 400–600 tokens, and an OR full-text query (ADR 010).
+Citations are text links until Phase 4.
