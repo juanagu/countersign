@@ -47,6 +47,7 @@ describe('mcp-payments tools', () => {
     const body = parseText(await (await clientFor('juan')).callTool({ name: 'list_beneficiaries', arguments: {} }));
     expect(body.beneficiaries).toEqual([
       { id: 'ben-juan-ana', name: 'Ana Gómez', bank: 'Banco Demo', account: '****5211', currency: 'ARS' },
+      { id: 'ben-juan-pablo-usd', name: 'Pablo Ruiz', bank: 'Banco Demo', account: '****9871', currency: 'USD' },
     ]);
   });
 
@@ -76,7 +77,18 @@ describe('mcp-payments tools', () => {
       'currency_mismatch',
     ],
     ['more than the balance', { ...juanToAna, amount: 486750.26 }, 'insufficient_funds'],
-    ['more than the per-transfer limit', { ...juanToAna, amount: 2_000_000.01 }, 'over_limit'],
+    // Within the schema's bound (the ARS limit) but over the USD one: the use-case answers it.
+    [
+      'more than the per-transfer limit',
+      {
+        ...juanToAna,
+        source_account_id: 'acc-juan-usd',
+        beneficiary_id: 'ben-juan-pablo-usd',
+        amount: 10_000.01,
+        currency: 'USD',
+      },
+      'over_limit',
+    ],
   ])('refuses %s and stores nothing', async (_, args, code) => {
     const result = await (await clientFor('juan')).callTool({ name: 'prepare_transfer', arguments: args });
     expect(result.isError).toBe(true);
@@ -88,11 +100,14 @@ describe('mcp-payments tools', () => {
     ['a negative amount', -10],
     ['zero', 0],
     ['fractions of a cent', 10.001],
+    ['more than any currency allows', 2_000_000.01],
+    ['an amount too big for fixed notation', 1e21],
   ])('rejects %s at the schema', async (_, amount) => {
     const result = await (
       await clientFor('juan')
     ).callTool({ name: 'prepare_transfer', arguments: { ...juanToAna, amount } });
     expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('Input validation error');
     expect(repo.drafts).toEqual([]);
   });
 

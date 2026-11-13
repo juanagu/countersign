@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { fail, ok, requireScope, tierMeta, type Principal } from '@poc/mcp-kit';
 import { z } from 'zod';
 import type { Account, AccountsRepository } from './accounts-repository.js';
+import { CATEGORY_GUIDANCE, TRANSACTION_CATEGORIES } from './categories.js';
 
 export const READ_SCOPE = 'accounts:read';
 export const MAX_TRANSACTIONS = 100;
@@ -10,6 +11,11 @@ const NOT_FOUND = () => fail('account_not_found', 'No encontré esa cuenta entre
 
 const accountId = z.string().min(1).max(64);
 const isoDate = z.iso.date();
+// Lower-cased before the enum check so "Supermercado" still finds `supermercado`; the enum stays in the schema.
+const category = z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim().toLowerCase() : value),
+  z.enum(TRANSACTION_CATEGORIES),
+);
 
 function maskNumber(number: string): string {
   return `****${number.slice(-4)}`;
@@ -60,12 +66,13 @@ export function buildAccountsServer(principal: Principal, repo: AccountsReposito
     'list_transactions',
     {
       description:
-        "Lists the customer's transactions, newest first. Amounts are negative for debits. Dates are YYYY-MM-DD, inclusive.",
+        "Lists the customer's transactions, newest first. Amounts are negative for debits. Dates are YYYY-MM-DD, inclusive. " +
+        CATEGORY_GUIDANCE,
       inputSchema: {
         account_id: accountId.optional(),
         from: isoDate.optional(),
         to: isoDate.optional(),
-        category: z.string().min(1).max(40).optional(),
+        category: category.optional(),
         limit: z.number().int().min(1).max(MAX_TRANSACTIONS).default(DEFAULT_TRANSACTIONS),
       },
       annotations: { readOnlyHint: true },
@@ -91,7 +98,8 @@ export function buildAccountsServer(principal: Principal, repo: AccountsReposito
     'spending_summary',
     {
       description:
-        "Totals the customer's spending (debits) by category and currency for a period. Dates are YYYY-MM-DD, inclusive.",
+        "Totals the customer's spending (debits) by category and currency for a period. Dates are YYYY-MM-DD, inclusive. " +
+        CATEGORY_GUIDANCE,
       inputSchema: { from: isoDate, to: isoDate, account_id: accountId.optional() },
       annotations: { readOnlyHint: true },
       _meta: tierMeta('T1'),

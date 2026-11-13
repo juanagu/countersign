@@ -21,7 +21,16 @@ describe('mcp-accounts', () => {
       idpIssuer: 'http://localhost:3000',
       idpJwksUrl: 'http://localhost:3000/.well-known/jwks.json',
       databaseUrl: 'postgres://bank:bank@localhost:5432/bank',
+      bankTimeZone: 'America/Argentina/Buenos_Aires',
     });
+  });
+
+  it('reads the bank time zone from BANK_TIMEZONE', () => {
+    expect(loadConfig({ BANK_TIMEZONE: 'Europe/Madrid' }).bankTimeZone).toBe('Europe/Madrid');
+  });
+
+  it.each(['Mars/Olympus', 'not a zone'])('rejects BANK_TIMEZONE %s', (tz) => {
+    expect(() => loadConfig({ BANK_TIMEZONE: tz })).toThrow();
   });
 
   it('reads its port from MCP_ACCOUNTS_PORT', () => {

@@ -105,10 +105,12 @@ async def fake_servers() -> AsyncIterator[tuple[str, str, Seen]]:
     await asyncio.gather(*tasks)
 
 
-def _exchanger(audiences: list[str] | None = None) -> TokenExchanger:
+def _exchanger(audiences: list[str] | None = None, *, status: int = 200) -> TokenExchanger:
     """A token exchanger against a fake IdP that records each audience it is asked for."""
 
     def token_endpoint(request: httpx.Request) -> httpx.Response:
+        if status != httpx.codes.OK:
+            return httpx.Response(status, json={"error": "server_error"})
         audience = dict(httpx.QueryParams(request.content.decode()))["audience"]
         if audiences is not None:
             audiences.append(audience)
@@ -228,6 +230,39 @@ async def test_loading_accounts_contacts_only_mcp_accounts_and_closes_its_sessio
     sessions = {id(session): session for session in opened}.values()  # It re-enters itself per request.
     assert [session.id for session in sessions] == ["mcp-accounts"]
     assert not any(session.is_running for session in sessions)
+
+
+@pytest.mark.parametrize("failure", ["idp_down", "mcp_unreachable"])
+async def test_a_server_that_fails_to_connect_degrades_the_run_instead_of_failing_it(
+    fake_servers: tuple[str, str, Seen], caplog: pytest.LogCaptureFixture, failure: str
+) -> None:
+    accounts_url, payments_url, seen = fake_servers
+    if failure == "mcp_unreachable":
+        accounts_url = f"http://127.0.0.1:{_free_port()}/mcp"
+    exchanger = _exchanger(status=500 if failure == "idp_down" else 200)
+    seen_tools: list[list[str]] = []
+    instructions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(sorted(t.name for t in info.function_tools))
+        instructions.append(info.instructions or "")
+        if len(seen_tools) == 1:
+            return ModelResponse(parts=[ToolCallPart("load_skill", {"name": "accounts"})])
+        return ModelResponse(parts=[TextPart("El servicio no está disponible.")])
+
+    tools = banking_toolset(exchanger, accounts_url=accounts_url, payments_url=payments_url)
+    agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
+
+    result = await agent.run("¿Qué cuentas tengo?", deps=BotDeps(user_id="ana", access_token=INCOMING_TOKEN))
+
+    assert result.output == "El servicio no está disponible."
+    assert "list_accounts" not in seen_tools[1]
+    assert "unavailable right now: mcp-accounts" in instructions[1]
+    assert "unavailable" not in instructions[0]
+    assert {server for server, _ in seen} <= {"fake-payments"}
+    logged = [r for r in caplog.records if r.getMessage() == "mcp server unavailable"]
+    assert [r.__dict__["server"] for r in logged] == ["mcp-accounts"]  # Once per run, not once per step.
+    assert not any(INCOMING_TOKEN in str(r.__dict__) for r in caplog.records)
 
 
 def test_every_skill_that_gates_a_server_exists() -> None:

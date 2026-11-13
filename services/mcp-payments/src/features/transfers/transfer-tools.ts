@@ -4,14 +4,19 @@ import { z } from 'zod';
 import { executeTransfer } from './execute-transfer.js';
 import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
 import type { VerifyStepUp } from './step-up-verifier.js';
+import { TRANSFER_LIMITS } from './transfer-rules.js';
 import type { Beneficiary, TransferDraft, TransferReceipt, TransfersRepository } from './transfers-repository.js';
 
 export const SCOPES = { readBeneficiaries: 'beneficiaries:read', prepare: 'transfers:prepare' } as const;
 
 const id = z.string().min(1).max(64);
 const currency = z.enum(['ARS', 'USD']);
-/** At most two decimals, positive. */
-const amount = z.number().positive().multipleOf(0.01);
+/** At most two decimals, positive, and no more than the highest limit, so it always converts to cents. */
+const amount = z
+  .number()
+  .positive()
+  .max(Math.max(...Object.values(TRANSFER_LIMITS)))
+  .multipleOf(0.01);
 
 const mask = (value: string) => `****${value.slice(-4)}`;
 

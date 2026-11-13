@@ -6,7 +6,8 @@ The orchestrator agent and its AG-UI endpoint.
 
 - `POST /agent`: AG-UI `RunAgentInput` in, SSE events out (`AGUIAdapter.from_request` → `run_stream` wrapped by
   the guardrails' `guarded_stream` → `streaming_response`).
-- `build_agent(model)`, `BotDeps(user_id, access_token, session_id, guard)`, `SYSTEM_PROMPT`.
+- `build_agent(model, skills, domain_tools, clock)`, `BotDeps(user_id, access_token, session_id, guard)`,
+  `SYSTEM_PROMPT`. The `clock` (`app.core.clock.BankClock`) gives the bank's today for the instructions and policy.
 
 ## Data flow
 

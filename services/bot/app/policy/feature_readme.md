@@ -19,7 +19,7 @@ blocked. A T2/T3 call in a conversation holding third-party text is re-evaluated
 check (an approved T3 resume is not). Writes count against the caps when they execute. Each domain-tool result
 is recorded as grounding evidence for the output guard. Argument bounds: at most 50
 transactions per call (an integer limit), periods ≤ 400 days, transfers > 0 and ≤ ARS 2,000,000 / USD 10,000.
-The bounds fail closed: a period without `to` counts up to today, a date that isn't a `YYYY-MM-DD` string is
+The bounds fail closed: a period without `to` counts up to today on the bank's calendar (`BANK_TIMEZONE`, via `BankClock`), a date that isn't a `YYYY-MM-DD` string is
 denied, and `spending_summary` needs a start date.
 
 ## Approval (T3)

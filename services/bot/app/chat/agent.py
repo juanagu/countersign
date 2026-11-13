@@ -1,11 +1,11 @@
 from collections.abc import Sequence
-from datetime import date
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset
 
 from app.chat.deps import BotDeps
+from app.core.clock import BankClock
 from app.genui.render_ui import genui_toolset
 from app.genui.templates import TemplateToolset
 from app.policy.frequency_caps import FrequencyCaps
@@ -45,8 +45,10 @@ def build_agent(
     *,
     skills: SkillRegistry,
     domain_tools: Sequence[AbstractToolset[BotDeps]] = (),
+    clock: BankClock | None = None,
 ) -> BotAgent:
-    policy, caps = ToolPolicy(skills), FrequencyCaps()  # One cap counter across every domain toolset.
+    clock = clock or BankClock()
+    policy, caps = ToolPolicy(skills, clock=clock), FrequencyCaps()  # One cap counter across every domain toolset.
     toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills), genui_toolset()]
     toolsets += [
         PolicyToolset(wrapped=TemplateToolset(wrapped=toolset), policy=policy, caps=caps) for toolset in domain_tools
@@ -66,7 +68,17 @@ def build_agent(
         return skills.index()
 
     @agent.instructions
+    def unavailable_servers(ctx: RunContext[BotDeps]) -> str | None:
+        if not ctx.deps.unavailable_servers:
+            return None
+        names = ", ".join(sorted(ctx.deps.unavailable_servers))
+        return (
+            f"These banking services are unavailable right now: {names}. Their tools are missing. Tell the "
+            "customer the service is temporarily unavailable and to try again later; do not guess the data."
+        )
+
+    @agent.instructions
     def today(_: RunContext[BotDeps]) -> str:
-        return f"Today is {date.today().isoformat()}."
+        return f"Today is {clock.today().isoformat()}."
 
     return agent

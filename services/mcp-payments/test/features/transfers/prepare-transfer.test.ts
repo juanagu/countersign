@@ -42,6 +42,8 @@ describe('prepareTransfer', () => {
     ["another customer's beneficiary", { beneficiaryId: 'ben-ana-lucia' }, 'beneficiary_not_found'],
     ['a source account in another currency', { sourceAccountId: 'acc-juan-usd', currency: 'USD' }, 'currency_mismatch'],
     ['an amount over the per-transfer limit', { amount: 2_000_000.01 }, 'over_limit'],
+    ['an amount too big for fixed notation', { amount: 1e21 }, 'over_limit'],
+    ['an infinite amount', { amount: Number.POSITIVE_INFINITY }, 'over_limit'],
     ['more than the balance', { amount: 486750.26 }, 'insufficient_funds'],
   ])('rejects %s and stores nothing', async (_, args, code) => {
     const { repo, result } = await prepare(args);

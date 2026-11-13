@@ -46,3 +46,13 @@ def test_settings_reject_a_short_bot_client_secret(bot_env: pytest.MonkeyPatch) 
     bot_env.setenv("BOT_CLIENT_SECRET", "x" * 15)
     with pytest.raises(ValidationError, match="bot_client_secret"):
         Settings()
+
+
+def test_settings_default_the_bank_timezone_to_buenos_aires(bot_env: pytest.MonkeyPatch) -> None:
+    assert Settings().bank_timezone == "America/Argentina/Buenos_Aires"
+
+
+def test_settings_reject_an_unknown_bank_timezone(bot_env: pytest.MonkeyPatch) -> None:
+    bot_env.setenv("BANK_TIMEZONE", "Mars/Olympus_Mons")
+    with pytest.raises(ValidationError, match="bank_timezone"):
+        Settings()
