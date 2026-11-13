@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import sys
@@ -5,6 +6,7 @@ import sys
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import Link, StatusCode
 from uvicorn.logging import AccessFormatter
 
 from app.core.logging import JsonFormatter
@@ -76,3 +78,21 @@ def test_spans_are_redacted_before_export() -> None:
     assert exported.attributes["count"] == 3
     assert exported.events[0].attributes == {"result": "cuenta [cuenta]"}
     assert exported.context.span_id == span.get_span_context().span_id
+
+
+def test_a_failed_spans_status_and_its_link_attributes_are_redacted() -> None:
+    memory = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(RedactingSpanExporter(memory)))
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("earlier") as earlier:
+        pass
+    link = Link(earlier.get_span_context(), {"note": "pedido de ana@example.com"})
+    with contextlib.suppress(ValueError), tracer.start_as_current_span("chat", links=[link]):
+        raise ValueError("no hay CBU 2850590940090418135201 para ana@example.com")
+
+    exported = next(span for span in memory.get_finished_spans() if span.name == "chat")
+    assert exported.status.status_code is StatusCode.ERROR
+    assert exported.status.description == "ValueError: no hay CBU [cbu] para [email]"
+    assert exported.links[0].attributes == {"note": "pedido de [email]"}
+    assert exported.links[0].context.span_id == earlier.get_span_context().span_id
