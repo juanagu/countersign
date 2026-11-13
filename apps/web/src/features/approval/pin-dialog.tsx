@@ -1,22 +1,24 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from '../../shared/ui/button';
-import type { StepUpError } from './lib/step-up-api';
+import type { ApprovalError } from './lib/approval-decision';
+import { canSubmitPin, PIN_LENGTH } from './lib/pin-entry';
 
-const MESSAGES: Record<StepUpError, string> = {
+const MESSAGES: Record<ApprovalError, string> = {
   invalid_pin: 'El PIN no es correcto.',
-  locked: 'Demasiados intentos. Esperá unos minutos y volvé a probar.',
+  locked: 'Demasiados intentos. Esperá 5 minutos y volvé a probar.',
   failed: 'No pudimos verificar tu identidad. Probá de nuevo.',
 };
 
 export interface PinDialogProps {
   onSubmit: (pin: string) => void;
+  onPinChange: () => void;
   onClose: () => void;
   pending: boolean;
-  error: StepUpError | null;
+  error: ApprovalError | null;
 }
 
 /** Step-up PIN entry. App chrome, not an A2UI component: the catalog has no secret inputs. */
-export function PinDialog({ onSubmit, onClose, pending, error }: PinDialogProps) {
+export function PinDialog({ onSubmit, onPinChange, onClose, pending, error }: PinDialogProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [pin, setPin] = useState('');
 
@@ -26,7 +28,7 @@ export function PinDialog({ onSubmit, onClose, pending, error }: PinDialogProps)
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (pin.length === 6 && !pending) onSubmit(pin);
+    if (canSubmitPin(pin, pending, error)) onSubmit(pin);
   }
 
   return (
@@ -36,7 +38,7 @@ export function PinDialog({ onSubmit, onClose, pending, error }: PinDialogProps)
           Confirmá con tu PIN
         </h2>
         <label htmlFor="pin-input" className="muted">
-          PIN de 6 dígitos
+          PIN de {PIN_LENGTH} dígitos
         </label>
         <input
           id="pin-input"
@@ -44,10 +46,13 @@ export function PinDialog({ onSubmit, onClose, pending, error }: PinDialogProps)
           type="password"
           inputMode="numeric"
           autoComplete="one-time-code"
-          pattern="[0-9]{6}"
-          maxLength={6}
+          pattern={`[0-9]{${PIN_LENGTH}}`}
+          maxLength={PIN_LENGTH}
           value={pin}
-          onChange={(event) => setPin(event.target.value.replace(/\D/g, ''))}
+          onChange={(event) => {
+            setPin(event.target.value.replace(/\D/g, ''));
+            onPinChange();
+          }}
           disabled={pending}
           autoFocus
         />
@@ -60,7 +65,7 @@ export function PinDialog({ onSubmit, onClose, pending, error }: PinDialogProps)
           <Button variant="ghost" onClick={onClose} disabled={pending}>
             Volver
           </Button>
-          <Button type="submit" disabled={pending || pin.length !== 6 || error === 'locked'}>
+          <Button type="submit" disabled={!canSubmitPin(pin, pending, error)}>
             {pending ? 'Verificando…' : 'Confirmar'}
           </Button>
         </div>

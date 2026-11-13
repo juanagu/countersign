@@ -107,6 +107,15 @@ describe('executeTransfer', () => {
       expect(repo.debits).toEqual([]);
     });
 
+    it('the draft expired while the execution waited on its row lock', async () => {
+      // The first read passes the pre-check; the repository reads the clock again once it holds the lock.
+      const reads = [NOW, new Date('2026-11-13T12:06:00.000Z')];
+      const clock = () => reads.shift() ?? new Date('2026-11-13T12:06:00.000Z');
+      const result = await executeTransfer({ ...deps(), now: clock }, 'juan', DRAFT.id, await stepUp());
+      expect(result).toMatchObject({ ok: false, error: { code: 'draft_expired' } });
+      expect(repo.debits).toEqual([]);
+    });
+
     it('the same token is used twice (the double click)', async () => {
       const token = await stepUp();
       expect((await executeTransfer(deps(), 'juan', DRAFT.id, token)).ok).toBe(true);

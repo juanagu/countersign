@@ -1,4 +1,5 @@
 import { CopilotChat, CopilotKitProvider } from '@copilotkit/react-core/v2';
+import { RESUME_FAILED_NOTICE } from '../approval/lib/resume-outcome';
 import { TransferApproval } from '../approval/transfer-approval';
 import { bankTemplateRenderer } from '../genui/bank-templates';
 import { bankCatalog } from '../genui/catalog';
@@ -30,6 +31,7 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
   const [signOutFailed, setSignOutFailed] = useState(false);
   // One thread per signed-in user, restored on reload; sign-out starts a new one.
   const [threadId] = useState(() => threadIdFor(user.id));
+  const [resumeFailed, setResumeFailed] = useState(false);
 
   function signOut() {
     setSignOutFailed(false);
@@ -52,6 +54,11 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
           No pudimos cerrar la sesión. Probá de nuevo.
         </p>
       )}
+      {resumeFailed && (
+        <p role="alert" className="chat-alert">
+          {RESUME_FAILED_NOTICE}
+        </p>
+      )}
       <main className="chat-main">
         <CopilotKitProvider
           runtimeUrl={RUNTIME_URL}
@@ -64,7 +71,7 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
           }}
         >
           <StreamReconnect />
-          <TransferApproval />
+          <TransferApproval setResumeFailed={setResumeFailed} />
           <ChatActionsProvider>
             <CopilotChat labels={CHAT_LABELS} threadId={threadId} />
           </ChatActionsProvider>

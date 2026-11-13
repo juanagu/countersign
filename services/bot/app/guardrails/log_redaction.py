@@ -8,10 +8,20 @@ from app.guardrails.pii import redact, redact_value
 _RECORD_FIELDS = frozenset(vars(logging.makeLogRecord({})))
 
 
+def _redact_message(record: logging.LogRecord) -> None:
+    """Redacts the template and each arg in place: formatters such as uvicorn's unpack `args` by position."""
+    if isinstance(record.msg, str):
+        record.msg = redact(record.msg)
+    if record.args:
+        record.args = redact_value(record.args)
+    formatted = record.getMessage()
+    if redact(formatted) != formatted:  # PII in a non-string arg, or split across the template and an arg.
+        record.msg, record.args = redact(formatted), None
+
+
 class RedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = redact(record.getMessage())
-        record.args = None
+        _redact_message(record)
         for key, value in list(vars(record).items()):
             if key not in _RECORD_FIELDS:
                 setattr(record, key, redact_value(value))

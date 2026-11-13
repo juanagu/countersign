@@ -1,21 +1,30 @@
-"""A span-exporter wrapper that redacts PII and credentials from span attributes and events (security rule 7)."""
+"""A span-exporter wrapper that redacts PII and credentials from span attributes, events, links and status."""
 
 from collections.abc import Sequence
 from typing import Any
 
 from opentelemetry.sdk.trace import Event, ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+from opentelemetry.trace import Link, Status
 from opentelemetry.util.types import Attributes
 
-from app.guardrails.pii import redact_value
+from app.guardrails.pii import redact, redact_value
 
 
 def redact_attributes(attributes: Attributes) -> dict[str, Any]:
     return {key: redact_value(value) for key, value in (attributes or {}).items()}
 
 
+def redact_status(status: Status) -> Status:
+    """The SDK sets an exception's `"{type}: {message}"` as the description, and messages can quote PII."""
+    if status.description is None:
+        return status
+    return Status(status.status_code, redact(status.description))
+
+
 def redact_span(span: ReadableSpan) -> ReadableSpan:
     events = [Event(e.name, redact_attributes(e.attributes), e.timestamp) for e in span.events]
+    links = [Link(link.context, redact_attributes(link.attributes)) for link in span.links]
     return ReadableSpan(
         name=span.name,
         context=span.context,
@@ -23,9 +32,9 @@ def redact_span(span: ReadableSpan) -> ReadableSpan:
         resource=span.resource,
         attributes=redact_attributes(span.attributes),
         events=events,
-        links=span.links,
+        links=links,
         kind=span.kind,
-        status=span.status,
+        status=redact_status(span.status),
         start_time=span.start_time,
         end_time=span.end_time,
         instrumentation_scope=span.instrumentation_scope,

@@ -2,6 +2,7 @@ import type { TransferConfirmData } from '@poc/contracts';
 import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanel } from '../../../src/features/approval/approval-panel';
+import { PinDialog } from '../../../src/features/approval/pin-dialog';
 import { findConfirmCard } from '../../../src/features/approval/lib/find-confirm-card';
 import { requestStepUp, StepUpFailed } from '../../../src/features/approval/lib/step-up-api';
 
@@ -49,6 +50,16 @@ describe('ApprovalPanel', () => {
     const html = renderToString(<ApprovalPanel draft={undefined} onDecide={async () => undefined} />);
     expect(html).not.toContain('Confirmar');
     expect(html).toContain('Descartar');
+  });
+});
+
+describe('PinDialog', () => {
+  it('says how long a lockout lasts', () => {
+    const noop = () => undefined;
+    const html = renderToString(
+      <PinDialog pending={false} error="locked" onSubmit={noop} onPinChange={noop} onClose={noop} />,
+    );
+    expect(html).toContain('Esperá 5 minutos');
   });
 });
 

@@ -55,6 +55,7 @@
   border-radius: var(--radius-md);
 }
 
+.approval__error,
 .pin-dialog__error {
   margin: 0;
   font-size: var(--text-sm);

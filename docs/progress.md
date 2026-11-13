@@ -240,15 +240,16 @@ live traffic) hasn't been done on these fixes yet; it is planned on the integrat
 - The judge is pydantic-evals' `judge_input_output` in a small `Judge` evaluator, not `LLMJudge`, so it sees
   only the question, answer, cards, citations and passages (ADR 016).
 - Text checks read the text plus the surface values, because the model often puts the KB answer on the card
-  (F24).
+  (F28).
 - Phoenix has no dashboard API, so the "dashboard" is `make metrics` plus saved filters.
 - `make eval` depends on `make seed`.
 
 **Open:**
 - None of the demo was seen in a browser: the cards, the PIN dialog, the DevTools Offline toggle and the
-  reload (F23, with F7 and F19).
-- The orchestrator reported that CopilotKit 1.87's `resolve` adds a tool message, which the bot rejected on
-  `feat/p6-guardrails`. The eval now sends that message. On this branch the resume succeeds, the receipt is
-  shown and money moves once, so the case passes here; the reported rejection did not reproduce.
+  reload (F27, with F7 and F23).
+- CopilotKit 1.87's `resolve` adds a tool message carrying the resume payload. It broke the resume (and leaked
+  the step-up token into history) on `feat/p6-guardrails`, where history was client-managed; that is fixed there
+  (ADR 013). Under server-owned history the resume worked here too. The eval sends that message, so it guards
+  the browser's real resume path.
 - One judge citation score was 0.6 on a passing case: the deterministic check accepts any one correct doc id,
   while the judge also wants every sentence's passage cited.

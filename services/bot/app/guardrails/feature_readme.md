@@ -11,7 +11,11 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
   `third_party_text_seen`, `write_intent`, `customer_messages`. `RunGuard.unchecked()` is the blocked default.
 - `guarded_stream(events, guard, thread_id, run_id, cancel_run)`: holds AG-UI events until the verdict, then
   runs them through `OutputGuard`; on block cancels the run and sends the safe reply.
-- `OutputGuard(evidence)`: sentence buffering, `pii_leak_check`, `grounding_check`, A2UI surface grounding.
+- `PendingApprovals` (`Guardrails.pending_approvals`): `record()` / `consume()` the approval interrupts raised per
+  user and thread; `recording_interrupts(events, pending, key)` records those a run ends with. Only a resume that
+  consumes them skips the classifier.
+- `OutputGuard(evidence)`: sentence buffering, `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
+  grounding, and a safe `RUN_ERROR` message.
 - `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`.
 - `RedactingFilter` (logging) and `RedactingSpanExporter` (OpenTelemetry), wired in `app/main.py`.
 - `SAFE_REPLIES` (Spanish replies per blocked category), metric names `guardrail.*`.

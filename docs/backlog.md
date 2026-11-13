@@ -42,11 +42,15 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F16 | Bot: log a failed embedder warm-up (done-callback) so a missing model shows before the first question. | todo | Phase 2–3 review 4 |
 | F17 | Bot: derive which skills open which MCP server from the skill files instead of `SKILLS_BY_AUDIENCE`. | todo | Phase 2–3 review 4 |
 | F18 | Bot tests: check the fake MCP servers' tool names, args and tier meta against the real servers' `tools/list` (standards: a double is checked against the real boundary). | todo | Phase 2–3 review 4 |
-| F19 | Resumable streams: browser check of the offline toggle and reload (`apps/web/e2e/resume.spec.ts`, written, never run). | todo | Phase 7 |
-| F20 | BFF runner: make `stop` reach a run on another BFF replica (Redis pub/sub), and let a run outlive its BFF process (the bot writing the log, as the plan first proposed). | todo | Phase 7 |
-| F21 | Restore past the replay window: keep the cards (template/A2UI activity) and a pending approval, e.g. by persisting the display transcript with the conversation. | todo | Phase 7 |
-| F22 | Thread log size: `RUN_STARTED` carries the client's whole message list on every run; store only the new turn and rebuild earlier turns from the previous runs. | todo | Phase 7 |
-| F23 | Demo in a real browser: walk `docs/DEMO.md` at 5173, including the DevTools Offline toggle and reload (Scenario 5) and the PIN dialog; only its HTTP equivalent was run. | todo | Phase 8 |
-| F24 | Knowledge skill: the model often puts the KB answer on a card and writes only "te dejé el detalle en la tarjeta". Decide whether the answer belongs in the text (skill wording) and add an eval check for it. | todo | Phase 8 |
-| F25 | Evals: a `make eval` run costs real tokens and resets the shared bank data (`make seed`). Give it its own database or schema so it can run while a demo is open. | todo | Phase 8 |
-| F26 | Metrics: tokens per run counts only pydantic-ai `chat` spans in the bot; the red-team judge and the eval judge run outside the stack and are not counted. Add cost per run (`operation.cost`) to `make metrics`. | todo | Phase 8 |
+| F19 | Bot guardrails: merge the three JSON walkers (`pii.redact_value`, `output_guard.redact_surface`, `grounding._surface_values`) into one. | todo | Phase 6 review |
+| F20 | Web genui: stop using model-written labels as React keys in `KeyValueListView` and `QuickRepliesView` (duplicates collide). | todo | Phase 6 review |
+| F21 | Bot policy: fold `_require_approval`'s two identical `ApprovalRequired` branches into one condition. | todo | Phase 6 review |
+| F22 | Bot policy: `FrequencyCaps.acquire` prunes every key on each call; prune only the key it counts, or sweep on a timer. | todo | Phase 6 review |
+| F23 | Resumable streams: browser check of the offline toggle and reload (`apps/web/e2e/resume.spec.ts`, written, never run). | todo | Phase 7 |
+| F24 | BFF runner: make `stop` reach a run on another BFF replica (Redis pub/sub), and let a run outlive its BFF process (the bot writing the log, as the plan first proposed). | todo | Phase 7 |
+| F25 | Restore past the replay window: keep the cards (template/A2UI activity) and a pending approval, e.g. by persisting the display transcript with the conversation. | todo | Phase 7 |
+| F26 | Thread log size: `RUN_STARTED` carries the client's whole message list on every run; store only the new turn and rebuild earlier turns from the previous runs. | todo | Phase 7 |
+| F27 | Demo in a real browser: walk `docs/DEMO.md` at 5173, including the DevTools Offline toggle and reload (Scenario 5) and the PIN dialog; only its HTTP equivalent was run. | todo | Phase 8 |
+| F28 | Knowledge skill: the model often puts the KB answer on a card and writes only "te dejé el detalle en la tarjeta". Decide whether the answer belongs in the text (skill wording) and add an eval check for it. | todo | Phase 8 |
+| F29 | Evals: a `make eval` run costs real tokens and resets the shared bank data (`make seed`). Give it its own database or schema so it can run while a demo is open. | todo | Phase 8 |
+| F30 | Metrics: tokens per run counts only pydantic-ai `chat` spans in the bot; the red-team judge and the eval judge run outside the stack and are not counted. Add cost per run (`operation.cost`) to `make metrics`. | todo | Phase 8 |

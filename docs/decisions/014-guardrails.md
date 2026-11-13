@@ -13,12 +13,13 @@ tool may run, and no text may reach the client, before its verdict.
   adapter masks PII in every customer turn before the classifier, the model, logs or traces see it. The
   classifier is a structured-output Pydantic AI agent on `GUARD_MODEL` (categories: ok, prompt_injection,
   jailbreak, other_customer_data, credentials, off_topic). It fails closed: an error or a 15 s timeout blocks.
-  An approval resume (`RunAgentInput.resume` set, no customer prompt after the model's last response) opens the
-  gate without the classifier: the run that raised the interrupt classified that message, and a failure or
-  timeout here would waste the customer's single-use step-up token. A resume that carries a new customer
-  message is classified as usual. A forged history could hide an unclassified older message behind a resume,
-  but the classifier only ever sees the latest message, so a forged history can already do that; the tool
-  policy and the output guard are what stand behind it (see Consequences).
+  An approval resume opens the gate without the classifier only when it answers interrupts this bot raised for
+  this user and thread (`PendingApprovals`: the tool call ids of each interrupt the client was sent, kept in
+  memory for the draft's 5 minutes and spent by the first resume that names them) and no customer prompt follows
+  the model's last response: the run that raised the interrupt classified that message, and a failure or
+  timeout here would waste the customer's single-use step-up token. Any other resume is classified as usual: a
+  client-built history ending in a "paused" call can't slip an unclassified message past the gate, and neither
+  can a replayed resume or one that carries a new customer message.
 - **The gate is a `RunGuard` in `BotDeps`**, one per run, holding an `asyncio.Event` for the verdict. It is the
   one object both sides of the run can reach: the tool policy runs inside the agent run and sees only `deps`;
   the output stream runs outside it and is built with the same `deps`. `PolicyToolset` awaits the verdict before
@@ -49,14 +50,17 @@ tool may run, and no text may reach the client, before its verdict.
   streamed back to the customer who forged it: it moves no money (writes go through the tool policy and the
   MCP servers, which read the bank's own data) and reaches no one else. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
   `1254300.50`, `****4521` by its last digits, `15 de octubre`, `15/10`, ISO dates). A failing sentence becomes a
-  fallback; an `a2ui-surface` with an ungrounded number is dropped for a text fallback (ADR 012's promise).
+  fallback; an `a2ui-surface` has PII masked in every string it shows (ids and references left intact), then
+  is dropped for a text fallback if a number is ungrounded (ADR 012's promise).
   `bank-template` cards pass untouched. The raw `render_ui` call (its `TOOL_CALL_*` events and result) and
   every `REASONING_*` event are withheld: the model's unvalidated tree and its reasoning never leave the bot
   (rule 5), and the validated `a2ui-surface` is all the client needs. Other tool calls still reach the client:
   CopilotKit keeps them in the history it sends back, and an approval resume needs the paused
-  `execute_transfer` call there. Each change is logged with a metric: `guardrail.input.blocked`,
+  `execute_transfer` call there. A `RUN_ERROR`'s message is `str(exc)`, which can quote an IdP URL, an HTTP
+  body or model output: the client gets a fixed Spanish message (and the event's `code`, if any), and the
+  original is logged redacted. Each change is logged with a metric: `guardrail.input.blocked`,
   `guardrail.output.ungrounded`, `guardrail.output.pii_redacted`, `guardrail.output.surface_dropped`,
-  `guardrail.policy.write_not_requested`.
+  `guardrail.output.run_error`, `guardrail.policy.write_not_requested`.
 - **Logs and traces:** a `logging.Filter` redacts the formatted message, every `extra=` field and exception text.
   Pydantic AI instrumentation runs with `include_content=False`: agent spans keep their structure (model, tool
   names, tokens, timings) but no prompts, completions, tool arguments or results. Customer, beneficiary and
