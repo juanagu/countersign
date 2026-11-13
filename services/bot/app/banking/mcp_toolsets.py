@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -8,6 +9,8 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 
 from app.banking.token_exchange import TokenExchanger
 from app.chat.deps import BotDeps
+
+logger = logging.getLogger(__name__)
 
 ACCOUNTS_AUDIENCE = "mcp-accounts"
 PAYMENTS_AUDIENCE = "mcp-payments"
@@ -38,6 +41,7 @@ class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
     template: MCPToolset[BotDeps]
     needed_by: frozenset[str]
     _session: MCPToolset[BotDeps] | None = field(default=None, init=False)
+    _unavailable: bool = field(default=False, init=False)
 
     @property
     def id(self) -> str | None:
@@ -52,9 +56,15 @@ class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
 
     async def get_tools(self, ctx: RunContext[BotDeps]) -> dict[str, ToolsetTool[BotDeps]]:
         if self._session is None:
-            if not ctx.deps.loaded_skills & self.needed_by:
+            if self._unavailable or not ctx.deps.loaded_skills & self.needed_by:
                 return {}
-            self._session = await self._connect(ctx)
+            try:
+                self._session = await self._connect(ctx)
+            # Whatever broke (IdP refusal, network, MCP handshake), this server is down for the run, not the
+            # whole chat: the model hears it from the instructions and can tell the customer.
+            except Exception as error:
+                self._mark_unavailable(ctx, error)
+                return {}
         return await self._session.get_tools(ctx)
 
     async def call_tool(
@@ -67,6 +77,12 @@ class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
     async def __aexit__(self, *args: Any) -> bool | None:
         session, self._session = self._session, None
         return await session.__aexit__(*args) if session else None
+
+    def _mark_unavailable(self, ctx: RunContext[BotDeps], error: Exception) -> None:
+        self._unavailable = True
+        ctx.deps.unavailable_servers.add(self.template.id or self.template.label)
+        # Only the type: an error message could echo a URL or a token.
+        logger.warning("mcp server unavailable", extra={"server": self.template.id, "error": type(error).__name__})
 
     async def _connect(self, ctx: RunContext[BotDeps]) -> MCPToolset[BotDeps]:
         session = await self.template.for_run(ctx)

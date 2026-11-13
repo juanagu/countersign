@@ -12,3 +12,5 @@ class BotDeps:
     loaded_skills: set[str] = field(default_factory=set)
     # Knowledge-base audiences this caller may read.
     audiences: tuple[Audience, ...] = ("public", "customer")
+    # MCP servers that failed to connect this run; the model is told so it can say the service is down.
+    unavailable_servers: set[str] = field(default_factory=set)

@@ -1,5 +1,7 @@
 import { createLocalJWKSet, jwtVerify } from 'jose';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createApp } from '../../../src/app.js';
+import { TokenIssuer } from '../../../src/features/idp/token-issuer.js';
 import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER } from '../../support/build-app.js';
 
 const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
@@ -55,6 +57,42 @@ describe('POST /token (token exchange)', () => {
     expect(await res.json()).toEqual({ error });
   });
 
+  describe('a subject token close to expiry', () => {
+    afterEach(() => vi.useRealTimers());
+
+    // The bot token lives 300 s; jump to `remaining` seconds before its exp, then exchange it.
+    async function exchangeWithRemaining(remaining: number) {
+      const { app, issuer } = await buildTestApp();
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const issuedAt = Math.floor(Date.now() / 1000);
+      vi.setSystemTime(issuedAt * 1000);
+      const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+      vi.setSystemTime((issuedAt + 300 - remaining) * 1000);
+      return app.request('/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
+        body: new URLSearchParams({
+          grant_type: GRANT,
+          subject_token: botToken,
+          subject_token_type: ACCESS,
+          audience: 'mcp-accounts',
+        }),
+      });
+    }
+
+    it.each([1, 4])('answers invalid_grant with %i s left, instead of a token dead on arrival', async (remaining) => {
+      const res = await exchangeWithRemaining(remaining);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid_grant' });
+    });
+
+    it('issues a token capped at the subject token expiry with 5 s left', async () => {
+      const res = await exchangeWithRemaining(5);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { expires_in: number }).expires_in).toBe(5);
+    });
+  });
+
   it('rejects a session token (aud=bff) as subject: only the bot token can be exchanged', async () => {
     const { app, issuer } = await buildTestApp();
     const session = await issuer.issueSession({ id: 'ana', name: 'Ana Gómez' });
@@ -79,6 +117,50 @@ describe('POST /token (token exchange)', () => {
   ])('rejects %s with 401', async (_, authorization) => {
     const { res } = await exchange({}, authorization);
     expect(res.status).toBe(401);
+  });
+
+  describe('client secrets with reserved characters (RFC 6749 §2.3.1)', () => {
+    const SECRET = 'colon:plus+space pct%-0123456789';
+
+    async function exchangeAs(authorization: string) {
+      const issuer = await TokenIssuer.create(TEST_ISSUER);
+      const app = createApp({
+        issuer,
+        botAgentUrl: 'http://bot.invalid/agent',
+        cookieSecure: false,
+        clients: { bot: SECRET },
+        stepUpPin: '123456',
+      });
+      const res = await app.request('/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization },
+        body: new URLSearchParams({
+          grant_type: GRANT,
+          subject_token: await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' }),
+          subject_token_type: ACCESS,
+          audience: 'mcp-accounts',
+        }),
+      });
+      return res.status;
+    }
+    const formEncode = (value: string) => new URLSearchParams({ v: value }).toString().slice('v='.length);
+
+    it('accepts a form-encoded secret, splitting only on the first colon', async () => {
+      expect(await exchangeAs(basic('bot', formEncode(SECRET)))).toBe(200);
+    });
+
+    it('accepts a raw colon in the secret', async () => {
+      expect(await exchangeAs(basic('bot', formEncode(SECRET).replaceAll('%3A', ':')))).toBe(200);
+    });
+
+    it.each([
+      ['the secret cut at its first colon', basic('bot', 'colon')],
+      ['the secret not form-encoded', basic('bot', SECRET)],
+      ['a malformed escape', basic('bot', '%zz')],
+      ['no colon at all', `Basic ${Buffer.from('bot').toString('base64')}`],
+    ])('rejects %s with 401', async (_, authorization) => {
+      expect(await exchangeAs(authorization)).toBe(401);
+    });
   });
 
   it('rejects a JSON body', async () => {

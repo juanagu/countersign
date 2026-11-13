@@ -18,6 +18,8 @@ const BOT_TOKEN_TTL_SECONDS = 5 * 60;
 const EXCHANGED_TOKEN_TTL_SECONDS = 5 * 60;
 export const STEP_UP_TTL_SECONDS = 2 * 60;
 export const STEP_UP_AUDIENCE = 'mcp-payments';
+/** Below this, an exchanged token would expire before the caller could use it. */
+export const MIN_EXCHANGED_TOKEN_TTL_SECONDS = 5;
 
 export interface BotTokenClaims {
   sub: string;
@@ -77,10 +79,14 @@ export class TokenIssuer {
     return this.sign({ scope: 'chat' }, session.sub, BOT_AUDIENCE, BOT_TOKEN_TTL_SECONDS);
   }
 
-  /** Mints an audience-bound token for one downstream resource server. Returns it with its lifetime. */
-  async issueExchanged(req: ExchangedTokenRequest): Promise<{ token: string; expiresIn: number }> {
+  /**
+   * Mints an audience-bound token for one downstream resource server. Returns it with its lifetime, or
+   * undefined when the subject token has less than MIN_EXCHANGED_TOKEN_TTL_SECONDS left.
+   */
+  async issueExchanged(req: ExchangedTokenRequest): Promise<{ token: string; expiresIn: number } | undefined> {
     const now = Math.floor(Date.now() / 1000);
-    const expiresIn = Math.max(0, Math.min(EXCHANGED_TOKEN_TTL_SECONDS, req.notAfter - now));
+    const expiresIn = Math.min(EXCHANGED_TOKEN_TTL_SECONDS, req.notAfter - now);
+    if (expiresIn < MIN_EXCHANGED_TOKEN_TTL_SECONDS) return undefined;
     const token = await this.sign(
       { scope: req.scopes.join(' '), act: { sub: req.actor } },
       req.sub,

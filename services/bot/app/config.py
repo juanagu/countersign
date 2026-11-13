@@ -1,7 +1,10 @@
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.clock import DEFAULT_BANK_TIMEZONE
 
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 # The repo checkout layout; containers set KB_DIR instead (the path need not exist there).
@@ -28,5 +31,15 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://bank:bank@localhost:5432/bank"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
     embedding_cache_dir: str | None = None
+    bank_timezone: str = DEFAULT_BANK_TIMEZONE  # The bank's day for "today" and open-ended periods.
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "bot"
+
+    @field_validator("bank_timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)  # An unknown zone fails at startup, not on the first chat.
+        except ZoneInfoNotFoundError as error:
+            raise ValueError(f"unknown time zone {value!r}") from error
+        return value
