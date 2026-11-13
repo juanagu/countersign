@@ -8,7 +8,7 @@ The bot's connection to the MCP servers.
   Each wraps an `MCPToolset` and connects only once a loaded skill needs that server (`SKILLS_BY_AUDIENCE`).
   MCP `isError` results reach the model as failed tool results (`tool_error_behavior='failed'`), not retries.
 - `TokenExchanger.token_for(subject_token, audience)`: RFC 8693 exchange at the IdP's `/token`, as client
-  `bot` (HTTP Basic), cached per subject token and audience until 30 s before expiry.
+  `bot` (HTTP Basic). Not cached: each bot token is fresh per request and each run exchanges once per server.
 
 ## Data flow
 
