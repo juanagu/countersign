@@ -2,10 +2,16 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+from pydantic_ai import Agent
 
-from tests.conftest import STREAMED_CHUNKS, SigningKey
+from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier, http_jwks_fetcher
+from app.chat.agent import BotDeps
+from app.config import Settings
+from app.main import create_app
+from tests.conftest import ISSUER, STREAMED_CHUNKS, TEST_MODEL, SigningKey
 
 SSE = {"accept": "text/event-stream"}
 
@@ -57,3 +63,15 @@ async def test_user_identity_comes_from_the_token_not_the_request_body(
 
     assert res.status_code == 200
     assert seen_user_ids == ["ana"]
+
+
+async def test_a_non_json_jwks_answer_is_a_503_not_a_401_or_500(
+    agent: Agent[BotDeps, str], signing_key: SigningKey, run_input: Callable[..., dict[str, Any]]
+) -> None:
+    idp = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, text="<html>proxy</html>")))
+    verifier = JwksTokenVerifier(http_jwks_fetcher(idp, "http://idp.test/jwks"), issuer=ISSUER, audience=BOT_AUDIENCE)
+    app = create_app(Settings(bot_model=TEST_MODEL), agent=agent, token_verifier=verifier)
+    async with idp, AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = {**SSE, "authorization": f"Bearer {signing_key.token()}"}
+        res = await client.post("/agent", json=run_input(), headers=headers)
+    assert res.status_code == 503

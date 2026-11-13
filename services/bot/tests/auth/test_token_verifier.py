@@ -1,10 +1,17 @@
 import time
 from typing import Any
 
+import httpx
 import jwt
 import pytest
 
-from app.auth.token_verifier import BOT_AUDIENCE, InvalidTokenError, JwksTokenVerifier
+from app.auth.token_verifier import (
+    BOT_AUDIENCE,
+    InvalidTokenError,
+    JwksTokenVerifier,
+    JwksUnavailableError,
+    http_jwks_fetcher,
+)
 from tests.conftest import ISSUER, SigningKey
 
 
@@ -52,22 +59,100 @@ async def test_rejects_garbage(verifier: JwksTokenVerifier) -> None:
         await verifier.verify("not-a-jwt")
 
 
-async def test_refetches_jwks_for_an_unknown_kid_but_rate_limits_it(signing_key: SigningKey) -> None:
-    rotated = SigningKey(kid="rotated")
-    calls = 0
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
 
-    async def fetch() -> dict[str, Any]:
-        nonlocal calls
-        calls += 1
-        return {"keys": [signing_key.jwk()] if calls == 1 else [rotated.jwk()]}
+    def __call__(self) -> float:
+        return self.now
 
-    verifier = JwksTokenVerifier(fetch, issuer=ISSUER, audience=BOT_AUDIENCE, min_refresh_seconds=0)
+
+class FakeJwks:
+    """A JWKS endpoint whose answer the test changes, counting fetches."""
+
+    def __init__(self, *keys: SigningKey) -> None:
+        self.answer: object = {"keys": [key.jwk() for key in keys]}
+        self.calls = 0
+
+    async def __call__(self) -> object:
+        self.calls += 1
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+def _verifier(jwks: FakeJwks, clock: FakeClock) -> JwksTokenVerifier:
+    return JwksTokenVerifier(jwks, issuer=ISSUER, audience=BOT_AUDIENCE, min_refresh_seconds=10, clock=clock)
+
+
+async def test_picks_up_a_key_rotated_right_after_the_last_fetch(signing_key: SigningKey) -> None:
+    jwks, clock = FakeJwks(signing_key), FakeClock()
+    verifier = _verifier(jwks, clock)
     await verifier.verify(signing_key.token())
-    assert (await verifier.verify(rotated.token())).user_id == "ana"
-    assert calls == 2
 
-    limited = JwksTokenVerifier(fetch, issuer=ISSUER, audience=BOT_AUDIENCE, min_refresh_seconds=60)
+    rotated = SigningKey(kid="rotated")
+    jwks.answer = {"keys": [rotated.jwk()]}
+    clock.now += 1
+    assert (await verifier.verify(rotated.token())).user_id == "ana"
+    assert jwks.calls == 2
+
+
+async def test_fetches_at_most_once_per_unknown_kid_per_interval(signing_key: SigningKey) -> None:
+    jwks, clock = FakeJwks(signing_key), FakeClock()
+    verifier = _verifier(jwks, clock)
+    unknown = SigningKey(kid="unknown")
     for _ in range(3):
         with pytest.raises(InvalidTokenError):
-            await limited.verify(SigningKey(kid="unknown").token())
-    assert calls == 3
+            await verifier.verify(unknown.token())
+    assert jwks.calls == 1
+
+    clock.now += 10
+    with pytest.raises(InvalidTokenError):
+        await verifier.verify(unknown.token())
+    assert jwks.calls == 2
+
+
+async def test_rate_limits_failed_fetches_across_kids(signing_key: SigningKey) -> None:
+    jwks, clock = FakeJwks(signing_key), FakeClock()
+    jwks.answer = JwksUnavailableError("idp down")
+    verifier = _verifier(jwks, clock)
+    for kid in ("a", "b", "c"):
+        with pytest.raises(JwksUnavailableError):
+            await verifier.verify(SigningKey(kid=kid).token())
+    assert jwks.calls == 1
+
+    jwks.answer = {"keys": [signing_key.jwk()]}
+    clock.now += 10
+    assert (await verifier.verify(signing_key.token())).user_id == "ana"
+    assert jwks.calls == 2
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param("<html>oops</html>", id="not an object"),
+        pytest.param({"no_keys": []}, id="no keys member"),
+        pytest.param({"keys": "nope"}, id="keys not a list"),
+        pytest.param({"keys": [{"kid": "x"}]}, id="key without kty"),
+        pytest.param({"keys": [{"kid": "x", "kty": "EC", "crv": "P-256", "x": "!", "y": "!"}]}, id="bad key material"),
+    ],
+)
+async def test_a_malformed_jwks_is_unavailable_not_an_invalid_token(signing_key: SigningKey, answer: object) -> None:
+    jwks = FakeJwks()
+    jwks.answer = answer
+    with pytest.raises(JwksUnavailableError):
+        await _verifier(jwks, FakeClock()).verify(signing_key.token())
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(httpx.Response(200, text="<html>not json</html>"), id="not json"),
+        pytest.param(httpx.Response(500, json={"error": "boom"}), id="server error"),
+    ],
+)
+async def test_http_fetcher_maps_bad_responses_to_unavailable(response: httpx.Response) -> None:
+    transport = httpx.MockTransport(lambda _: response)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(JwksUnavailableError):
+            await http_jwks_fetcher(client, "http://idp.test/.well-known/jwks.json")()
