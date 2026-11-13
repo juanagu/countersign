@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    RunErrorEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -20,7 +22,14 @@ from ag_ui.core import (
 )
 
 from app.guardrails.grounding import Evidence
-from app.guardrails.output_guard import SURFACE_FALLBACK, UNGROUNDED_FALLBACK, OutputGuard, split_sentences
+from app.guardrails.output_guard import (
+    RUN_ERROR_MESSAGE,
+    RUN_ERROR_METRIC,
+    SURFACE_FALLBACK,
+    UNGROUNDED_FALLBACK,
+    OutputGuard,
+    split_sentences,
+)
 
 MID = "m1"
 
@@ -129,3 +138,23 @@ def test_reasoning_never_leaves_the_bot(evidence: Evidence) -> None:
         ReasoningEndEvent(type=EventType.REASONING_END, message_id="t"),
     ]
     assert _run(OutputGuard(evidence), reasoning) == []
+
+
+def test_a_run_error_reaches_the_client_as_a_safe_message_and_is_logged_redacted(
+    evidence: Evidence, caplog: pytest.LogCaptureFixture
+) -> None:
+    raw = "POST http://idp:3000/token failed: 400 {'error': 'invalid_grant'} for ana@example.com"
+    error = RunErrorEvent(type=EventType.RUN_ERROR, message=raw, code="model_error")
+    with caplog.at_level(logging.ERROR):
+        out = _run(OutputGuard(evidence), [error])
+    assert len(out) == 1 and isinstance(out[0], RunErrorEvent)
+    assert out[0].message == RUN_ERROR_MESSAGE and out[0].code == "model_error"
+    logged = [r for r in caplog.records if getattr(r, "metric", None) == RUN_ERROR_METRIC]
+    assert len(logged) == 1
+    assert "invalid_grant" in logged[0].error_message and "ana@example.com" not in logged[0].error_message
+    assert logged[0].error_code == "model_error"
+
+
+def test_a_run_error_without_a_code_keeps_none(evidence: Evidence) -> None:
+    out = _run(OutputGuard(evidence), [RunErrorEvent(type=EventType.RUN_ERROR, message="boom")])
+    assert isinstance(out[0], RunErrorEvent) and out[0].code is None and out[0].message == RUN_ERROR_MESSAGE
