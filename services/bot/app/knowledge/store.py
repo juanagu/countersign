@@ -55,7 +55,9 @@ class PgKnowledgeStore:
 
     async def replace_all(self, chunks: Sequence[Chunk], embeddings: Sequence[list[float]], dim: int) -> None:
         async with self._pool.connection() as conn, conn.transaction():
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            # Pinned to public: the default search path puts the role's own schema ("bank") first, and `make seed`
+            # drops that schema with CASCADE, which would take the extension and every vector column with it.
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public")
             await conn.execute("DROP SCHEMA IF EXISTS kb CASCADE")
             await conn.execute("CREATE SCHEMA kb")
             await conn.execute(
