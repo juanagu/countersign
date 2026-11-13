@@ -18,6 +18,8 @@ Work through it phase by phase.
   phase summary.
 - **Record decisions.** Any choice not settled here (library, wire format, workaround)
   gets a short ADR in `docs/decisions/NNN-title.md`: context, decision, consequences.
+- **Track work in `docs/backlog.md`**, not GitHub Issues or a Project board: one row per phase plus
+  follow-ups. Update a row when its status changes.
 - **Stay in scope.** Don't add services, frameworks or features the plan doesn't ask
   for. If something seems missing, propose it in the phase summary instead.
 - **Tests are part of done.** Every phase adds tests for what it built (pytest for

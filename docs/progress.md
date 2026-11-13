@@ -1,7 +1,7 @@
 # Progress
 
 One section per phase of [`PLAN.md`](PLAN.md): what was built, what deviated, what is open.
-Issues: Phase N is issue #N+1 on GitHub.
+Status and follow-ups: [`backlog.md`](backlog.md).
 
 ## Phase 0 — Scaffold (#1)
 
