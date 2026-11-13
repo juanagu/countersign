@@ -22,6 +22,10 @@ the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` al
   followed by the call's real result (or Pydantic AI marks the call interrupted). The web app also removes
   that message from `agent.messages` once `resolve` settles, so the spent token stops travelling.
   `override_args` reaches only the tool call itself: the history keeps the model's arguments (`draft_id`).
+- **A failed resume is recovered by asking again:** `useInterrupt` drops the interrupt when the resume run
+  starts and can't resume after it fails (CopilotKit's `runAgent` swallows the failure). The chat, not the
+  unmounted panel, then says "No pudimos confirmar la transferencia. Pedime de nuevo que la envíe."; the bot
+  raises a new interrupt for the same draft and the customer steps up again.
 - **The panel shows server data:** the approval panel looks up the `transfer-confirm` server template for
   the interrupt's `draft_id` in the thread. It never displays the interrupt's model-proposed arguments.
 - **Step-up:** `POST /auth/step-up` (session, JSON, PIN `123456`, a third wrong PIN within 15 min of the streak's first locks it for 5 min from that failure; older failures are forgotten, so a typo days later can't lock anyone out) signs

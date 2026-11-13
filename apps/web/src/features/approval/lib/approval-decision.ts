@@ -8,16 +8,17 @@ export interface ApprovalDecision {
   reason?: string;
 }
 
-export type OnDecide = (decision: ApprovalDecision) => Promise<unknown>;
+/** Settles once CopilotKit's resume run ends; a failure is reported by the chat, not here (see `resume-outcome`). */
+export type OnDecide = (decision: ApprovalDecision) => Promise<void>;
 
 /** A ref, not state: a double click lands before React re-renders the disabled button. */
 export interface InFlight {
   current: boolean;
 }
 
-export type ApprovalError = StepUpError | 'resume_failed';
+export type ApprovalError = StepUpError;
 
-/** `busy`: another decision is in flight or done. `failed`: the customer can try again. */
+/** `busy`: another decision is in flight or done. `failed`: the step-up failed and the customer can try again. */
 export type DecisionResult = { kind: 'done' } | { kind: 'busy' } | { kind: 'failed'; error: ApprovalError };
 
 const CANCEL: ApprovalDecision = { approved: false, reason: 'El cliente canceló la transferencia.' };
@@ -25,20 +26,16 @@ const DONE: DecisionResult = { kind: 'done' };
 const BUSY: DecisionResult = { kind: 'busy' };
 const failed = (error: ApprovalError): DecisionResult => ({ kind: 'failed', error });
 
-async function resume(guard: InFlight, onDecide: OnDecide, decision: ApprovalDecision): Promise<DecisionResult> {
-  try {
-    await onDecide(decision);
-    return DONE;
-  } catch {
-    guard.current = false; // A failed resume decided nothing: Confirm and Cancel work again.
-    return failed('resume_failed');
-  }
+/** The guard stays held: CopilotKit answers an interrupt once, so after a resume there is nothing left to decide. */
+async function resume(onDecide: OnDecide, decision: ApprovalDecision): Promise<DecisionResult> {
+  await onDecide(decision);
+  return DONE;
 }
 
 export async function cancelTransfer(guard: InFlight, onDecide: OnDecide): Promise<DecisionResult> {
   if (guard.current) return BUSY;
   guard.current = true;
-  return resume(guard, onDecide, CANCEL);
+  return resume(onDecide, CANCEL);
 }
 
 /** Step-up, then resume. The guard covers both, so a second click can't start a second step-up. */
@@ -57,7 +54,7 @@ export async function confirmTransfer(
     guard.current = false;
     return failed(failure instanceof StepUpFailed ? failure.reason : 'failed');
   }
-  return resume(guard, deps.onDecide, {
+  return resume(deps.onDecide, {
     approved: true,
     editedArgs: { draft_id: draft.draftId, step_up_token: token },
   });

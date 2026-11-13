@@ -2,13 +2,10 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from '../../shared/ui/button';
 import type { ApprovalError } from './lib/approval-decision';
 
-export const RESUME_FAILED_MESSAGE = 'No pudimos completar la confirmación. Probá de nuevo.';
-
 const MESSAGES: Record<ApprovalError, string> = {
   invalid_pin: 'El PIN no es correcto.',
   locked: 'Demasiados intentos. Esperá unos minutos y volvé a probar.',
   failed: 'No pudimos verificar tu identidad. Probá de nuevo.',
-  resume_failed: RESUME_FAILED_MESSAGE,
 };
 
 export interface PinDialogProps {
