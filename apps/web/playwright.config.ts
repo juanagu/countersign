@@ -11,6 +11,8 @@ export default defineConfig({
   reporter: [['list']],
   outputDir: process.env.E2E_OUTPUT_DIR ?? 'test-results',
   use: {
+    // The installed Google Chrome: no browser download needed on a dev machine.
+    channel: process.env.E2E_CHANNEL ?? 'chrome',
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5173',
     trace: 'retain-on-failure',
     locale: 'es-AR',
