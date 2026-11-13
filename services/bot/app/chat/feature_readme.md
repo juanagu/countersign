@@ -15,3 +15,8 @@ Verified `Principal` → `BotDeps` (identity from the token only, a `RunGuard` p
 `BOT_MODEL`, concurrent with the input classifier → events held until the verdict → text released a sentence at a
 time as `TEXT_MESSAGE_CONTENT` events after the output checks. Customer turns reach the model with PII masked. The system prompt is server-owned; client-supplied
 AG-UI state is ignored.
+
+History is server-owned (ADR 015): the adapter loads the conversation `"{user}:{threadId}"` from the
+`ConversationStore` under the user's scope, takes only the client's new turn (its messages after the last assistant
+response), and saves what the run added. The guard's customer messages, the third-party-text flag and the skills to
+pre-load all come from that stored history, never from what the client echoes back.

@@ -4,6 +4,7 @@ from http import HTTPStatus
 from fastapi import APIRouter, Request, Response
 from pydantic import ValidationError
 from pydantic_ai import CancellationToken, DeferredToolRequests
+from pydantic_ai.conversation_store import ConversationStore
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.ag_ui import AGUIAdapter
@@ -11,6 +12,7 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
+from app.conversations.history import conversation_id_for, new_turn, stored_messages
 from app.guardrails.messages import customer_texts, redact_customer_turns, tools_returned_in
 from app.guardrails.pipeline import Guardrails
 from app.guardrails.stream import guarded_stream
@@ -36,19 +38,20 @@ def _invalid_body(error: ValidationError) -> Response:
     return Response(content=content, media_type="application/json", status_code=HTTPStatus.UNPROCESSABLE_ENTITY)
 
 
-def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails) -> APIRouter:
+def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, store: ConversationStore) -> APIRouter:
     router = APIRouter()
 
     @router.post("/agent")
     async def run_agent(request: Request, principal: CurrentPrincipal) -> Response:
+        # The stored conversation is the history; the client contributes only its new turn (ADR 015).
         try:
-            adapter = await BankAGUIAdapter.from_request(request, agent=agent)
+            adapter = await BankAGUIAdapter.from_request(
+                request, agent=agent, conversation_store=store, conversation_scope=principal.user_id
+            )
         except ValidationError as error:
             return _invalid_body(error)
-        body = await request.json()  # Starlette caches it; the adapter read the same body.
-        raw_messages = body.get("messages") if isinstance(body, dict) else None
-        restored = skills_loaded_in(raw_messages if isinstance(raw_messages, list) else [])
-        history = adapter.messages
+        run = adapter.run_input
+        history = [*await stored_messages(store, principal.user_id, run.thread_id), *new_turn(adapter.messages)]
         guard = guardrails.start_run(
             user_id=principal.user_id,
             customer_messages=customer_texts(history),
@@ -57,17 +60,20 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails) 
         deps = BotDeps(
             user_id=principal.user_id,
             access_token=principal.token,
-            loaded_skills={name for name in restored if skills.get(name)},
-            session_id=adapter.run_input.thread_id,
+            loaded_skills={name for name in skills_loaded_in(history) if skills.get(name)},
+            session_id=run.thread_id,
             guard=guard,
         )
         token = CancellationToken()
         try:
-            events = adapter.run_stream(deps=deps, cancellation_token=token)
+            events = adapter.run_stream(
+                deps=deps,
+                cancellation_token=token,
+                conversation_id=conversation_id_for(principal.user_id, run.thread_id),
+            )
         except BaseException:
             guard.cancel()
             raise
-        run = adapter.run_input
         guarded = guarded_stream(events, guard, thread_id=run.thread_id, run_id=run.run_id, cancel_run=token.cancel)
         return adapter.streaming_response(guarded)
 

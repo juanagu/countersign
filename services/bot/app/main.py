@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from fastapi import FastAPI
 from psycopg_pool import AsyncConnectionPool
+from pydantic_ai.conversation_store import ConversationStore, InMemoryConversationStore
 
 from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier, TokenVerifier, http_jwks_fetcher
 from app.banking.mcp_toolsets import banking_toolset
@@ -13,6 +14,8 @@ from app.banking.token_exchange import TokenExchanger
 from app.chat.agent import BotAgent, build_agent
 from app.chat.routes import chat_router
 from app.config import Settings
+from app.conversations.pg_store import PgConversationStore
+from app.conversations.routes import conversations_router
 from app.core.clock import BankClock
 from app.core.logging import configure_logging
 from app.core.telemetry import setup_telemetry
@@ -55,6 +58,7 @@ def create_app(
     agent: BotAgent | None = None,
     token_verifier: TokenVerifier | None = None,
     guardrails: Guardrails | None = None,
+    conversation_store: ConversationStore | None = None,
 ) -> FastAPI:
     """Composition root. Served with `uvicorn app.main:create_app --factory`."""
     settings = settings or Settings()
@@ -62,11 +66,16 @@ def create_app(
     http = httpx.AsyncClient()
     pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=5, open=False)
     embedder = LazyEmbedder(FastEmbedEmbedder, settings.embedding_model, settings.embedding_cache_dir)
+    # An injected agent means a test without Postgres, so its conversations stay in memory unless given a store.
+    pg_store = PgConversationStore(pool) if agent is None and conversation_store is None else None
+    store = conversation_store or pg_store or InMemoryConversationStore()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if agent is None:
             await pool.open(wait=False)
+            if pg_store is not None:
+                await pg_store.ensure_schema()
             # Load the embedding model in the background so the first question doesn't wait for it.
             warm_up = asyncio.create_task(embedder.warm_up())
         yield
@@ -87,6 +96,7 @@ def create_app(
     skills = SkillRegistry.from_dir(settings.skills_dir)
     guardrails = guardrails or Guardrails.on_model(settings.guard_model)
     run_agent = agent or _default_agent(settings, http, pool, embedder, skills)
-    app.include_router(chat_router(run_agent, skills, guardrails))
+    app.include_router(chat_router(run_agent, skills, guardrails, store))
+    app.include_router(conversations_router(store))
     setup_telemetry(app, settings, wrap_exporter=RedactingSpanExporter)
     return app

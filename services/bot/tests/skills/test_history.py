@@ -1,25 +1,21 @@
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+
 from app.skills.history import skills_loaded_in
 
 
-def _call(name: str, arguments: str) -> dict[str, object]:
-    return {"id": "c", "type": "function", "function": {"name": name, "arguments": arguments}}
-
-
-def test_reads_skills_loaded_by_earlier_assistant_turns() -> None:
+def test_reads_skills_loaded_by_earlier_model_turns() -> None:
     messages = [
-        {"role": "user", "content": "hola"},
-        {"role": "assistant", "toolCalls": [_call("load_skill", '{"name": "payments"}')]},
-        {"role": "tool", "content": "...", "toolCallId": "c"},
-        {"role": "assistant", "toolCalls": [_call("list_accounts", "{}"), _call("load_skill", '{"name": "accounts"}')]},
+        ModelRequest(parts=[UserPromptPart("hola")]),
+        ModelResponse(parts=[ToolCallPart("load_skill", {"name": "payments"})]),
+        ModelResponse(parts=[ToolCallPart("list_accounts", {}), ToolCallPart("load_skill", '{"name": "accounts"}')]),
     ]
     assert skills_loaded_in(messages) == {"payments", "accounts"}
 
 
-def test_ignores_non_assistant_and_malformed_calls() -> None:
+def test_ignores_other_tools_and_malformed_calls() -> None:
     messages = [
-        {"role": "user", "toolCalls": [_call("load_skill", '{"name": "payments"}')]},
-        {"role": "assistant", "toolCalls": [_call("load_skill", "not json")]},
-        {"role": "assistant", "toolCalls": [_call("load_skill", '{"name": 7}')]},
-        {"role": "assistant", "toolCalls": None},
+        ModelResponse(parts=[ToolCallPart("load_skill", "not json")]),
+        ModelResponse(parts=[ToolCallPart("load_skill", {"name": 7})]),
+        ModelResponse(parts=[TextPart("load_skill payments")]),
     ]
     assert skills_loaded_in(messages) == set()
