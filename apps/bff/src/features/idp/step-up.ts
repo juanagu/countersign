@@ -6,6 +6,8 @@ import { STEP_UP_TTL_SECONDS, type TokenIssuer } from './token-issuer.js';
 
 const MAX_FAILURES = 3;
 const LOCKOUT_MS = 5 * 60 * 1000;
+// Failures count only within this window from the streak's first one, so an old typo can't lock anyone out.
+const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 
 const stepUpBody = z.object({
   draft_id: z.string().regex(/^drf_[0-9a-f-]{36}$/),
@@ -22,9 +24,18 @@ export interface StepUpOptions {
   now?: () => number;
 }
 
-/** Counts wrong PINs per user; the third in a row locks step-up for five minutes from that failure. */
+interface FailureStreak {
+  count: number;
+  startedAt: number;
+  lockedUntil: number | undefined;
+}
+
+/**
+ * Counts wrong PINs per user within 15 minutes of the streak's first failure; the third in that window locks
+ * step-up for five minutes from that failure.
+ */
 export class PinAttempts {
-  private readonly failures = new Map<string, { count: number; lockedUntil: number | undefined }>();
+  private readonly failures = new Map<string, FailureStreak>();
 
   constructor(private readonly now: () => number) {}
 
@@ -37,9 +48,18 @@ export class PinAttempts {
   }
 
   fail(sub: string): void {
-    const count = (this.failures.get(sub)?.count ?? 0) + 1;
-    const lockedUntil = count >= MAX_FAILURES ? this.now() + LOCKOUT_MS : undefined;
-    this.failures.set(sub, { count, lockedUntil });
+    const now = this.now();
+    const streak = this.currentStreak(sub, now) ?? { count: 0, startedAt: now, lockedUntil: undefined };
+    const count = streak.count + 1;
+    const lockedUntil = count >= MAX_FAILURES ? now + LOCKOUT_MS : undefined;
+    this.failures.set(sub, { count, startedAt: streak.startedAt, lockedUntil });
+  }
+
+  /** The streak a new failure joins: none once its window has passed or its lock was served. */
+  private currentStreak(sub: string, now: number): FailureStreak | undefined {
+    const streak = this.failures.get(sub);
+    if (!streak || streak.lockedUntil !== undefined) return undefined;
+    return now - streak.startedAt < FAILURE_WINDOW_MS ? streak : undefined;
   }
 
   reset(sub: string): void {

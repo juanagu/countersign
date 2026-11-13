@@ -93,6 +93,39 @@ describe('PinAttempts', () => {
     expect(attempts.locked('juan')).toBe(false);
   });
 
+  it('forgets failures older than the 15-minute window', () => {
+    let clock = 0;
+    const attempts = new PinAttempts(() => clock);
+    attempts.fail('juan');
+    clock = at(1);
+    attempts.fail('juan');
+    clock = at(20);
+    attempts.fail('juan');
+    expect(attempts.locked('juan')).toBe(false);
+  });
+
+  it('locks on three failures within the window, counted from the first', () => {
+    let clock = 0;
+    const attempts = new PinAttempts(() => clock);
+    for (const t of [at(0), at(10), at(14, 59)]) {
+      clock = t;
+      attempts.fail('juan');
+    }
+    expect(attempts.locked('juan')).toBe(true);
+  });
+
+  it('starts a new window at the first failure after the old one ended', () => {
+    let clock = 0;
+    const attempts = new PinAttempts(() => clock);
+    attempts.fail('juan');
+    attempts.fail('juan');
+    for (const t of [at(16), at(17), at(18)]) {
+      clock = t;
+      attempts.fail('juan');
+    }
+    expect(attempts.locked('juan')).toBe(true);
+  });
+
   it('starts a fresh count once the lock lifts', () => {
     let clock = 0;
     const attempts = new PinAttempts(() => clock);
