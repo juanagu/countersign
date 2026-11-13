@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any
 
 import pytest
@@ -45,6 +46,19 @@ def test_allows_a_granted_call_within_bounds() -> None:
         ("list_transactions", T1, {"from": "2025-01-01", "to": "2026-12-31"}),
         ("spending_summary", T1, {"from": "2026-10-31", "to": "2026-10-01"}),
         ("spending_summary", T1, {"from": "yesterday", "to": "today"}),
+        # Fail closed: a missing end runs up to today, wrong types are denied, not skipped.
+        ("list_transactions", T1, {"from": "2000-01-01"}),
+        ("spending_summary", T1, {"from": "2000-01-01"}),
+        ("spending_summary", T1, {"to": "2026-10-31"}),
+        ("spending_summary", T1, {}),
+        ("list_transactions", T1, {"limit": 100.0}),
+        ("list_transactions", T1, {"limit": True}),
+        ("list_transactions", T1, {"limit": "100"}),
+        ("list_transactions", T1, {"limit": 0}),
+        ("list_transactions", T1, {"from": 20250101, "to": "2025-01-31"}),
+        ("list_transactions", T1, {"from": "2025-01-01", "to": None}),
+        ("spending_summary", T1, {"from": ["2025-01-01"], "to": "2025-01-31"}),
+        ("spending_summary", T1, {"from": "20250101", "to": "2025-01-31"}),
         ("prepare_transfer", T2, {"amount": 2_000_001, "currency": "ARS"}),
         ("prepare_transfer", T2, {"amount": -5, "currency": "ARS"}),
         ("prepare_transfer", T2, {"amount": True, "currency": "ARS"}),
@@ -53,3 +67,17 @@ def test_allows_a_granted_call_within_bounds() -> None:
 )
 def test_denies_arguments_out_of_bounds(tool: str, tier: RiskTier, args: dict[str, Any]) -> None:
     assert not POLICY.check_call(tool, tier, args, {"accounts", "payments"}).allowed
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("list_transactions", {}),
+        ("list_transactions", {"limit": 50}),
+        ("list_transactions", {"to": "2026-10-31", "limit": 10}),
+        ("list_transactions", {"from": date.today().replace(day=1).isoformat()}),
+        ("spending_summary", {"from": "2026-10-01", "to": "2026-10-31"}),
+    ],
+)
+def test_allows_periods_and_limits_within_bounds(tool: str, args: dict[str, Any]) -> None:
+    assert POLICY.check_call(tool, T1, args, {"accounts"}).allowed

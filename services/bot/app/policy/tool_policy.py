@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -9,6 +10,7 @@ from app.skills.registry import SkillRegistry
 MAX_TRANSACTIONS = 50
 MAX_PERIOD_DAYS = 400
 TRANSFER_CAPS = {"ARS": 2_000_000, "USD": 10_000}
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 ArgCheck = Callable[[Mapping[str, Any]], str | None]
 """Returns a denial reason, or None when the arguments are within bounds."""
@@ -20,24 +22,39 @@ class Decision:
     reason: str = ""
 
 
-def _period_too_long(args: Mapping[str, Any]) -> str | None:
-    start, end = args.get("from"), args.get("to")
-    if not (isinstance(start, str) and isinstance(end, str)):
+def _day(args: Mapping[str, Any], key: str) -> date | None:
+    """None when absent; raises ValueError for anything else that is not a YYYY-MM-DD string."""
+    if key not in args:
         return None
+    value = args[key]
+    if not (isinstance(value, str) and _ISO_DAY.fullmatch(value)):
+        raise ValueError(key)
+    return date.fromisoformat(value)
+
+
+def _period_bounds(args: Mapping[str, Any], *, start_required: bool) -> str | None:
     try:
-        days = (date.fromisoformat(end) - date.fromisoformat(start)).days
+        start, end = _day(args, "from"), _day(args, "to") or date.today()  # Open-ended runs up to today.
     except ValueError:
         return "dates must be YYYY-MM-DD"
+    if start is None:
+        return "the period needs a start date" if start_required else None
+    days = (end - start).days
     if days < 0:
         return "the period ends before it starts"
     return f"periods are limited to {MAX_PERIOD_DAYS} days" if days > MAX_PERIOD_DAYS else None
 
 
+def _summary_bounds(args: Mapping[str, Any]) -> str | None:
+    return _period_bounds(args, start_required=True)
+
+
 def _transactions_bounds(args: Mapping[str, Any]) -> str | None:
-    limit = args.get("limit")
-    if isinstance(limit, int) and limit > MAX_TRANSACTIONS:
-        return f"at most {MAX_TRANSACTIONS} transactions per call"
-    return _period_too_long(args)
+    limit = args.get("limit", 1)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_TRANSACTIONS:
+        return f"limit must be a whole number from 1 to {MAX_TRANSACTIONS}"
+    # Without a start date the period is bounded by the limit alone.
+    return _period_bounds(args, start_required=False)
 
 
 def _transfer_bounds(args: Mapping[str, Any]) -> str | None:
@@ -52,7 +69,7 @@ def _transfer_bounds(args: Mapping[str, Any]) -> str | None:
 
 DEFAULT_ARG_CHECKS: Mapping[str, ArgCheck] = {
     "list_transactions": _transactions_bounds,
-    "spending_summary": _period_too_long,
+    "spending_summary": _summary_bounds,
     "prepare_transfer": _transfer_bounds,
 }
 
