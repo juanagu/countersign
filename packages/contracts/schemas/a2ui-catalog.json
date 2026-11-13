@@ -1,0 +1,400 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "a2ui-catalog.json",
+  "title": "UiTree",
+  "description": "What the model may ask the bot to render, one Card per surface. The catalog has no input components: no login, PIN, password or card-number fields exist.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["children"],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "subtitle": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "children": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/UiNode"
+      }
+    }
+  },
+  "$defs": {
+    "UiNode": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextNode"
+        },
+        {
+          "$ref": "#/$defs/KeyValueListNode"
+        },
+        {
+          "$ref": "#/$defs/ListNode"
+        },
+        {
+          "$ref": "#/$defs/BarChartNode"
+        },
+        {
+          "$ref": "#/$defs/TableNode"
+        },
+        {
+          "$ref": "#/$defs/ButtonNode"
+        },
+        {
+          "$ref": "#/$defs/CitationNode"
+        },
+        {
+          "$ref": "#/$defs/QuickRepliesNode"
+        }
+      ]
+    },
+    "TextNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "Text"
+        },
+        "props": {
+          "$ref": "#/$defs/TextProps"
+        }
+      }
+    },
+    "KeyValueListNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "KeyValueList"
+        },
+        "props": {
+          "$ref": "#/$defs/KeyValueListProps"
+        }
+      }
+    },
+    "ListNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "List"
+        },
+        "props": {
+          "$ref": "#/$defs/ListProps"
+        }
+      }
+    },
+    "BarChartNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "BarChart"
+        },
+        "props": {
+          "$ref": "#/$defs/BarChartProps"
+        }
+      }
+    },
+    "TableNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "Table"
+        },
+        "props": {
+          "$ref": "#/$defs/TableProps"
+        }
+      }
+    },
+    "ButtonNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "Button"
+        },
+        "props": {
+          "$ref": "#/$defs/ButtonProps"
+        }
+      }
+    },
+    "CitationNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "Citation"
+        },
+        "props": {
+          "$ref": "#/$defs/CitationProps"
+        }
+      }
+    },
+    "QuickRepliesNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "props"],
+      "properties": {
+        "component": {
+          "const": "QuickReplies"
+        },
+        "props": {
+          "$ref": "#/$defs/QuickRepliesProps"
+        }
+      }
+    },
+    "CardProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["children"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 8,
+          "description": "Ids of child components (set by the bot)."
+        }
+      },
+      "description": "The root container of every surface; the bot builds it from UiTree."
+    },
+    "TextProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "variant": {
+          "enum": ["body", "heading", "caption"]
+        }
+      }
+    },
+    "KeyValueListProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "value"],
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 60
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 80
+              }
+            }
+          }
+        }
+      }
+    },
+    "ListProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title"],
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "subtitle": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "trailing": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          }
+        }
+      }
+    },
+    "BarChartProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bars"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "currency": {
+          "enum": ["ARS", "USD"]
+        },
+        "bars": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "value"],
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "value": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "TableProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          }
+        }
+      }
+    },
+    "ButtonProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "message"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Sent as the user's next chat message when pressed."
+        }
+      }
+    },
+    "CitationProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources"],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["docId", "title"],
+            "properties": {
+              "docId": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z0-9-]+$"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "section": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "anchor": {
+                "type": "string",
+                "maxLength": 120,
+                "pattern": "^[a-z0-9-]*$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "QuickRepliesProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["options"],
+      "properties": {
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "message"],
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 200
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

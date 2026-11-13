@@ -27,7 +27,13 @@ async function generateTypeScript() {
   const modules = [];
   for (const file of schemas) {
     const name = basename(file, '.json');
-    const ts = await compileFromFile(join(schemaDir, file), { cwd: schemaDir, bannerComment: `// ${BANNER}` });
+    const ts = await compileFromFile(join(schemaDir, file), {
+      cwd: schemaDir,
+      bannerComment: `// ${BANNER}`,
+      unreachableDefinitions: true,
+      // Keep arrays as arrays: otherwise maxItems expands into a union of every tuple length.
+      maxItems: -1,
+    });
     writeFileSync(join(tsOut, `${name}.ts`), ts);
     modules.push(name);
   }
@@ -57,6 +63,15 @@ function generatePython() {
       '--custom-file-header',
       `# ${BANNER}`,
       '--disable-timestamp',
+      '--formatters',
+      'ruff-format',
+      // Plain annotations with Field(...) constraints, so mypy strict accepts the generated models.
+      '--field-constraints',
+      '--use-annotated',
+      '--use-union-operator',
+      '--use-standard-collections',
+      '--target-python-version',
+      '3.12',
     ],
     { stdio: 'inherit' },
   );
