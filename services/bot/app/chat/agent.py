@@ -52,6 +52,16 @@ def build_agent(
         return skills.index()
 
     @agent.instructions
+    def unavailable_servers(ctx: RunContext[BotDeps]) -> str | None:
+        if not ctx.deps.unavailable_servers:
+            return None
+        names = ", ".join(sorted(ctx.deps.unavailable_servers))
+        return (
+            f"These banking services are unavailable right now: {names}. Their tools are missing. Tell the "
+            "customer the service is temporarily unavailable and to try again later; do not guess the data."
+        )
+
+    @agent.instructions
     def today(_: RunContext[BotDeps]) -> str:
         return f"Today is {date.today().isoformat()}."
 

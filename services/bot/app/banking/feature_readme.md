@@ -13,6 +13,8 @@ The bot's connection to the MCP servers.
 ## Data flow
 
 A run that loads no banking skill makes no token exchange and opens no MCP session. Once a skill needs a
-server, its `MCPToolset` connects for the rest of the run, closed when the run ends. It authenticates with
+server, its `MCPToolset` connects for the rest of the run, closed when the run ends. If the exchange or the
+connect fails, that server exposes no tools for the rest of the run, is logged (error type only) and is added
+to `BotDeps.unavailable_servers`, which an instruction turns into "tell the customer it is unavailable". It authenticates with
 `auth=` a function of the run context: the user's `aud=bot` token from `BotDeps` is exchanged for
 `aud=mcp-accounts` or `aud=mcp-payments`. The incoming token is never sent to an MCP server (tested end to end against fake servers over HTTP).

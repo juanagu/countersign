@@ -8,3 +8,5 @@ class BotDeps:
     user_id: str
     access_token: str = field(repr=False)
     loaded_skills: set[str] = field(default_factory=set)
+    # MCP servers that failed to connect this run; the model is told so it can say the service is down.
+    unavailable_servers: set[str] = field(default_factory=set)
