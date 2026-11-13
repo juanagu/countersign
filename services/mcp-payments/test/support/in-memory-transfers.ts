@@ -42,6 +42,14 @@ const BENEFICIARIES: Beneficiary[] = [
     currency: 'ARS',
   },
   {
+    id: 'ben-juan-pablo-usd',
+    customerId: 'juan',
+    fullName: 'Pablo Ruiz',
+    bankName: 'Banco Demo',
+    accountRef: '0170000300000000099871',
+    currency: 'USD',
+  },
+  {
     id: 'ben-ana-lucia',
     customerId: 'ana',
     fullName: 'Lucía Fernández',

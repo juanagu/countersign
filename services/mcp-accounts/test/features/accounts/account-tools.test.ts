@@ -66,7 +66,39 @@ describe('mcp-accounts tools', () => {
   it("never returns another customer's transactions in an unfiltered list", async () => {
     const client = await connectClient(app, await anaToken());
     const body = parseText(await client.callTool({ name: 'list_transactions', arguments: {} }));
-    expect((body.transactions as { accountId: string }[]).map((t) => t.accountId)).toEqual(['acc-ana-ars']);
+    const accountIds = (body.transactions as { accountId: string }[]).map((t) => t.accountId);
+    expect(new Set(accountIds)).toEqual(new Set(['acc-ana-ars']));
+  });
+
+  describe('periods and categories reach the repository', () => {
+    const ids = (body: Record<string, unknown>) => (body.transactions as { id: string }[]).map((t) => t.id);
+    const listTransactions = async (args: Record<string, unknown>) =>
+      parseText(
+        await (await connectClient(app, await anaToken())).callTool({ name: 'list_transactions', arguments: args }),
+      );
+
+    it('lists only the period, both days inclusive, newest first', async () => {
+      // 1 is booked the day before `from`, 5 the day after `to`, 3 late on a day inside it.
+      expect(ids(await listTransactions({ from: '2026-10-06', to: '2026-10-31' }))).toEqual(['4', '3']);
+      expect(ids(await listTransactions({ from: '2026-10-05', to: '2026-10-20' }))).toEqual(['3', '1']);
+    });
+
+    it('applies each bound on its own', async () => {
+      expect(ids(await listTransactions({ from: '2026-10-21' }))).toEqual(['5', '4']);
+      expect(ids(await listTransactions({ to: '2026-10-05' }))).toEqual(['1']);
+    });
+
+    it('filters by category', async () => {
+      expect(ids(await listTransactions({ category: 'supermercado' }))).toEqual(['5', '1']);
+    });
+
+    it('totals only the debits inside the period, by category', async () => {
+      const client = await connectClient(app, await anaToken());
+      const body = parseText(
+        await client.callTool({ name: 'spending_summary', arguments: { from: '2026-10-06', to: '2026-10-31' } }),
+      );
+      expect(body.categories).toEqual([{ category: 'restaurantes', currency: 'ARS', total: '40.50', count: 1 }]);
+    });
   });
 
   it('refuses a call without the accounts:read scope', async () => {

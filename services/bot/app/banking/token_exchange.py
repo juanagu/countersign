@@ -1,3 +1,5 @@
+from urllib.parse import quote_plus
+
 import httpx
 from pydantic import BaseModel, ValidationError
 
@@ -30,7 +32,8 @@ class TokenExchanger:
     ):
         self._client = client
         self._token_url = token_url
-        self._auth = httpx.BasicAuth(client_id, client_secret)
+        # RFC 6749 §2.3.1: form-encode each credential, as the IdP decodes them (a secret may hold ':' or '%').
+        self._auth = httpx.BasicAuth(quote_plus(client_id, safe=""), quote_plus(client_secret, safe=""))
 
     async def token_for(self, subject_token: str, audience: str) -> str:
         form = {

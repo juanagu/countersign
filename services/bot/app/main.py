@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
 from app.chat.routes import chat_router
 from app.config import Settings
+from app.core.clock import BankClock
 from app.core.logging import configure_logging
 from app.core.telemetry import setup_telemetry
 from app.knowledge.embedder import FastEmbedEmbedder, LazyEmbedder
@@ -35,8 +37,12 @@ def _default_agent(
     )
     tools = banking_toolset(exchanger, accounts_url=settings.mcp_accounts_url, payments_url=settings.mcp_payments_url)
     knowledge = knowledge_toolset(embedder, PgKnowledgeStore(pool))
-    skills = SkillRegistry.from_dir(settings.skills_dir)
-    return build_agent(settings.bot_model, skills=skills, domain_tools=[tools, knowledge])
+    return build_agent(
+        settings.bot_model,
+        skills=SkillRegistry.from_dir(settings.skills_dir),
+        domain_tools=[tools, knowledge],
+        clock=BankClock(ZoneInfo(settings.bank_timezone)),
+    )
 
 
 def create_app(

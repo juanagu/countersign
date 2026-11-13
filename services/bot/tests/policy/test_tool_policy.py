@@ -1,14 +1,17 @@
-from datetime import date
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 from app.config import SKILLS_DIR
+from app.core.clock import BankClock
 from app.policy.risk_tier import RiskTier
-from app.policy.tool_policy import ToolPolicy
+from app.policy.tool_policy import Decision, ToolPolicy
 from app.skills.registry import SkillRegistry
 
-POLICY = ToolPolicy(SkillRegistry.from_dir(SKILLS_DIR))
+# Pinned at 22:00 ART on Nov 30, which is already Dec 1 in UTC.
+CLOCK = BankClock(now=lambda: datetime(2026, 12, 1, 1, 0, tzinfo=UTC))
+POLICY = ToolPolicy(SkillRegistry.from_dir(SKILLS_DIR), clock=CLOCK)
 T1, T2, T3 = RiskTier.T1, RiskTier.T2, RiskTier.T3
 
 
@@ -75,9 +78,16 @@ def test_denies_arguments_out_of_bounds(tool: str, tier: RiskTier, args: dict[st
         ("list_transactions", {}),
         ("list_transactions", {"limit": 50}),
         ("list_transactions", {"to": "2026-10-31", "limit": 10}),
-        ("list_transactions", {"from": date.today().replace(day=1).isoformat()}),
+        ("list_transactions", {"from": "2026-11-01"}),
         ("spending_summary", {"from": "2026-10-01", "to": "2026-10-31"}),
     ],
 )
 def test_allows_periods_and_limits_within_bounds(tool: str, args: dict[str, Any]) -> None:
     assert POLICY.check_call(tool, T1, args, {"accounts"}).allowed
+
+
+def test_an_open_ended_period_ends_on_the_banks_today_not_utcs() -> None:
+    # In UTC this is "from today"; on the bank's calendar Dec 1 is still tomorrow.
+    decision = POLICY.check_call("list_transactions", T1, {"from": "2026-12-01"}, {"accounts"})
+    assert decision == Decision(False, "the period ends before it starts")
+    assert POLICY.check_call("list_transactions", T1, {"from": "2026-11-30"}, {"accounts"}).allowed
