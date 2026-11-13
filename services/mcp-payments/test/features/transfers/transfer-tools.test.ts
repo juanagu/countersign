@@ -7,7 +7,7 @@ import { InMemoryTransfersRepository } from '../../support/in-memory-transfers.j
 import { connectClient, parseText } from '../../support/mcp-client.js';
 
 const NOW = new Date('2026-11-13T12:00:00.000Z');
-const SCOPE = 'beneficiaries:read transfers:prepare';
+const SCOPE = 'beneficiaries:read transfers:prepare transfers:execute';
 
 let keys: TestKeys;
 let repo: InMemoryTransfersRepository;
@@ -117,7 +117,46 @@ describe('mcp-payments tools', () => {
     expect(parseText(result).error).toBe('insufficient_scope');
   });
 
-  it('never executes until step-up verification exists', async () => {
+  it('refuses to execute without the transfers:execute scope, even with a valid step-up token', async () => {
+    const draft = parseText(
+      await (await clientFor('juan')).callTool({ name: 'prepare_transfer', arguments: juanToAna }),
+    );
+    const stepUpToken = await keys.sign({
+      aud: AUDIENCE,
+      sub: 'juan',
+      act: undefined,
+      token_use: 'step_up',
+      scope: 'transfers:execute',
+      authorization_details: [
+        {
+          type: 'transfer',
+          draft_id: draft.draft_id,
+          amount: '50000.00',
+          currency: 'ARS',
+          beneficiary_id: 'ben-juan-ana',
+        },
+      ],
+    });
+    const client = await clientFor('juan', 'beneficiaries:read transfers:prepare');
+    const result = await client.callTool({
+      name: 'execute_transfer',
+      arguments: { draft_id: draft.draft_id, step_up_token: stepUpToken },
+    });
+    expect(parseText(result).error).toBe('insufficient_scope');
+    expect(repo.debits).toEqual([]);
+    expect(repo.usedJtis.size).toBe(0);
+
+    const allowed = await (
+      await clientFor('juan')
+    ).callTool({
+      name: 'execute_transfer',
+      arguments: { draft_id: draft.draft_id, step_up_token: stepUpToken },
+    });
+    expect(allowed.isError).toBeFalsy();
+    expect(repo.debits).toHaveLength(1);
+  });
+
+  it('never executes without a valid step-up token', async () => {
     const client = await clientFor('juan');
     const result = await client.callTool({
       name: 'execute_transfer',

@@ -3,11 +3,15 @@ import { fail, ok, requireScope, tierMeta, type Principal } from '@poc/mcp-kit';
 import { z } from 'zod';
 import { executeTransfer } from './execute-transfer.js';
 import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
-import type { VerifyStepUp } from './step-up-verifier.js';
+import { STEP_UP_SCOPE, type VerifyStepUp } from './step-up-verifier.js';
 import { TRANSFER_LIMITS } from './transfer-rules.js';
 import type { Beneficiary, TransferDraft, TransferReceipt, TransfersRepository } from './transfers-repository.js';
 
-export const SCOPES = { readBeneficiaries: 'beneficiaries:read', prepare: 'transfers:prepare' } as const;
+export const SCOPES = {
+  readBeneficiaries: 'beneficiaries:read',
+  prepare: 'transfers:prepare',
+  execute: STEP_UP_SCOPE,
+} as const;
 
 const id = z.string().min(1).max(64);
 const currency = z.enum(['ARS', 'USD']);
@@ -117,6 +121,9 @@ export function buildPaymentsServer(
       _meta: tierMeta('T3'),
     },
     async ({ draft_id, step_up_token }) => {
+      // Checked before the step-up token, so a caller without the scope can't spend its jti.
+      const scopeError = requireScope(principal.scopes, SCOPES.execute);
+      if (scopeError) return scopeError;
       const result = await executeTransfer({ repo, verifyStepUp, now }, principal.sub, draft_id, step_up_token);
       if (!result.ok) return fail(result.error.code, result.error.message);
       return ok(await receiptView(repo, result.value.draft, result.value.receipt));
