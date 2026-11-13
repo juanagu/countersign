@@ -17,5 +17,8 @@ if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
     ],
   });
   sdk.start();
-  process.once('SIGTERM', () => void sdk.shutdown());
+  // A SIGTERM listener replaces Node's default exit, so flush and then re-raise it with the listener gone.
+  process.once('SIGTERM', () => {
+    void sdk.shutdown().finally(() => process.kill(process.pid, 'SIGTERM'));
+  });
 }

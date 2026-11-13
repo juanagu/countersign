@@ -32,6 +32,11 @@ export async function login(username: string): Promise<SessionUser> {
   return sessionUserSchema.parse(await expectOk(res));
 }
 
+/** Ends the session; rejects when the BFF could not be reached or did not clear the cookie. */
 export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+  const res = await fetch(`${API_BASE}/auth/logout`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+  });
+  if (!res.ok) throw new Error(`logout failed: ${res.status}`);
 }
