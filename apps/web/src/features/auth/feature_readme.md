@@ -11,4 +11,4 @@ the browser never sees a token.
 ## Data flow
 
 `App` calls `fetchSession` on load → signed out shows `LoginScreen` → `login` sets the cookie →
-`App` renders the chat. `logout` clears the cookie.
+`App` renders the chat. `logout` clears the cookie and rejects unless the BFF confirmed it.

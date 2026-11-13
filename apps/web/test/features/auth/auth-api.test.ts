@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchSession, login } from '../../../src/features/auth/lib/auth-api';
+import { fetchSession, login, logout } from '../../../src/features/auth/lib/auth-api';
 
 function stubFetch(status: number, body: unknown) {
   const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status }));
@@ -34,5 +34,25 @@ describe('auth-api', () => {
   it('throws when login fails', async () => {
     stubFetch(401, { error: 'unknown_user' });
     await expect(login('mallory')).rejects.toThrow();
+  });
+
+  it('logs out with a JSON POST, which the BFF requires', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(logout()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/auth/logout',
+      expect.objectContaining({ method: 'POST', headers: { 'content-type': 'application/json' } }),
+    );
+  });
+
+  it('rejects when the BFF does not confirm the logout', async () => {
+    stubFetch(500, { error: 'boom' });
+    await expect(logout()).rejects.toThrow('logout failed: 500');
+  });
+
+  it('rejects when the BFF cannot be reached', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    await expect(logout()).rejects.toThrow();
   });
 });
