@@ -3,14 +3,11 @@ from pydantic_ai import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
 from app.chat.deps import BotDeps
-from app.knowledge.chunker import Audience
 from app.knowledge.embedder import Embedder
 from app.knowledge.store import KnowledgeStore
 from app.policy.risk_tier import RISK_TIER_META_KEY
 
 MAX_RESULTS = 8
-# Every caller of the bot is a signed-in customer (the BFF only forwards authenticated runs).
-CUSTOMER_AUDIENCES: tuple[Audience, ...] = ("public", "customer")
 
 
 class KnowledgeChunk(BaseModel):

@@ -1,8 +1,7 @@
-import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { fail, ok, requireScope, tierMeta, type Principal } from '@poc/mcp-kit';
 import { z } from 'zod';
-import { DOMESTIC_TRANSFER_FEE, DRAFT_TTL_MS, fromCents, toCents, TRANSFER_LIMITS } from './transfer-rules.js';
+import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
 import type { Beneficiary, TransfersRepository } from './transfers-repository.js';
 
 export const SCOPES = { readBeneficiaries: 'beneficiaries:read', prepare: 'transfers:prepare' } as const;
@@ -16,6 +15,20 @@ const mask = (value: string) => `****${value.slice(-4)}`;
 
 function publicBeneficiary({ id, fullName, bankName, accountRef, currency }: Beneficiary) {
   return { id, name: fullName, bank: bankName, account: mask(accountRef), currency };
+}
+
+function draftView({ draft, total, account, beneficiary }: PreparedTransfer) {
+  return {
+    draft_id: draft.id,
+    status: draft.status,
+    amount: draft.amount,
+    fee: draft.fee,
+    total,
+    currency: draft.currency,
+    source_account: { id: account.id, alias: account.alias, number: mask(account.number) },
+    beneficiary: publicBeneficiary(beneficiary),
+    expires_at: draft.expiresAt,
+  };
 }
 
 export interface TransferToolsDeps {
@@ -54,52 +67,18 @@ export function buildPaymentsServer(
     async (args) => {
       const scopeError = requireScope(principal.scopes, SCOPES.prepare);
       if (scopeError) return scopeError;
-      const [account, beneficiary] = await Promise.all([
-        repo.findAccount(args.source_account_id),
-        repo.findBeneficiary(args.beneficiary_id),
-      ]);
-      if (account?.customerId !== principal.sub)
-        return fail('account_not_found', 'No encontré esa cuenta entre las tuyas.');
-      if (beneficiary?.customerId !== principal.sub) {
-        return fail('beneficiary_not_found', 'No encontré ese destinatario entre tus contactos guardados.');
-      }
-      if (account.currency !== args.currency || beneficiary.currency !== args.currency) {
-        return fail('currency_mismatch', 'La moneda no coincide con la cuenta de origen o la del destinatario.');
-      }
-      const amountCents = toCents(args.amount.toFixed(2));
-      if (amountCents > BigInt(TRANSFER_LIMITS[args.currency]) * 100n) {
-        return fail(
-          'over_limit',
-          `El monto supera el límite por transferencia (${TRANSFER_LIMITS[args.currency]} ${args.currency}).`,
-        );
-      }
-      const fee = DOMESTIC_TRANSFER_FEE;
-      if (amountCents + toCents(fee) > toCents(account.balance)) {
-        return fail('insufficient_funds', 'El saldo disponible no alcanza para esta transferencia.');
-      }
-      const draft = {
-        id: `drf_${randomUUID()}`,
-        customerId: principal.sub,
-        sourceAccountId: account.id,
-        beneficiaryId: beneficiary.id,
-        amount: fromCents(amountCents),
-        fee,
-        currency: args.currency,
-        status: 'pending' as const,
-        expiresAt: new Date(now().getTime() + DRAFT_TTL_MS).toISOString(),
-      };
-      await repo.createDraft(draft);
-      return ok({
-        draft_id: draft.id,
-        status: draft.status,
-        amount: draft.amount,
-        fee: draft.fee,
-        total: fromCents(amountCents + toCents(fee)),
-        currency: draft.currency,
-        source_account: { id: account.id, alias: account.alias, number: mask(account.number) },
-        beneficiary: publicBeneficiary(beneficiary),
-        expires_at: draft.expiresAt,
-      });
+      const result = await prepareTransfer(
+        repo,
+        principal.sub,
+        {
+          sourceAccountId: args.source_account_id,
+          beneficiaryId: args.beneficiary_id,
+          amount: args.amount,
+          currency: args.currency,
+        },
+        now,
+      );
+      return result.ok ? ok(draftView(result.value)) : fail(result.error.code, result.error.message);
     },
   );
 
