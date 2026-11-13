@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from '../../shared/ui/button';
-import type { StepUpError } from './lib/step-up-api';
+import type { ApprovalError } from './lib/approval-decision';
 
-const MESSAGES: Record<StepUpError, string> = {
+export const RESUME_FAILED_MESSAGE = 'No pudimos completar la confirmación. Probá de nuevo.';
+
+const MESSAGES: Record<ApprovalError, string> = {
   invalid_pin: 'El PIN no es correcto.',
   locked: 'Demasiados intentos. Esperá unos minutos y volvé a probar.',
   failed: 'No pudimos verificar tu identidad. Probá de nuevo.',
+  resume_failed: RESUME_FAILED_MESSAGE,
 };
 
 export interface PinDialogProps {
   onSubmit: (pin: string) => void;
   onClose: () => void;
   pending: boolean;
-  error: StepUpError | null;
+  error: ApprovalError | null;
 }
 
 /** Step-up PIN entry. App chrome, not an A2UI component: the catalog has no secret inputs. */
