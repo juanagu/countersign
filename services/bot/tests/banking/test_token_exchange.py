@@ -1,3 +1,4 @@
+import base64
 import json
 
 import httpx
@@ -34,6 +35,24 @@ async def test_exchanges_per_audience_with_client_auth() -> None:
     assert form["subject_token"] == "incoming"
     assert form["audience"] == "mcp-accounts"
     assert requests[0].headers["authorization"].startswith("Basic ")
+
+
+async def test_form_encodes_the_client_credentials() -> None:
+    headers: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        headers.append(request.headers["authorization"])
+        return httpx.Response(200, json={"access_token": "tok", "token_type": "Bearer"})
+
+    exchanger = TokenExchanger(
+        httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        token_url="http://idp.test/token",
+        client_id="bot",
+        client_secret="a:b+c d%e",
+    )
+    await exchanger.token_for("incoming", "mcp-accounts")
+
+    assert base64.b64decode(headers[0].removeprefix("Basic ")).decode() == "bot:a%3Ab%2Bc+d%25e"
 
 
 @pytest.mark.parametrize(

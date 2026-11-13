@@ -1,5 +1,7 @@
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { describe, expect, it } from 'vitest';
+import { createApp } from '../../../src/app.js';
+import { TokenIssuer } from '../../../src/features/idp/token-issuer.js';
 import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER } from '../../support/build-app.js';
 
 const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
@@ -79,6 +81,49 @@ describe('POST /token (token exchange)', () => {
   ])('rejects %s with 401', async (_, authorization) => {
     const { res } = await exchange({}, authorization);
     expect(res.status).toBe(401);
+  });
+
+  describe('client secrets with reserved characters (RFC 6749 §2.3.1)', () => {
+    const SECRET = 'colon:plus+space pct%-0123456789';
+
+    async function exchangeAs(authorization: string) {
+      const issuer = await TokenIssuer.create(TEST_ISSUER);
+      const app = createApp({
+        issuer,
+        botAgentUrl: 'http://bot.invalid/agent',
+        cookieSecure: false,
+        clients: { bot: SECRET },
+      });
+      const res = await app.request('/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization },
+        body: new URLSearchParams({
+          grant_type: GRANT,
+          subject_token: await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' }),
+          subject_token_type: ACCESS,
+          audience: 'mcp-accounts',
+        }),
+      });
+      return res.status;
+    }
+    const formEncode = (value: string) => new URLSearchParams({ v: value }).toString().slice('v='.length);
+
+    it('accepts a form-encoded secret, splitting only on the first colon', async () => {
+      expect(await exchangeAs(basic('bot', formEncode(SECRET)))).toBe(200);
+    });
+
+    it('accepts a raw colon in the secret', async () => {
+      expect(await exchangeAs(basic('bot', formEncode(SECRET).replaceAll('%3A', ':')))).toBe(200);
+    });
+
+    it.each([
+      ['the secret cut at its first colon', basic('bot', 'colon')],
+      ['the secret not form-encoded', basic('bot', SECRET)],
+      ['a malformed escape', basic('bot', '%zz')],
+      ['no colon at all', `Basic ${Buffer.from('bot').toString('base64')}`],
+    ])('rejects %s with 401', async (_, authorization) => {
+      expect(await exchangeAs(authorization)).toBe(401);
+    });
   });
 
   it('rejects a JSON body', async () => {

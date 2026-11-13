@@ -36,9 +36,29 @@ function safeEqual(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function authenticateClient(header: string | undefined, clients: TokenExchangeOptions['clients']): string | undefined {
+/** RFC 6749 §2.3.1: each Basic credential is form-encoded, so `+` is a space and `%XX` an escaped byte. */
+function formDecode(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value.replaceAll('+', ' '));
+  } catch {
+    return undefined;
+  }
+}
+
+function basicCredentials(header: string | undefined): [string, string] | undefined {
   if (!header?.startsWith('Basic ')) return undefined;
-  const [id = '', secret = ''] = Buffer.from(header.slice('Basic '.length), 'base64').toString().split(':');
+  const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString();
+  const colon = decoded.indexOf(':'); // The first one only: a secret may contain ':'.
+  if (colon < 0) return undefined;
+  const id = formDecode(decoded.slice(0, colon));
+  const secret = formDecode(decoded.slice(colon + 1));
+  return id === undefined || secret === undefined ? undefined : [id, secret];
+}
+
+function authenticateClient(header: string | undefined, clients: TokenExchangeOptions['clients']): string | undefined {
+  const credentials = basicCredentials(header);
+  if (!credentials) return undefined;
+  const [id, secret] = credentials;
   // Own keys only: `in` or a plain lookup would also match Object.prototype names like `constructor`.
   if (!Object.hasOwn(clients, id)) return undefined;
   return safeEqual(secret, clients[id] ?? '') ? id : undefined;
