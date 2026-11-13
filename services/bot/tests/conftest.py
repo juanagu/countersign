@@ -8,13 +8,11 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import ASGITransport, AsyncClient
-from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 
 from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier
-from app.chat.agent import build_agent
-from app.chat.deps import BotDeps
+from app.chat.agent import BotAgent, build_agent
 from app.config import SKILLS_DIR, Settings
 from app.main import create_app
 from app.skills.registry import SkillRegistry
@@ -75,7 +73,7 @@ def seen_user_ids() -> list[str]:
 
 
 @pytest.fixture
-def agent(seen_user_ids: list[str]) -> Agent[BotDeps, str]:
+def agent(seen_user_ids: list[str]) -> BotAgent:
     test_agent = build_agent(FunctionModel(stream_function=_stream_chunks), skills=SkillRegistry.from_dir(SKILLS_DIR))
 
     @test_agent.instructions
@@ -87,7 +85,7 @@ def agent(seen_user_ids: list[str]) -> Agent[BotDeps, str]:
 
 
 @pytest.fixture
-async def client(agent: Agent[BotDeps, str], verifier: JwksTokenVerifier) -> AsyncIterator[AsyncClient]:
+async def client(agent: BotAgent, verifier: JwksTokenVerifier) -> AsyncIterator[AsyncClient]:
     app = create_app(
         Settings(bot_model=TEST_MODEL, bot_client_secret=TEST_CLIENT_SECRET), agent=agent, token_verifier=verifier
     )

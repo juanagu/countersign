@@ -28,10 +28,11 @@ def test_denies_a_tool_without_a_declared_tier() -> None:
     assert not POLICY.check_call("get_balance", None, {}, {"accounts"}).allowed
 
 
-def test_denies_money_movement_without_approval() -> None:
+def test_money_movement_is_allowed_only_through_approval() -> None:
     decision = POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"payments"})
-    assert not decision.allowed
-    assert "approval" in decision.reason
+    assert decision.allowed
+    assert decision.needs_approval
+    assert not POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"accounts"}).allowed
 
 
 def test_allows_a_granted_call_within_bounds() -> None:

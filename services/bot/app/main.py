@@ -5,13 +5,11 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 from psycopg_pool import AsyncConnectionPool
-from pydantic_ai import Agent
 
 from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier, TokenVerifier, http_jwks_fetcher
 from app.banking.mcp_toolsets import banking_toolset
 from app.banking.token_exchange import TokenExchanger
-from app.chat.agent import build_agent
-from app.chat.deps import BotDeps
+from app.chat.agent import BotAgent, build_agent
 from app.chat.routes import chat_router
 from app.config import Settings
 from app.core.logging import configure_logging
@@ -25,8 +23,12 @@ SERVICE_NAME = "bot"
 
 
 def _default_agent(
-    settings: Settings, http: httpx.AsyncClient, pool: AsyncConnectionPool, embedder: LazyEmbedder
-) -> Agent[BotDeps, str]:
+    settings: Settings,
+    http: httpx.AsyncClient,
+    pool: AsyncConnectionPool,
+    embedder: LazyEmbedder,
+    skills: SkillRegistry,
+) -> BotAgent:
     exchanger = TokenExchanger(
         http,
         token_url=settings.idp_token_url,
@@ -35,13 +37,12 @@ def _default_agent(
     )
     tools = banking_toolset(exchanger, accounts_url=settings.mcp_accounts_url, payments_url=settings.mcp_payments_url)
     knowledge = knowledge_toolset(embedder, PgKnowledgeStore(pool))
-    skills = SkillRegistry.from_dir(settings.skills_dir)
     return build_agent(settings.bot_model, skills=skills, domain_tools=[tools, knowledge])
 
 
 def create_app(
     settings: Settings | None = None,
-    agent: Agent[BotDeps, str] | None = None,
+    agent: BotAgent | None = None,
     token_verifier: TokenVerifier | None = None,
 ) -> FastAPI:
     """Composition root. Served with `uvicorn app.main:create_app --factory`."""
@@ -72,6 +73,7 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": SERVICE_NAME}
 
-    app.include_router(chat_router(agent or _default_agent(settings, http, pool, embedder)))
+    skills = SkillRegistry.from_dir(settings.skills_dir)
+    app.include_router(chat_router(agent or _default_agent(settings, http, pool, embedder, skills), skills))
     setup_telemetry(app, settings)
     return app

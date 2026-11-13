@@ -5,10 +5,9 @@ from typing import Any
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from pydantic_ai import Agent
 
 from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier, http_jwks_fetcher
-from app.chat.agent import BotDeps
+from app.chat.agent import BotAgent
 from app.config import Settings
 from app.main import create_app
 from tests.conftest import ISSUER, STREAMED_CHUNKS, TEST_CLIENT_SECRET, TEST_MODEL, SigningKey
@@ -66,7 +65,7 @@ async def test_user_identity_comes_from_the_token_not_the_request_body(
 
 
 async def test_a_non_json_jwks_answer_is_a_503_not_a_401_or_500(
-    agent: Agent[BotDeps, str], signing_key: SigningKey, run_input: Callable[..., dict[str, Any]]
+    agent: BotAgent, signing_key: SigningKey, run_input: Callable[..., dict[str, Any]]
 ) -> None:
     idp = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, text="<html>proxy</html>")))
     verifier = JwksTokenVerifier(http_jwks_fetcher(idp, "http://idp.test/jwks"), issuer=ISSUER, audience=BOT_AUDIENCE)

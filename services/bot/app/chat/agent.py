@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import date
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -13,7 +13,10 @@ from app.policy.tool_policy import ToolPolicy
 from app.skills.load_skill import skills_toolset
 from app.skills.registry import SkillRegistry
 
-__all__ = ["SYSTEM_PROMPT", "BotDeps", "build_agent"]
+__all__ = ["SYSTEM_PROMPT", "BotAgent", "BotDeps", "build_agent"]
+
+# A run ends with text, or paused on tool calls awaiting the customer's approval (AG-UI interrupt).
+BotAgent = Agent[BotDeps, str | DeferredToolRequests]
 
 SYSTEM_PROMPT = """\
 You are the virtual assistant of a retail bank. This is a demo: every customer and figure is synthetic.
@@ -38,13 +41,14 @@ def build_agent(
     *,
     skills: SkillRegistry,
     domain_tools: Sequence[AbstractToolset[BotDeps]] = (),
-) -> Agent[BotDeps, str]:
+) -> BotAgent:
     policy = ToolPolicy(skills)
     toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills), genui_toolset()]
     toolsets += [PolicyToolset(wrapped=TemplateToolset(wrapped=toolset), policy=policy) for toolset in domain_tools]
-    agent = Agent(
+    agent: BotAgent = Agent(
         model,
         deps_type=BotDeps,
+        output_type=[str, DeferredToolRequests],
         instructions=SYSTEM_PROMPT,
         name="orchestrator",
         toolsets=toolsets,

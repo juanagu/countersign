@@ -11,7 +11,12 @@ from pydantic_ai import RunContext, ToolReturn
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from app.chat.deps import BotDeps
-from app.contracts.generated.bank_templates import TransferConfirmData, TransferConfirmTemplate
+from app.contracts.generated.bank_templates import (
+    TransferConfirmData,
+    TransferConfirmTemplate,
+    TransferReceiptData,
+    TransferReceiptTemplate,
+)
 
 ACTIVITY_TYPE = "bank-template"
 
@@ -37,7 +42,29 @@ def transfer_confirm(draft: Mapping[str, Any]) -> TransferConfirmTemplate:
     )
 
 
-DEFAULT_TEMPLATES: Mapping[str, TemplateBuilder] = {"prepare_transfer": transfer_confirm}
+def transfer_receipt(receipt: Mapping[str, Any]) -> TransferReceiptTemplate:
+    """Maps the `execute_transfer` result to the receipt card's data."""
+    source, beneficiary = receipt["source_account"], receipt["beneficiary"]
+    data = TransferReceiptData(
+        transferId=receipt["transfer_id"],
+        draftId=receipt["draft_id"],
+        reference=receipt["reference"],
+        executedAt=receipt["executed_at"],
+        amount=receipt["amount"],
+        fee=receipt["fee"],
+        currency=receipt["currency"],
+        sourceAccount={"alias": source["alias"], "number": source["number"]},
+        beneficiary={"name": beneficiary["name"], "bank": beneficiary.get("bank"), "account": beneficiary["account"]},
+    )
+    return TransferReceiptTemplate(
+        template="transfer-receipt", version=1, surfaceId=f"transfer-{data.transferId}", nonce=str(uuid4()), data=data
+    )
+
+
+DEFAULT_TEMPLATES: Mapping[str, TemplateBuilder] = {
+    "prepare_transfer": transfer_confirm,
+    "execute_transfer": transfer_receipt,
+}
 
 
 def template_event(template: BaseModel) -> ActivitySnapshotEvent:

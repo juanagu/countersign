@@ -20,6 +20,8 @@ ArgCheck = Callable[[Mapping[str, Any]], str | None]
 class Decision:
     allowed: bool
     reason: str = ""
+    # Money movement runs only after the customer approves it in the app (security rule 3).
+    needs_approval: bool = False
 
 
 def _day(args: Mapping[str, Any], key: str) -> date | None:
@@ -89,10 +91,10 @@ class ToolPolicy:
             return Decision(False, "the tool declares no risk tier")
         if not self._granted(tool, tier, loaded):
             return Decision(False, "no loaded skill grants this tool")
-        if tier is RiskTier.T3:
-            return Decision(False, "money movement needs the customer's approval in the app")
         check = self._arg_checks.get(tool)
         reason = check(args) if check else None
+        if not reason and tier is RiskTier.T3:
+            return Decision(True, needs_approval=True)
         return Decision(False, reason) if reason else Decision(True)
 
     def _granted(self, tool: str, tier: RiskTier, loaded: set[str]) -> bool:
