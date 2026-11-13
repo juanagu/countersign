@@ -7,7 +7,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep @smoke"
   },
   "dependencies": {
     "@copilotkit/a2ui-renderer": "1.87.0",
