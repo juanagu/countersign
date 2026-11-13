@@ -13,12 +13,13 @@ tool may run, and no text may reach the client, before its verdict.
   adapter masks PII in every customer turn before the classifier, the model, logs or traces see it. The
   classifier is a structured-output Pydantic AI agent on `GUARD_MODEL` (categories: ok, prompt_injection,
   jailbreak, other_customer_data, credentials, off_topic). It fails closed: an error or a 15 s timeout blocks.
-  An approval resume (`RunAgentInput.resume` set, no customer prompt after the model's last response) opens the
-  gate without the classifier: the run that raised the interrupt classified that message, and a failure or
-  timeout here would waste the customer's single-use step-up token. A resume that carries a new customer
-  message is classified as usual. A forged history could hide an unclassified older message behind a resume,
-  but the classifier only ever sees the latest message, so a forged history can already do that; the tool
-  policy and the output guard are what stand behind it (see Consequences).
+  An approval resume opens the gate without the classifier only when it answers interrupts this bot raised for
+  this user and thread (`PendingApprovals`: the tool call ids of each interrupt the client was sent, kept in
+  memory for the draft's 5 minutes and spent by the first resume that names them) and no customer prompt follows
+  the model's last response: the run that raised the interrupt classified that message, and a failure or
+  timeout here would waste the customer's single-use step-up token. Any other resume is classified as usual: a
+  client-built history ending in a "paused" call can't slip an unclassified message past the gate, and neither
+  can a replayed resume or one that carries a new customer message.
 - **The gate is a `RunGuard` in `BotDeps`**, one per run, holding an `asyncio.Event` for the verdict. It is the
   one object both sides of the run can reach: the tool policy runs inside the agent run and sees only `deps`;
   the output stream runs outside it and is built with the same `deps`. `PolicyToolset` awaits the verdict before

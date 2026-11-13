@@ -9,8 +9,9 @@ import {
   type DecisionResult,
   type OnDecide,
 } from './lib/approval-decision';
+import { pinErrorAfter, type PinEvent } from './lib/pin-entry';
 import { requestStepUp } from './lib/step-up-api';
-import { PinDialog, RESUME_FAILED_MESSAGE } from './pin-dialog';
+import { PinDialog } from './pin-dialog';
 import './approval.css';
 
 export type { ApprovalDecision } from './lib/approval-decision';
@@ -24,15 +25,17 @@ export function ApprovalPanel({ draft, onDecide }: ApprovalPanelProps) {
   const [askingPin, setAskingPin] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApprovalError | null>(null);
-  const [cancelFailed, setCancelFailed] = useState(false);
-  // A new key remounts the dialog with an empty PIN: a token spent by a failed resume can't be reused.
-  const [pinAttempt, setPinAttempt] = useState(0);
   const inFlight = useRef(false);
 
+  const onPin = (event: PinEvent) => setError(pinErrorAfter(event));
+
   function onConfirmed(result: DecisionResult) {
-    if (result.kind !== 'failed') return;
-    setError(result.error);
-    if (result.error === 'resume_failed') setPinAttempt((attempt) => attempt + 1);
+    if (result.kind === 'failed') onPin({ type: 'failed', error: result.error });
+  }
+
+  function openPin() {
+    onPin({ type: 'opened' });
+    setAskingPin(true);
   }
 
   async function confirm(pin: string) {
@@ -46,24 +49,15 @@ export function ApprovalPanel({ draft, onDecide }: ApprovalPanelProps) {
     }
   }
 
-  async function cancel() {
-    setCancelFailed(false);
-    const result = await cancelTransfer(inFlight, onDecide);
-    setCancelFailed(result.kind === 'failed');
+  function cancel() {
+    void cancelTransfer(inFlight, onDecide);
   }
-
-  const cancelError = cancelFailed && (
-    <p role="alert" className="approval__error">
-      {RESUME_FAILED_MESSAGE}
-    </p>
-  );
 
   if (!draft) {
     return (
       <div className="approval">
         <p>No encontramos el borrador de esta transferencia.</p>
-        {cancelError}
-        <Button variant="secondary" onClick={() => void cancel()}>
+        <Button variant="secondary" onClick={cancel}>
           Descartar
         </Button>
       </div>
@@ -75,19 +69,18 @@ export function ApprovalPanel({ draft, onDecide }: ApprovalPanelProps) {
       <p className="approval__question">
         ¿Transferir <strong>{formatMoney(draft.total, draft.currency)}</strong> a {draft.beneficiary.name}?
       </p>
-      {cancelError}
       <div className="approval__actions">
-        <Button variant="secondary" onClick={() => void cancel()}>
+        <Button variant="secondary" onClick={cancel}>
           Cancelar
         </Button>
-        <Button onClick={() => setAskingPin(true)}>Confirmar</Button>
+        <Button onClick={openPin}>Confirmar</Button>
       </div>
       {askingPin && (
         <PinDialog
-          key={pinAttempt}
           pending={pending}
           error={error}
           onSubmit={(pin) => void confirm(pin)}
+          onPinChange={() => onPin({ type: 'pin_changed' })}
           onClose={() => setAskingPin(false)}
         />
       )}

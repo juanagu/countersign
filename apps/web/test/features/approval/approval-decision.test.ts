@@ -29,17 +29,14 @@ describe('confirmTransfer', () => {
     expect((await cancelTransfer(guard, onDecide)).kind).toBe('busy');
   });
 
-  it('frees the guard and asks for a new PIN after a failed resume', async () => {
+  it('keeps the guard held once the resume settles: CopilotKit answers an interrupt once', async () => {
     const guard = idle();
-    const stepUp = vi.fn().mockResolvedValueOnce('spent').mockResolvedValueOnce('fresh');
-    const onDecide = vi.fn().mockRejectedValueOnce(new Error('network')).mockResolvedValue(undefined);
-    const failed = await confirmTransfer(guard, DRAFT, '123456', { stepUp, onDecide });
-    expect(failed).toEqual({ kind: 'failed', error: 'resume_failed' });
-    expect(guard.current).toBe(false);
-    expect(await confirmTransfer(guard, DRAFT, '123456', { stepUp, onDecide })).toEqual({ kind: 'done' });
-    expect(onDecide).toHaveBeenLastCalledWith(
-      expect.objectContaining({ editedArgs: expect.objectContaining({ step_up_token: 'fresh' }) }),
-    );
+    const onDecide = vi.fn().mockResolvedValue(undefined);
+    expect(await confirmTransfer(guard, DRAFT, '123456', { stepUp: async () => 'tok', onDecide })).toEqual({
+      kind: 'done',
+    });
+    expect(guard.current).toBe(true);
+    expect((await cancelTransfer(guard, onDecide)).kind).toBe('busy');
   });
 
   it('reports a step-up failure and lets the customer retry', async () => {
@@ -56,13 +53,12 @@ describe('confirmTransfer', () => {
 });
 
 describe('cancelTransfer', () => {
-  it('works again after a failed resume, and only once after success', async () => {
+  it('resumes with a denial, once', async () => {
     const guard = idle();
-    const onDecide = vi.fn().mockRejectedValueOnce(new Error('network')).mockResolvedValue(undefined);
-    expect(await cancelTransfer(guard, onDecide)).toEqual({ kind: 'failed', error: 'resume_failed' });
+    const onDecide = vi.fn().mockResolvedValue(undefined);
     expect(await cancelTransfer(guard, onDecide)).toEqual({ kind: 'done' });
     expect(await cancelTransfer(guard, onDecide)).toEqual({ kind: 'busy' });
-    expect(onDecide).toHaveBeenCalledTimes(2);
-    expect(onDecide).toHaveBeenLastCalledWith(expect.objectContaining({ approved: false }));
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ approved: false }));
   });
 });

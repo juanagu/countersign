@@ -13,6 +13,19 @@ the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` al
   sees, and any model-supplied `step_up_token` on a non-approval call is refused. The web app resumes with
   `{approved: true, editedArgs: {draft_id, step_up_token}}` (`status: "resolved"`), which Pydantic AI
   turns into `ToolApproved(override_args=…)`. A cancel resumes with `approved: false`.
+- **CopilotKit's tool answer is dropped:** CopilotKit 1.87's `useInterrupt` `resolve(payload)` first adds a
+  `role: "tool"` message for the paused call whose content is the payload, step-up token included, and keeps
+  it in every later request. Pydantic AI then refuses the resume ("already executed and its result cannot be
+  overridden"), and on later turns the model would read the token. `BankAGUIAdapter` drops every client tool
+  message that answers a call named in `resume`, and any client tool message whose `editedArgs` carry
+  `step_up_token`, before the history is loaded: the resume entry decides the call, and an older answer is
+  followed by the call's real result (or Pydantic AI marks the call interrupted). The web app also removes
+  that message from `agent.messages` once `resolve` settles, so the spent token stops travelling.
+  `override_args` reaches only the tool call itself: the history keeps the model's arguments (`draft_id`).
+- **A failed resume is recovered by asking again:** `useInterrupt` drops the interrupt when the resume run
+  starts and can't resume after it fails (CopilotKit's `runAgent` swallows the failure). The chat, not the
+  unmounted panel, then says "No pudimos confirmar la transferencia. Pedime de nuevo que la envíe."; the bot
+  raises a new interrupt for the same draft and the customer steps up again.
 - **The panel shows server data:** the approval panel looks up the `transfer-confirm` server template for
   the interrupt's `draft_id` in the thread. It never displays the interrupt's model-proposed arguments.
 - **Step-up:** `POST /auth/step-up` (session, JSON, PIN `123456`, a third wrong PIN within 15 min of the streak's first locks it for 5 min from that failure; older failures are forgotten, so a typo days later can't lock anyone out) signs

@@ -8,6 +8,7 @@ from pydantic_ai.models import Model
 
 from app.core.clock import BankClock
 from app.guardrails.input_classifier import GuardModelClassifier, InputClassifier
+from app.guardrails.pending_approvals import PendingApprovals
 from app.guardrails.run_guard import RunGuard, WriteIntentCheck
 from app.guardrails.verdict import Action, Verdict
 from app.guardrails.write_intent import GuardModelWriteIntent
@@ -21,6 +22,8 @@ class Guardrails:
     classifier: InputClassifier
     write_intent: WriteIntentCheck
     clock: BankClock = field(default_factory=BankClock)  # Grounding accepts the bank's today, not the host's.
+    # The approval interrupts raised per user and thread: only a resume answering one may skip the classifier.
+    pending_approvals: PendingApprovals = field(default_factory=PendingApprovals)
 
     @classmethod
     def on_model(cls, model: Model | str, *, clock: BankClock | None = None) -> "Guardrails":
@@ -43,7 +46,8 @@ class Guardrails:
 
         Tool results from earlier turns ground figures too, so a follow-up may restate them. The history is the
         client's: a forged result only lets the customer ground claims shown to themselves (ADR 014).
-        A `resume_only` run (an approval resume, no new customer message) opens the gate without the classifier.
+        A `resume_only` run (a resume of an interrupt this bot raised, no new customer message) opens the gate
+        without the classifier.
         """
         guard = RunGuard(
             customer_messages=list(customer_messages),
