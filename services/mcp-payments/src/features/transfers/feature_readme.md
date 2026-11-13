@@ -21,4 +21,5 @@ MCP tools at `POST /mcp`:
 ## Data flow
 
 Exchanged token (`aud=mcp-payments`) → `Principal.sub` → `TransfersRepository` (Postgres `bank` schema).
-Money is computed in integer cents and returned as two-decimal strings.
+Money is computed in integer cents and returned as two-decimal strings. An execution debits amount + fee
+and writes one `transferencias` movement plus, when the fee is above zero, a `comisiones` one.

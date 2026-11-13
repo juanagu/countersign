@@ -50,4 +50,39 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
       await db.query(`DELETE FROM bank.used_jtis WHERE jti = $1`, [`jti-${draftId}`]);
     }
   });
+
+  it('records the fee as its own movement, so the movements add up to the debit', async () => {
+    const draftId = `drf_${randomUUID()}`;
+    const balance = async () =>
+      Number(
+        (await db.query<{ balance: string }>(`SELECT balance::text FROM bank.accounts WHERE id = 'acc-juan-ars'`))
+          .rows[0]?.balance,
+      );
+    const before = await balance();
+    // A booking time no seeded row has, so the cleanup deletes only this test's movements.
+    const bookedAt = new Date('2000-01-01T00:00:00.000Z');
+    await db.query(
+      `INSERT INTO bank.transfer_drafts (id, customer_id, source_account_id, beneficiary_id, amount, currency, fee, status, expires_at)
+       VALUES ($1, 'juan', 'acc-juan-ars', 'ben-juan-ana', 10.00, 'ARS', 1.50, 'pending', now() + interval '5 minutes')`,
+      [draftId],
+    );
+    try {
+      expect((await repo.executeDraft(draftId, bookedAt)).status).toBe('executed');
+      const { rows } = await db.query<{ amount: string; category: string }>(
+        `SELECT amount::text, category FROM bank.transactions
+          WHERE account_id = 'acc-juan-ars' AND booked_at = $1 ORDER BY category`,
+        [bookedAt],
+      );
+      expect(rows).toEqual([
+        { amount: '-1.50', category: 'comisiones' },
+        { amount: '-10.00', category: 'transferencias' },
+      ]);
+      expect(before - (await balance())).toBeCloseTo(11.5, 2);
+    } finally {
+      await db.query(`UPDATE bank.accounts SET balance = $1 WHERE id = 'acc-juan-ars'`, [before.toFixed(2)]);
+      await db.query(`DELETE FROM bank.transactions WHERE account_id = 'acc-juan-ars' AND booked_at = $1`, [bookedAt]);
+      await db.query(`DELETE FROM bank.transfers WHERE draft_id = $1`, [draftId]);
+      await db.query(`DELETE FROM bank.transfer_drafts WHERE id = $1`, [draftId]);
+    }
+  });
 });

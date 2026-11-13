@@ -19,6 +19,9 @@ const RECEIPT_COLUMNS = `id AS "transferId", draft_id AS "draftId", reference,
 const BENEFICIARY_COLUMNS = `id, customer_id AS "customerId", full_name AS "fullName", bank_name AS "bankName",
   account_ref AS "accountRef", currency`;
 
+const FEE_MERCHANT = 'Banco Demo';
+const FEE_MEMO = 'Comisión por transferencia';
+
 export class PgTransfersRepository implements TransfersRepository {
   constructor(private readonly pool: pg.Pool) {}
 
@@ -115,17 +118,27 @@ export class PgTransfersRepository implements TransfersRepository {
       [draft.amount, draft.fee, draft.sourceAccountId],
     );
     if (debit.rowCount !== 1) return { status: 'insufficient_funds' };
-    await client.query(
-      `INSERT INTO bank.transactions (account_id, booked_at, amount, category, merchant, memo)
-       SELECT $1, $2, -$3::numeric, 'transferencias', b.full_name, 'Transferencia enviada'
-         FROM bank.beneficiaries b WHERE b.id = $4`,
-      [draft.sourceAccountId, now, draft.amount, draft.beneficiaryId],
-    );
+    await this.recordMovements(client, draft, now);
     await client.query(`UPDATE bank.transfer_drafts SET status = 'executed' WHERE id = $1`, [draftId]);
     const receipt = await client.query<TransferReceipt>(
       `INSERT INTO bank.transfers (id, draft_id, reference, executed_at) VALUES ($1, $2, $3, $4) RETURNING ${RECEIPT_COLUMNS}`,
       [`trf_${randomUUID()}`, draftId, `BD-${randomUUID().slice(0, 8).toUpperCase()}`, now],
     );
     return { status: 'executed', receipt: receipt.rows[0] as TransferReceipt };
+  }
+
+  /** One row per movement, so the account's history adds up to what was debited (amount + fee). */
+  private async recordMovements(client: pg.PoolClient, draft: TransferDraft, now: Date): Promise<void> {
+    await client.query(
+      `INSERT INTO bank.transactions (account_id, booked_at, amount, category, merchant, memo)
+       SELECT $1, $2, -$3::numeric, 'transferencias', b.full_name, 'Transferencia enviada'
+         FROM bank.beneficiaries b WHERE b.id = $4`,
+      [draft.sourceAccountId, now, draft.amount, draft.beneficiaryId],
+    );
+    await client.query(
+      `INSERT INTO bank.transactions (account_id, booked_at, amount, category, merchant, memo)
+       SELECT $1, $2, -$3::numeric, 'comisiones', $4, $5 WHERE $3::numeric > 0`,
+      [draft.sourceAccountId, now, draft.fee, FEE_MERCHANT, FEE_MEMO],
+    );
   }
 }
