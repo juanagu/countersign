@@ -123,12 +123,15 @@ postgres 5432, redis 6379, phoenix 6006.
 ## Commands (keep this section current as they are created)
 
 ```
-make up          # docker compose up infra + all services
+make install     # pnpm install + uv sync (+ pre-push hook)
+make up          # docker compose up infra + all services, waits until healthy
 make down
+make logs
 make contracts   # regenerate TS + Python types from JSON Schema
+make contracts-check  # fail if generated contracts are stale (CI)
 make seed        # load mock bank data
 make ingest      # chunk + embed data/kb into pgvector
 make test        # all unit/integration tests
 make eval        # pydantic-evals suite (needs ANTHROPIC_API_KEY)
-make lint
+make lint        # eslint, prettier, tsc, ruff, mypy
 ```

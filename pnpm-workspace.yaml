@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - services/mcp-*
+  - packages/*
+
+allowBuilds:
+  esbuild: true

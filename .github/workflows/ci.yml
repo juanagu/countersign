@@ -1,0 +1,54 @@
+name: CI
+
+# Fast tier only: lint + typecheck + unit tests, on every PR and push to main.
+# No browser suite yet; a full tier is added when e2e lands.
+on:
+  push:
+    branches: [main]
+    paths: ['**', '!docs/**', '!**/*.md']
+  pull_request:
+    paths: ['**', '!docs/**', '!**/*.md']
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.8'
+          enable-cache: true
+      - run: make install
+      - run: make contracts-check
+      - run: make lint
+      - run: make test
+
+  # Weekly: production dependency audit. A finding is a warning to triage with the dependency-audit skill.
+  audit:
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pnpm audit --prod --audit-level high

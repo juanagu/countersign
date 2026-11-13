@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+services/bot
+packages/contracts/src/generated
+*.md
