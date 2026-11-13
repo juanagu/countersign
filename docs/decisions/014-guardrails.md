@@ -37,7 +37,11 @@ tool may run, and no text may reach the client, before its verdict.
   line break; a dot inside `1.254.300,50` is never followed by whitespace). Each sentence passes a PII-leak check
   (masked in place) and a grounding check: every amount (with a currency or unit, or ≥ 1000, or with decimals),
   percentage, date and account number must appear in this run's domain-tool results, recorded by
-  `PolicyToolset` before the model sees them. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
+  `PolicyToolset` before the model sees them, or in the tool results of earlier turns in the history (not
+  `load_skill` or `render_ui`, which carry no bank data), so a follow-up may restate an earlier figure. That
+  history comes from the client, so a forged tool result could ground a made-up figure, but only in an answer
+  streamed back to the customer who forged it: it moves no money (writes go through the tool policy and the
+  MCP servers, which read the bank's own data) and reaches no one else. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
   `1254300.50`, `****4521` by its last digits, `15 de octubre`, `15/10`, ISO dates). A failing sentence becomes a
   fallback; an `a2ui-surface` with an ungrounded number is dropped for a text fallback (ADR 012's promise).
   `bank-template` cards pass untouched. The raw `render_ui` call (its `TOOL_CALL_*` events and result) and

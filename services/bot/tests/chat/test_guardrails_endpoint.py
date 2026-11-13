@@ -161,3 +161,37 @@ async def test_the_client_gets_the_validated_surface_but_not_the_raw_render_ui_c
     assert [e["activityType"] for e in events if e["type"] == "ACTIVITY_SNAPSHOT"] == ["a2ui-surface"]
     assert not [e for e in events if e["type"].startswith("TOOL_CALL")]
     assert _text(sse) == "Listo."
+
+
+async def test_a_follow_up_may_restate_a_figure_from_an_earlier_tool_result(
+    verifier: JwksTokenVerifier, signing_key: SigningKey
+) -> None:
+    balance = {"untrusted_data": {"id": "acc-ana-ars", "balance": "1254300.50", "currency": "ARS"}, "note": "data"}
+    history = [
+        {"id": "u1", "role": "user", "content": "¿Cuánto tengo?"},
+        {
+            "id": "a1",
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+                {"id": "c1", "type": "function", "function": {"name": "get_balance", "arguments": "{}"}},
+            ],
+        },
+        {"id": "t1", "role": "tool", "toolCallId": "c1", "content": json.dumps(balance)},
+        {"id": "a2", "role": "assistant", "content": "Tu saldo es $ 1.254.300,50."},
+        {"id": "u2", "role": "user", "content": "Repetímelo, por favor"},
+    ]
+
+    async def stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
+        yield "Tu saldo es $ 1.254.300,50."
+
+    app = create_app(
+        make_settings(),
+        agent=_agent(FunctionModel(stream_function=stream), []),
+        token_verifier=verifier,
+        guardrails=open_guardrails(),
+    )
+    headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='ana')}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        res = await http.post("/agent", json={**_body(""), "messages": history}, headers=headers)
+    assert _text(res.text) == "Tu saldo es $ 1.254.300,50."

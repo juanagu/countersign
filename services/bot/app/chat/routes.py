@@ -11,12 +11,16 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
-from app.guardrails.messages import customer_texts, redact_customer_turns, tools_returned_in
+from app.genui.render_ui import RENDER_UI_TOOL
+from app.guardrails.messages import customer_texts, redact_customer_turns, tool_results_in, tools_returned_in
 from app.guardrails.pipeline import Guardrails
 from app.guardrails.stream import guarded_stream
 from app.policy.policy_toolset import THIRD_PARTY_TEXT_TOOLS
-from app.skills.history import skills_loaded_in
+from app.skills.history import LOAD_SKILL, skills_loaded_in
 from app.skills.registry import SkillRegistry
+
+# Their results are instructions or UI, not bank data: like in a run (`PolicyToolset`), they ground no figure.
+NON_EVIDENCE_TOOLS = frozenset({LOAD_SKILL, RENDER_UI_TOOL})
 
 
 class BankAGUIAdapter(AGUIAdapter[BotDeps, str | DeferredToolRequests]):
@@ -53,6 +57,7 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails) 
             user_id=principal.user_id,
             customer_messages=customer_texts(history),
             third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
+            earlier_tool_results=tool_results_in(history, excluding=NON_EVIDENCE_TOOLS),
         )
         deps = BotDeps(
             user_id=principal.user_id,

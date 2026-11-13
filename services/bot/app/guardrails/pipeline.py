@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic_ai.models import Model
 
@@ -25,13 +26,26 @@ class Guardrails:
             clock=clock or BankClock(),
         )
 
-    def start_run(self, *, user_id: str, customer_messages: Sequence[str], third_party_text_seen: bool) -> RunGuard:
-        """A run guard whose input verdict is being computed in the background from now on."""
+    def start_run(
+        self,
+        *,
+        user_id: str,
+        customer_messages: Sequence[str],
+        third_party_text_seen: bool,
+        earlier_tool_results: Sequence[Any] = (),
+    ) -> RunGuard:
+        """A run guard whose input verdict is being computed in the background from now on.
+
+        Tool results from earlier turns ground figures too, so a follow-up may restate them. The history is the
+        client's: a forged result only lets the customer ground claims shown to themselves (ADR 014).
+        """
         guard = RunGuard(
             customer_messages=list(customer_messages),
             today=self.clock.today(),
             write_intent=self.write_intent,
             third_party_text_seen=third_party_text_seen,
         )
+        for value in earlier_tool_results:
+            guard.evidence.add(value)
         guard.classify_with(self.classifier(guard.latest_message, user_id))
         return guard

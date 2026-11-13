@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import replace
+from typing import Any
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 
@@ -51,3 +52,14 @@ def tools_returned_in(messages: Sequence[ModelMessage]) -> set[str]:
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
+
+
+def tool_results_in(messages: Sequence[ModelMessage], *, excluding: frozenset[str] = frozenset()) -> list[Any]:
+    """The content of each tool result the history holds, oldest first, except the excluded tools'."""
+    return [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name not in excluding
+    ]
