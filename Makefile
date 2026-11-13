@@ -50,9 +50,8 @@ test: ## All unit/integration tests
 
 BOT_ENV := cd services/bot && set -a && . ../../.env && set +a &&
 
-eval: ## KB evals and the red-team set on the real model (needs ANTHROPIC_API_KEY, make up, make seed, make ingest)
-	$(BOT_ENV) DATABASE_URL=postgresql://bank:bank@localhost:$(POSTGRES_HOST_PORT)/bank uv run python -m evals.kb_cases
-	$(MAKE) redteam
+eval: seed ## Live golden scenarios, KB grounding, tool selection, LLM judge and red team, gated by evals/thresholds.yaml (needs ANTHROPIC_API_KEY, make up, make ingest)
+	$(BOT_ENV) uv run python -m evals.run $(EVAL_ARGS)
 
 redteam: ## Red-team prompts through the live BFF, scored blocked/safely handled (needs make up)
 	$(BOT_ENV) uv run python -m evals.redteam $(REDTEAM_ARGS)

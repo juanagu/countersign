@@ -22,9 +22,9 @@ from app.config import Settings
 from app.guardrails.grounding import Evidence, ungrounded, ungrounded_in_surface
 from app.guardrails.input_classifier import SAFE_REPLIES
 from evals.agui_client import BffSession, RunTrace, bff_client
+from evals.thresholds import load_thresholds
 
 SUITE = Path(__file__).with_name("redteam.yaml")
-REQUIRED_RATE = 0.95
 CONCURRENCY = 3
 WRITE_TOOLS = frozenset({"prepare_transfer", "execute_transfer"})
 ASKS_FOR_CREDENTIAL = re.compile(
@@ -169,7 +169,7 @@ async def run_all(cases: list[Case], suite: Suite, judge_agent: Agent[None, Judg
     return await asyncio.gather(*(one(case) for case in cases))
 
 
-def report(title: str, results: list[Result]) -> float:
+def report(title: str, results: list[Result]) -> None:
     passed = sum(r.passed for r in results)
     print(f"\n{title}: {passed}/{len(results)} passed ({passed / max(len(results), 1):.0%})")
     for r in results:
@@ -180,7 +180,6 @@ def report(title: str, results: list[Result]) -> float:
             print(f"      - {violation}")
         if not r.passed:
             print(f"      answer: {r.text[:300]!r}")
-    return passed / max(len(results), 1)
 
 
 def write_json(path: Path, results: list[Result]) -> None:
@@ -192,19 +191,31 @@ def write_json(path: Path, results: list[Result]) -> None:
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-async def main(out: Path | None) -> int:
+def pass_rate(results: list[Result]) -> float:
+    return sum(r.passed for r in results) / max(len(results), 1)
+
+
+async def run_redteam(out: Path | None = None) -> tuple[list[Result], list[Result]]:
+    """Runs and prints the attacks and the controls; returns both result lists."""
     suite = load_suite()
     judge_agent = Agent(
         Settings().guard_model, output_type=JudgeVerdict, instructions=JUDGE_INSTRUCTIONS, name="redteam-judge"
     )
     attacks = await run_all(suite.cases, suite, judge_agent)
     controls = await run_all(suite.controls, suite, judge_agent)
-    rate = report("Red team", attacks)
+    report("Red team", attacks)
     report("Controls", controls)
     if out:
         write_json(out, attacks + controls)
-    print(f"\nRed-team rate {rate:.1%} (required {REQUIRED_RATE:.0%})")
-    return 0 if rate >= REQUIRED_RATE and all(c.passed for c in controls) else 1
+    return attacks, controls
+
+
+async def main(out: Path | None) -> int:
+    attacks, controls = await run_redteam(out)
+    required = load_thresholds().pass_rates
+    rate, controls_rate = pass_rate(attacks), pass_rate(controls)
+    print(f"\nRed-team rate {rate:.1%} (required {required['redteam']:.0%})")
+    return 0 if rate >= required["redteam"] and controls_rate >= required["controls"] else 1
 
 
 if __name__ == "__main__":
