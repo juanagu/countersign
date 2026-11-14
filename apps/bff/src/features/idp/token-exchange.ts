@@ -1,16 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Hono, type Context } from 'hono';
-import type { TokenIssuer } from './token-issuer.js';
+import { AUDIENCE_SCOPES, CLIENT_POLICIES, type ClientPolicy } from './client-policies.js';
+import type { ExchangeSubject, TokenIssuer } from './token-issuer.js';
 
 const GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 const SUBJECT_TOKEN_TYPES = new Set([ACCESS_TOKEN_TYPE, 'urn:ietf:params:oauth:token-type:jwt']);
-
-/** The most each resource server may be granted. A request can narrow it, never widen it. */
-export const AUDIENCE_SCOPES: Readonly<Record<string, readonly string[]>> = {
-  'mcp-accounts': ['accounts:read'],
-  'mcp-payments': ['beneficiaries:read', 'transfers:prepare', 'transfers:execute'],
-};
 
 export interface TokenExchangeOptions {
   issuer: TokenIssuer;
@@ -64,14 +59,31 @@ function authenticateClient(header: string | undefined, clients: TokenExchangeOp
   return safeEqual(secret, clients[id] ?? '') ? id : undefined;
 }
 
-function grantedScopes(audience: string, requested: string | undefined): string[] | undefined {
-  const allowed = AUDIENCE_SCOPES[audience] ?? [];
+function grantedScopes(
+  audience: string,
+  requested: string | undefined,
+  subject: ExchangeSubject,
+  policy: ClientPolicy,
+): string[] | undefined {
+  const ceiling = AUDIENCE_SCOPES[audience] ?? [];
+  // A downstream token never widens the subject's scopes.
+  const allowed = policy.inheritSubjectScopes ? ceiling.filter((scope) => subject.scopes.includes(scope)) : ceiling;
+  if (allowed.length === 0) return undefined;
   if (!requested) return [...allowed];
   const scopes = requested.split(' ').filter(Boolean);
   return scopes.every((scope) => allowed.includes(scope)) ? scopes : undefined;
 }
 
-/** RFC 8693-shaped token exchange: an `aud=bot` subject token for an audience-bound downstream token. */
+function sameChain(subject: ExchangeSubject, expected: readonly string[]): boolean {
+  const chain: string[] = [];
+  for (let act = subject.act; act; act = act.act) chain.push(act.sub);
+  return chain.length === expected.length && chain.every((actor, index) => actor === expected[index]);
+}
+
+/**
+ * RFC 8693-shaped token exchange: a subject token for an audience-bound downstream token. Each client
+ * presents one kind of subject token and asks for a fixed set of audiences (`CLIENT_POLICIES`).
+ */
 export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): Hono {
   const app = new Hono();
 
@@ -79,8 +91,9 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
     if (!c.req.header('content-type')?.startsWith('application/x-www-form-urlencoded')) {
       return oauthError(c, 'invalid_request');
     }
-    const actor = authenticateClient(c.req.header('authorization'), clients);
-    if (!actor) return oauthError(c, 'invalid_client', 401);
+    const client = authenticateClient(c.req.header('authorization'), clients);
+    const policy = client && Object.hasOwn(CLIENT_POLICIES, client) ? CLIENT_POLICIES[client] : undefined;
+    if (!client || !policy) return oauthError(c, 'invalid_client', 401);
 
     const form = await c.req.parseBody();
     const field = (name: string) => (typeof form[name] === 'string' ? (form[name] as string) : undefined);
@@ -90,18 +103,20 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
       return oauthError(c, 'invalid_request');
     }
     const audience = field('audience') ?? '';
-    if (!Object.hasOwn(AUDIENCE_SCOPES, audience)) return oauthError(c, 'invalid_target');
-    const scopes = grantedScopes(audience, field('scope'));
-    if (!scopes) return oauthError(c, 'invalid_scope');
+    if (!Object.hasOwn(AUDIENCE_SCOPES, audience) || !policy.targets.includes(audience)) {
+      return oauthError(c, 'invalid_target');
+    }
 
-    const subject = await issuer.verifyBotToken(subjectToken).catch(() => undefined);
-    if (!subject) return oauthError(c, 'invalid_grant');
+    const subject = await issuer.verifyExchangeSubject(subjectToken, policy.subjectAudience).catch(() => undefined);
+    if (!subject || !sameChain(subject, policy.subjectActors)) return oauthError(c, 'invalid_grant');
+    const scopes = grantedScopes(audience, field('scope'), subject, policy);
+    if (!scopes) return oauthError(c, 'invalid_scope');
 
     const exchanged = await issuer.issueExchanged({
       sub: subject.sub,
       audience,
       scopes,
-      actor,
+      act: { sub: client, ...(subject.act && { act: subject.act }) },
       notAfter: subject.exp,
     });
     if (!exchanged) return oauthError(c, 'invalid_grant'); // The subject token is about to expire.

@@ -5,6 +5,7 @@ import { MemoryThreadLog } from './memory-thread-log.js';
 
 export const TEST_ISSUER = 'http://idp.test';
 export const TEST_BOT_SECRET = 'test-bot-secret-0123456789';
+export const TEST_GATEWAY_SECRET = 'test-gateway-secret-0123456789';
 
 export const silentLogger = pino({ level: 'silent' });
 
@@ -14,7 +15,7 @@ export function testDeps(issuer: TokenIssuer, overrides: Partial<AppDeps> = {}):
     issuer,
     botAgentUrl: 'http://bot.invalid/agent',
     cookieSecure: false,
-    clients: { bot: TEST_BOT_SECRET },
+    clients: { bot: TEST_BOT_SECRET, 'mcp-gateway': TEST_GATEWAY_SECRET },
     stepUpPin: '123456',
     threadLog: new MemoryThreadLog(),
     logger: silentLogger,

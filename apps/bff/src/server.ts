@@ -3,6 +3,7 @@ import { createApp, SERVICE_NAME } from './app.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './core/logger.js';
 import { createRedisClient, RedisThreadLog } from './features/chat/runner/redis-thread-log.js';
+import { BOT_CLIENT, GATEWAY_CLIENT } from './features/idp/client-policies.js';
 import { TokenIssuer } from './features/idp/token-issuer.js';
 
 const MINUTE_MS = 60_000;
@@ -19,7 +20,10 @@ const app = createApp({
   issuer,
   botAgentUrl: config.botAgentUrl,
   cookieSecure: config.cookieSecure,
-  clients: { bot: config.botClientSecret },
+  clients: {
+    [BOT_CLIENT]: config.botClientSecret,
+    ...(config.mcpGatewayClientSecret && { [GATEWAY_CLIENT]: config.mcpGatewayClientSecret }),
+  },
   stepUpPin: config.stepUpPin,
   threadLog: new RedisThreadLog(redis, THREAD_LOG_OPTIONS),
   logger,

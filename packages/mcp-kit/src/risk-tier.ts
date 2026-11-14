@@ -7,3 +7,10 @@ export const RISK_TIER_META_KEY = 'bank/riskTier';
 export function tierMeta(tier: RiskTier): Record<string, unknown> {
   return { [RISK_TIER_META_KEY]: tier };
 }
+
+const TIERS: readonly string[] = ['T0', 'T1', 'T2', 'T3'] satisfies RiskTier[];
+
+export function readTier(meta: Record<string, unknown> | undefined): RiskTier | undefined {
+  const value = meta?.[RISK_TIER_META_KEY];
+  return typeof value === 'string' && TIERS.includes(value) ? (value as RiskTier) : undefined;
+}

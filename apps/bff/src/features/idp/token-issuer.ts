@@ -21,18 +21,36 @@ export const STEP_UP_AUDIENCE = 'mcp-payments';
 /** Below this, an exchanged token would expire before the caller could use it. */
 export const MIN_EXCHANGED_TOKEN_TTL_SECONDS = 5;
 
-export interface BotTokenClaims {
+/** RFC 8693 `act` claim: who acts for the subject, with the earlier actors nested inside. */
+export interface ActClaim {
+  sub: string;
+  act?: ActClaim;
+}
+
+/** The verified claims of a token presented as the subject of an exchange. */
+export interface ExchangeSubject {
   sub: string;
   /** Seconds since epoch. */
   exp: number;
+  scopes: readonly string[];
+  act?: ActClaim;
+}
+
+const MAX_ACT_DEPTH = 4;
+
+function readAct(value: unknown, depth = 0): ActClaim {
+  if (typeof value !== 'object' || value === null || depth >= MAX_ACT_DEPTH) throw new Error('malformed act claim');
+  const { sub, act } = value as { sub?: unknown; act?: unknown };
+  if (typeof sub !== 'string' || sub === '') throw new Error('malformed act claim');
+  return act === undefined ? { sub } : { sub, act: readAct(act, depth + 1) };
 }
 
 export interface ExchangedTokenRequest {
   sub: string;
   audience: string;
   scopes: readonly string[];
-  /** The client acting for the user (RFC 8693 `act.sub`). */
-  actor: string;
+  /** The actor chain stamped on the token: this client, with any earlier actors nested inside. */
+  act: ActClaim;
   /** Upper bound on expiry: never outlive the subject token. */
   notAfter: number;
 }
@@ -87,12 +105,7 @@ export class TokenIssuer {
     const now = Math.floor(Date.now() / 1000);
     const expiresIn = Math.min(EXCHANGED_TOKEN_TTL_SECONDS, req.notAfter - now);
     if (expiresIn < MIN_EXCHANGED_TOKEN_TTL_SECONDS) return undefined;
-    const token = await this.sign(
-      { scope: req.scopes.join(' '), act: { sub: req.actor } },
-      req.sub,
-      req.audience,
-      expiresIn,
-    );
+    const token = await this.sign({ scope: req.scopes.join(' '), act: req.act }, req.sub, req.audience, expiresIn);
     return { token, expiresIn };
   }
 
@@ -106,14 +119,17 @@ export class TokenIssuer {
     );
   }
 
-  async verifyBotToken(token: string): Promise<BotTokenClaims> {
+  /** Verifies a token this IdP issued for `audience`, to be exchanged for a narrower one. */
+  async verifyExchangeSubject(token: string, audience: string): Promise<ExchangeSubject> {
     const { payload } = await jwtVerify(token, this.publicKey, {
       issuer: this.issuer,
-      audience: BOT_AUDIENCE,
+      audience,
       algorithms: [ALG],
       requiredClaims: ['sub', 'exp'],
     });
-    return { sub: payload.sub as string, exp: payload.exp as number };
+    const act = payload.act === undefined ? undefined : readAct(payload.act);
+    const scopes = typeof payload.scope === 'string' ? payload.scope.split(' ').filter(Boolean) : [];
+    return { sub: payload.sub as string, exp: payload.exp as number, scopes, ...(act && { act }) };
   }
 
   async verifySession(token: string): Promise<SessionClaims> {

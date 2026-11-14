@@ -23,4 +23,15 @@ describe('bff', () => {
   it('requires a bot client secret', () => {
     expect(() => loadConfig({})).toThrow();
   });
+
+  it('treats the gateway client secret as optional, so an older .env still boots', () => {
+    expect(loadConfig({ BOT_CLIENT_SECRET: 'x'.repeat(16) }).mcpGatewayClientSecret).toBeUndefined();
+    expect(
+      loadConfig({ BOT_CLIENT_SECRET: 'x'.repeat(16), MCP_GATEWAY_CLIENT_SECRET: '' }).mcpGatewayClientSecret,
+    ).toBe(undefined);
+  });
+
+  it('rejects a short gateway client secret', () => {
+    expect(() => loadConfig({ BOT_CLIENT_SECRET: 'x'.repeat(16), MCP_GATEWAY_CLIENT_SECRET: 'short' })).toThrow();
+  });
 });

@@ -12,6 +12,8 @@ const configSchema = z.object({
   cookieSecure: z.stringbool().default(false),
   /** Secret the bot authenticates with at the token endpoint. */
   botClientSecret: z.string().min(16),
+  /** Secret the MCP gateway authenticates with (ADR 017). Without it the gateway client is not registered. */
+  mcpGatewayClientSecret: z.string().min(16).optional(),
   /** Mock IdP step-up PIN (synthetic; the brief fixes it at 123456). */
   stepUpPin: z
     .string()
@@ -30,6 +32,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     redisUrl: env.REDIS_URL,
     cookieSecure: env.COOKIE_SECURE,
     botClientSecret: env.BOT_CLIENT_SECRET,
+    mcpGatewayClientSecret: env.MCP_GATEWAY_CLIENT_SECRET || undefined,
     stepUpPin: env.STEP_UP_PIN,
   });
 }
