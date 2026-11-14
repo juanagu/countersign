@@ -21,6 +21,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from app.guardrails.figures import bullet_masks
 from app.guardrails.grounding import SURFACE_PLUMBING_KEYS, Evidence, ungrounded, ungrounded_in_surface
 from app.guardrails.pii import redact, redact_with_kinds
 from app.guardrails.verdict import ALLOW, Action, Verdict, block
@@ -110,6 +111,7 @@ class OutputGuard:
         return getattr(event, "tool_call_id", None) in self._withheld_calls
 
     def check_sentence(self, sentence: str) -> str:
+        sentence = bullet_masks(sentence)
         for check in self._checks:
             verdict = check(sentence, self._evidence)
             if verdict.action is Action.ALLOW:

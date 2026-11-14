@@ -84,6 +84,16 @@ def test_a_leaked_card_or_email_is_masked(evidence: Evidence) -> None:
     assert _text(out) == "Tu tarjeta [tarjeta] y [email]."
 
 
+def test_an_asterisk_mask_inside_bold_reaches_the_client_as_bullets(evidence: Evidence) -> None:
+    line = "- **Cuenta corriente en pesos (****4521):** $ 1.254.300,50\n"
+    out = _run(OutputGuard(evidence), _text_events(line[:20], line[20:]))
+    assert _text(out) == "- **Cuenta corriente en pesos (••••4521):** $ 1.254.300,50\n"
+
+
+def test_bold_figures_keep_their_asterisks(evidence: Evidence) -> None:
+    assert _text(_run(OutputGuard(evidence), _text_events("Tenés **$ 1.254.300,50**."))) == "Tenés **$ 1.254.300,50**."
+
+
 def _surface(value: float) -> ActivitySnapshotEvent:
     update = {"surfaceId": "s", "components": [{"id": "c0", "component": "BarChart", "bars": [{"value": value}]}]}
     content: dict[str, Any] = {"a2ui_operations": [{"version": "v0.9", "updateComponents": update}]}

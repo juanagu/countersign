@@ -19,6 +19,9 @@ ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 SLASH_DATE = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:/(\d{4}|\d{2}))?(?![\d/])")
 WORD_DATE = re.compile(rf"(?i)(?:\b(\d{{1,2}})\s+de\s+)?\b({_MONTH_NAMES})\b(?:\s+(?:de|del)\s+(\d{{4}}))?")
 MASKED_ACCOUNT = re.compile(r"[*•]{2,}\s?(\d{2,6})(?!\d)")
+# Three or more, so `**1.234**` stays bold: an asterisk mask inside markdown bold closes the bold early.
+ASTERISK_MASK = re.compile(r"\*{3,}\s?(\d{2,6})(?!\d)")
+BULLET_MASK = "••••"
 FULL_ACCOUNT = re.compile(r"(?<![\d-])(?:\d{4}-\d{4}-\d{4}|\d{10,22})(?![\d-])")
 NUMBER = re.compile(r"(?<![\w])\d+(?:[.,]\d+)*(?![\w])")
 CURRENCY_BEFORE = re.compile(r"(?i)(?:US\$|U\$S|USD|ARS|\$)\s?$")
@@ -155,3 +158,8 @@ def extract(text: str) -> Figures:
         masked_accounts=tuple(digits for digits, _ in masked),
         full_accounts=tuple(digits for digits, _ in full),
     )
+
+
+def bullet_masks(text: str) -> str:
+    """`****7810` → `••••7810`, so a masked account reads the same and never breaks the markdown around it."""
+    return ASTERISK_MASK.sub(lambda match: BULLET_MASK + match[1], text)

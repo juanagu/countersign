@@ -51,3 +51,11 @@ def test_a_stored_a2ui_surface_is_not_restored_because_the_output_guard_may_have
     surface = _event(SURFACE_ACTIVITY, "surface-1", {"operations": []})
 
     assert transcript(_turn("render_ui", [surface, surface.model_dump()])) == []
+
+
+def test_an_answer_stored_with_an_asterisk_mask_is_shown_with_bullets() -> None:
+    stored = ModelResponse(parts=[TextPart(content="- **Cuenta corriente en pesos (****7810):** $ 486.750,25")])
+
+    [shown] = transcript([stored])
+
+    assert shown["content"] == "- **Cuenta corriente en pesos (••••7810):** $ 486.750,25"

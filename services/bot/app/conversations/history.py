@@ -10,6 +10,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Tool
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.genui.templates import ACTIVITY_TYPE as TEMPLATE_ACTIVITY
+from app.guardrails.figures import bullet_masks
 
 TRANSCRIPT_ROLES = frozenset({"user", "assistant"})
 
@@ -51,6 +52,8 @@ def _texts(message: ModelMessage) -> list[dict[str, Any]]:
         if dumped.get("role") not in TRANSCRIPT_ROLES or not dumped.get("content"):
             continue
         dumped.pop("toolCalls", None)
+        if dumped["role"] == "assistant" and isinstance(dumped["content"], str):
+            dumped["content"] = bullet_masks(dumped["content"])  # Answers stored before the guard rewrote masks.
         texts.append(dumped)
     return texts
 
