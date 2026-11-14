@@ -15,6 +15,7 @@ from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import BotAgent, build_agent
 from app.chat.deps import BotDeps
 from app.config import SKILLS_DIR
+from app.genui.render_ui import WRITE_FIRST
 from app.guardrails.input_classifier import SAFE_REPLIES
 from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 from app.guardrails.verdict import ALLOW, Verdict, block
@@ -153,15 +154,40 @@ async def test_the_client_gets_the_validated_surface_but_not_the_raw_render_ui_c
 
     async def stream(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])):
+            yield "Listo. "
             yield {0: DeltaToolCall(name="render_ui", json_args=json.dumps(tree))}
         else:
-            yield "Listo."
+            yield "¿Algo más?"
 
     sse = await _post(_agent(FunctionModel(stream_function=stream), []), verifier, signing_key, "¿Qué puedo hacer?")
     events = _events(sse)
     assert [e["activityType"] for e in events if e["type"] == "ACTIVITY_SNAPSHOT"] == ["a2ui-surface"]
     assert not [e for e in events if e["type"].startswith("TOOL_CALL")]
-    assert _text(sse) == "Listo."
+    assert _text(sse) == "Listo. ¿Algo más?"
+
+
+async def test_a_card_drawn_before_any_answer_waits_until_the_answer_is_written(
+    verifier: JwksTokenVerifier, signing_key: SigningKey
+) -> None:
+    tree = {"title": "Ayuda", "children": [{"component": "Text", "props": {"text": "Podés consultar tu saldo."}}]}
+    seen: list[str] = []
+
+    async def stream(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        seen.extend(str(r.content) for r in returns[len(seen) :])
+        if not returns:
+            yield {0: DeltaToolCall(name="render_ui", json_args=json.dumps(tree))}
+        elif len(returns) == 1:
+            yield "Podés consultar tu saldo cuando quieras. "
+            yield {0: DeltaToolCall(name="render_ui", json_args=json.dumps(tree))}
+        else:
+            yield "¿Algo más?"
+
+    sse = await _post(_agent(FunctionModel(stream_function=stream), []), verifier, signing_key, "¿Qué puedo hacer?")
+    events = _events(sse)
+    assert seen[0] == WRITE_FIRST
+    assert [e["activityType"] for e in events if e["type"] == "ACTIVITY_SNAPSHOT"] == ["a2ui-surface"]
+    assert _text(sse).startswith("Podés consultar tu saldo cuando quieras.")
 
 
 async def test_a_follow_up_may_restate_a_figure_from_an_earlier_tool_result(

@@ -1,8 +1,10 @@
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import ValidationError
-from pydantic_ai import Tool, ToolReturn
+from pydantic_ai import RunContext, Tool, ToolReturn
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.toolsets import FunctionToolset
 
 from app.chat.deps import BotDeps
@@ -18,6 +20,9 @@ RENDERED = (
     "in text yet, write it now. Never refer to the card."
 )
 DROPPED = "The UI was invalid and was not shown. Answer in plain text instead."
+WRITE_FIRST = (
+    "Not shown yet. Write your full answer to the customer in text now, then call render_ui again with the card."
+)
 
 DESCRIPTION = """\
 Show the customer a card built from catalog components: Text, KeyValueList, List, BarChart, Table,
@@ -38,10 +43,33 @@ def render_ui(**tree: Any) -> ToolReturn | str:
     return ToolReturn(return_value=RENDERED, metadata=[surface_event(valid)])
 
 
+def answered_in_text(messages: Sequence[ModelMessage]) -> bool:
+    """Whether the model wrote answer text since the customer's last message (the current response included)."""
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts):
+            return False
+        if isinstance(message, ModelResponse) and any(
+            isinstance(part, TextPart) and part.content.strip() for part in message.parts
+        ):
+            return True
+    return False
+
+
+def render_ui_after_answer(ctx: RunContext[BotDeps], **tree: Any) -> ToolReturn | str:
+    """A card is never the answer: until the model has written its answer in text, the card waits (F28)."""
+    if not answered_in_text(ctx.messages):
+        return WRITE_FIRST
+    return render_ui(**tree)
+
+
 def genui_toolset() -> FunctionToolset[BotDeps]:
     # `from_schema` advertises the catalog schema to the model without validating arguments itself, so an invalid
     # tree reaches `render_ui` and degrades to text instead of triggering a model retry (security rule 5).
     tool: Tool[BotDeps] = Tool.from_schema(
-        render_ui, name=RENDER_UI_TOOL, description=DESCRIPTION, json_schema=UiTree.model_json_schema()
+        render_ui_after_answer,
+        name=RENDER_UI_TOOL,
+        description=DESCRIPTION,
+        json_schema=UiTree.model_json_schema(),
+        takes_ctx=True,
     )
     return FunctionToolset([tool])
