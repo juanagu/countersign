@@ -30,7 +30,7 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F4 | `mcp-payments`: enforce the ARS 5.000.000 daily transfer limit the KB states. | todo | Phase 2–3 review |
 | F5 | Config: `z.url()` accepts `localhost:3000/x` (reads `localhost:` as a scheme); restrict service URLs to http(s). | todo | Phase 2 fixes |
 | F6 | Bot: wrap MCP error results as untrusted data too, like successful ones. | todo | Phase 2 fixes |
-| F7 | See the UI in a real browser: `pnpm --dir apps/web test:e2e` with the stack up, plus screenshots at 390 and 1280. Automation here could not capture screenshots. | todo | Phases 1, 4, 5 |
+| F7 | See the UI in a real browser: `pnpm --dir apps/web test:e2e` with the stack up, plus screenshots at 390 and 1280. Automation here could not capture screenshots. | done: 14/14 e2e at 390 and 1280, screenshots taken | Phases 1, 4, 5 |
 | F8 | Visual review of the card, chart and approval styling (built from existing tokens, no designer artboard). | todo | Phase 4 |
 | F9 | Knowledge search: degrade to "no tengo esa información" on any store or embedder failure (Postgres down, an embedding dimension mismatch), not only before ingest. | todo | Phase 2–3 review 3 |
 | F10 | `mcp-kit`: report a JWKS fetch failure as a server error (503), not `invalid_token`. | todo | Phase 2–3 review 3 |
@@ -46,11 +46,14 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F20 | Web genui: stop using model-written labels as React keys in `KeyValueListView` and `QuickRepliesView` (duplicates collide). | todo | Phase 6 review |
 | F21 | Bot policy: fold `_require_approval`'s two identical `ApprovalRequired` branches into one condition. | todo | Phase 6 review |
 | F22 | Bot policy: `FrequencyCaps.acquire` prunes every key on each call; prune only the key it counts, or sweep on a timer. | todo | Phase 6 review |
-| F23 | Resumable streams: browser check of the offline toggle and reload (`apps/web/e2e/resume.spec.ts`, written, never run). | todo | Phase 7 |
+| F23 | Resumable streams: browser check of the offline toggle and reload (`apps/web/e2e/resume.spec.ts`, written, never run). | done: passes at both widths | Phase 7 |
 | F24 | BFF runner: make `stop` reach a run on another BFF replica (Redis pub/sub), and let a run outlive its BFF process (the bot writing the log, as the plan first proposed). | todo | Phase 7 |
 | F25 | Restore past the replay window: keep the cards (template/A2UI activity) and a pending approval, e.g. by persisting the display transcript with the conversation. | todo | Phase 7 |
 | F26 | Thread log size: `RUN_STARTED` carries the client's whole message list on every run; store only the new turn and rebuild earlier turns from the previous runs. | todo | Phase 7 |
-| F27 | Demo in a real browser: walk `docs/DEMO.md` at 5173, including the DevTools Offline toggle and reload (Scenario 5) and the PIN dialog; only its HTTP equivalent was run. | todo | Phase 8 |
+| F27 | Demo in a real browser: walk `docs/DEMO.md` at 5173, including the DevTools Offline toggle and reload (Scenario 5) and the PIN dialog; only its HTTP equivalent was run. | done: `pnpm --filter web test:e2e` covers all five scenarios at 1280 and 390 against the live stack, 14/14 | Phase 8 |
 | F28 | Knowledge skill: the model often puts the KB answer on a card and writes only "te dejé el detalle en la tarjeta". Decide whether the answer belongs in the text (skill wording) and add an eval check for it. | todo | Phase 8 |
 | F29 | Evals: a `make eval` run costs real tokens and resets the shared bank data (`make seed`). Give it its own database or schema so it can run while a demo is open. | todo | Phase 8 |
 | F30 | Metrics: tokens per run counts only pydantic-ai `chat` spans in the bot; the red-team judge and the eval judge run outside the stack and are not counted. Add cost per run (`operation.cost`) to `make metrics`. | todo | Phase 8 |
+| F31 | Spending card repeats the same numbers as bars and as a full list, with lowercase category names; the spending skill should ask for one or the other, and categories should be display-cased. | todo | Phase 8 |
+| F32 | Confirm card keeps saying "Transferencia por confirmar" and its expiry after the receipt appears; mark it as sent (or collapse it) once the transfer executes. | todo | Phase 8 |
+| F33 | One mobile e2e run of the resume spec saw no assistant text within 30 s (the run stayed busy); four reruns passed. Watch for a stall at run start before the first token. | todo | Phase 8 |
