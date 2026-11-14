@@ -57,3 +57,4 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 | F31 | Spending card repeats the same numbers as bars and as a full list, with lowercase category names; the spending skill should ask for one or the other, and categories should be display-cased. | todo | Phase 8 |
 | F32 | Confirm card keeps saying "Transferencia por confirmar" and its expiry after the receipt appears; mark it as sent (or collapse it) once the transfer executes. | todo | Phase 8 |
 | F33 | One mobile e2e run of the resume spec saw no assistant text within 30 s (the run stayed busy); four reruns passed. Watch for a stall at run start before the first token. | todo | Phase 8 |
+| F34 | Reload past the 15-minute replay window restores text and the confirm/receipt cards, not A2UI surfaces (charts, sources): the stored copy predates the output guard. Store the guard's verdict (or the streamed surface) so they can come back too. | todo | Phase 8 |
