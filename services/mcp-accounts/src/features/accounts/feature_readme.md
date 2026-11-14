@@ -10,7 +10,7 @@ MCP tools at `POST /mcp`, each requiring scope `accounts:read` and declaring `ba
 
 ## Data flow
 
-Exchanged token (`aud=mcp-accounts`) → `Principal.sub` → `AccountsRepository` (Postgres `bank` schema).
+Token the gateway exchanged (`aud=mcp-accounts`, actor chain `[mcp-gateway, bot]`; any other chain is refused, ADR 017) → `Principal.sub` → `AccountsRepository` (Postgres `bank` schema).
 Every lookup is scoped to `sub`; another customer's account id answers `account_not_found`, the same as
 a missing one. Account numbers are masked to the last four digits.
 Periods (`from`, `to`) are whole days in the bank's time zone (`BANK_TIMEZONE`, the same one the bot uses for

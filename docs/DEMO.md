@@ -170,15 +170,22 @@ React web (CopilotKit v2) ──SSE──▶ BFF (Hono): CopilotKit runtime + Re
                                      │ AG-UI over SSE, access token aud=bot
                                      ▼
                         Bot (FastAPI + Pydantic AI): orchestrator + skills, guardrails, RAG, A2UI
-                                     │ MCP over streamable HTTP, token exchanged per audience
+                                     │ MCP over streamable HTTP, token exchanged for aud=mcp-gateway
+                                     ▼
+                        mcp-gateway: catalog, rate limits, breaker, audit; exchanges again per backend
+                                     │ MCP over streamable HTTP, aud per backend, act [mcp-gateway, bot]
                                      ▼
                         mcp-accounts, mcp-payments ──▶ Postgres (bank, chat, knowledge)
 ```
 
 - **One orchestrator agent** with skills (`services/bot/skills/*.md`: instructions plus a tool allow-list),
   loaded on demand with `load_skill`.
-- **Credentials never reach the model.** The bot exchanges the user's token for one per MCP server, with that
-  server's audience and only its scopes (ADR 008).
+- **Credentials never reach the model.** The bot exchanges the user's token for `aud=mcp-gateway`; the gateway
+  exchanges again for each backend's audience and only its scopes, and the backends accept only the chain
+  `[mcp-gateway, bot]` (ADRs 008 and 017).
+- **One endpoint for tools.** Every tool call is an audit line (`mcp.tool_call`: customer id, tool, tier, outcome,
+  duration, never arguments) in `docker compose logs mcp-gateway`. A backend that is down fails its own tools
+  at once and the other keeps working.
 - **Risk tiers** T0–T3 sit in the tool metadata and are enforced by the bot's tool policy. `execute_transfer`
   (T3) is a deferred tool: it becomes an AG-UI interrupt, and `mcp-payments` executes only with a single-use
   step-up token bound to the exact draft (ADR 013).
@@ -203,7 +210,7 @@ React web (CopilotKit v2) ──SSE──▶ BFF (Hono): CopilotKit runtime + Re
 
 ## 7. Next steps (out of scope for the POC)
 
-- An MCP gateway as its own service, instead of the bot calling MCP servers directly.
+- A production gateway (agentgateway) in place of the small Hono one; shared rate limits across replicas (ADR 017).
 - A2A and partner agents; multi-agent orchestration.
 - MCP Apps, voice, a WebSocket channel.
 - A real IdP, DPoP, device attestation, FAPI 2.0.

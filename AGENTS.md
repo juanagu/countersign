@@ -40,7 +40,10 @@ React web (CopilotKit v2) ──HTTPS / SSE──▶ BFF (Node, Hono)
                                 ├─ orchestrator agent + domain skills
                                 ├─ guardrails (input / tool policy / output)
                                 ├─ RAG (pgvector hybrid search)
-                                └─ MCP client ──streamable HTTP, audience-bound JWT──▶
+                                └─ MCP client ──streamable HTTP, aud=mcp-gateway JWT──▶
+                                         mcp-gateway (Node): catalog, rate limits, breaker, audit
+                                              │ streamable HTTP, aud per backend, act [mcp-gateway, bot]
+                                              ▼
                                          mcp-accounts (Node)   mcp-payments (Node)
                                                     └──── Postgres (mock bank data) ────┘
 Infra: Postgres + pgvector, Redis (event log for resume), Phoenix (OpenTelemetry traces)
@@ -57,6 +60,7 @@ from **skills** (markdown instruction files plus a tool allow-list) loaded on de
 | BFF | `apps/bff` | Node 22 + TypeScript + Hono, CopilotKit runtime v2 with `HttpAgent` → bot, `jose` for JWT |
 | Bot | `services/bot` | Python 3.12, uv, FastAPI, `pydantic-ai-slim[ag-ui,anthropic,mcp]`, served with `AGUIAdapter` |
 | MCP servers | `services/mcp-accounts`, `services/mcp-payments` | Node 22 + TypeScript, `@modelcontextprotocol/sdk`, streamable HTTP transport |
+| MCP gateway | `services/mcp-gateway` | Node 22 + TypeScript + Hono, `@modelcontextprotocol/sdk` (ADR 017) |
 | Contracts | `packages/contracts` | JSON Schema as source of truth → TS types (json-schema-to-typescript) and Pydantic models (datamodel-code-generator) |
 | Data | `data/kb`, `data/seed` | Synthetic markdown knowledge base; SQL seed for mock accounts, transactions, beneficiaries |
 | Infra | `infra/docker-compose.yml` | Postgres 16 + pgvector, Redis 7, Arize Phoenix |
@@ -75,16 +79,17 @@ embedder behind an interface so Voyage AI can be swapped in later.
 **Language:** the bot answers in the user's language and defaults to Spanish.
 Synthetic data and the knowledge base are in Spanish.
 
-**Ports:** web 5173, bff 3000, bot 8000, mcp-accounts 8101, mcp-payments 8102,
+**Ports:** web 5173, bff 3000, bot 8000, mcp-gateway 8100, mcp-accounts 8101, mcp-payments 8102,
 postgres 5432, redis 6379, phoenix 6006.
 
 ## Security rules (non-negotiable, each needs a negative test)
 
 1. **The model never holds credentials.** The bot receives the user's access token
    (`aud=bot`) from the BFF and exchanges it at the mock IdP (`/token`, RFC 8693-shaped)
-   for a token with `aud` = the specific MCP server and only the scopes it needs.
-   MCP servers reject any token whose `aud` isn't theirs. The bot never forwards the
-   incoming token (no passthrough).
+   for `aud=mcp-gateway`; the gateway exchanges again for each backend's audience, with
+   only the scopes it needs. No hop forwards the token it received (no passthrough). Each
+   MCP server, the gateway included, rejects any token whose `aud` isn't its own, and the
+   backends require the actor chain `[mcp-gateway, bot]`.
 2. **Risk tiers on every tool.** T0 public read, T1 personal read, T2 reversible write,
    T3 money movement. Tier is declared in tool metadata and enforced by the bot's tool
    policy, not by the prompt.

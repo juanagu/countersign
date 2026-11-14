@@ -266,8 +266,8 @@ redact / block + reason):
 
 ## Out of scope for the POC (document as next steps, don't build)
 
-- An MCP gateway as a separate service (the bot calls MCP servers directly with
-  audience-bound tokens).
+- ~~An MCP gateway as a separate service~~ (the user asked for one after the plan: ADR 017, built
+  in Phase 8).
 - A2A and partner agents; multi-agent orchestration.
 - MCP Apps, voice, the WebSocket channel.
 - Real IdP, DPoP, device attestation, FAPI 2.0 compliance.

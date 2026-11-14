@@ -1,9 +1,9 @@
 # 017 — MCP gateway: a thin Hono service on the MCP SDK, one more hop in the token-exchange chain
 
-**Status:** accepted in part. Tasks 1–5 (mcp-kit actor chains, IdP gateway client, the gateway service with
-its proxy, rate limits, breaker and audit) are built and run beside today's direct path (commits bfddad5, cd68aee,
-413430f). Task 6, the cutover, waits for the user to approve the rule 1 rewording. `docs/PLAN.md` lists "an MCP gateway as a separate service" as out of scope. The user
-asked for one, which overrides that line. Rule 1 in `AGENTS.md` needs new wording before this is built (below).
+**Status:** accepted and built. Tasks 1–5 (mcp-kit actor chains, IdP gateway client, the gateway service with its proxy,
+rate limits, breaker and audit) landed in commits bfddad5, cd68aee and 413430f. Task 6, the cutover, and task 7, the docs,
+followed once the user approved rewording security rule 1 (see "What was built" below). `docs/PLAN.md` listed "an MCP
+gateway as a separate service" as out of scope; the user asked for one, which overrides that line.
 
 ## Context
 Today the bot keeps one `MCPToolset` per MCP server (`app/banking/mcp_toolsets.py`). It exchanges the customer's
@@ -122,3 +122,32 @@ Checked on 2026-11-14:
   written so that it can.
 - ADR 008's audiences, ceilings and "a new server needs a bot toolset" consequence are superseded where
   they conflict with this ADR.
+
+## What was built
+Beyond the decision above, the cutover (task 6) did this:
+- **Rule 1** in `AGENTS.md` now reads as the Consequences section proposes: the bot exchanges for `aud=mcp-gateway`,
+  each hop exchanges again, no hop forwards a token, every server rejects any `aud` but its own, and the backends
+  require the actor chain `[mcp-gateway, bot]`. The architecture diagram and the ports line name the gateway.
+- **Bot.** `banking_toolset(exchanger, gateway_url=...)` returns one `SkillGatedMCPToolset` (id `mcp-gateway`,
+  `needed_by` `GATEWAY_NEEDED_BY` = accounts, payments). `MCP_GATEWAY_URL` replaces `MCP_ACCOUNTS_URL` and
+  `MCP_PAYMENTS_URL` in the bot's settings and in its compose environment (the bot now waits for a healthy gateway
+  instead of the two servers). Tool names, policy, templates and evals are untouched. `unavailable_servers` holds
+  only `mcp-gateway`.
+- **IdP.** Client `bot` may ask only for `aud=mcp-gateway` (`CLIENT_POLICIES`); a request for `mcp-accounts` or
+  `mcp-payments` is `invalid_target`. The side-by-side window is closed.
+- **Backends.** `mcp-accounts` and `mcp-payments` build their verifier from `ALLOWED_ACTOR_CHAINS`
+  (`[['mcp-gateway', 'bot']]`, exported by each `app.ts`) and no longer accept `[bot]`.
+- **Negative tests (rule 1).** The IdP refuses `bot` asking for either backend audience (BFF tests and the gateway's
+  in-process stack). Each backend refuses a token with `act` only `bot`, the gateway's own `aud=mcp-gateway` token,
+  a gateway actor alone and a chain in the wrong order (per-service `app.test.ts`, with the real constant), and
+  the stack tests repeat that through real exchanges. The gateway refuses `aud=bot`, a backend-audience token, a
+  wrong chain and a session token.
+
+### Deviations
+- The accepted chains are a constant in each backend, not `parseActorChains` read from config. With one accepted
+  chain, a config knob would only be a way to reopen the side-by-side window, so `parseActorChains` was deleted
+  from `@poc/mcp-kit`. `allowedActors` stays, for the gateway's own `[bot]`.
+- `MCP_ACCOUNTS_URL` and `MCP_PAYMENTS_URL` stay in `.env.example`, relabelled as the gateway's backend URLs,
+  because the gateway still reads them (compose sets them on `mcp-gateway`). The bot reads neither.
+- Not a deviation, but still open: the bot's gateway token carries every banking scope whenever the accounts or
+  payments skill is loaded (the "one deliberate widening" above). Narrowing by skill is a follow-up (F36).

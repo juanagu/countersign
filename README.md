@@ -27,6 +27,7 @@ Every service answers `GET /health`:
 | web | http://localhost:5173 |
 | bff | http://localhost:3000 |
 | bot | http://localhost:8000 |
+| mcp-gateway | http://localhost:8100 |
 | mcp-accounts | http://localhost:8101 |
 | mcp-payments | http://localhost:8102 |
 | Phoenix (traces) | http://localhost:6006 |
@@ -56,6 +57,7 @@ make pii-scan         # check logs and traces for unredacted synthetic PII
 apps/web               React + Vite (CopilotKit chat from Phase 1)
 apps/bff               Hono BFF + mock IdP
 services/bot           FastAPI + Pydantic AI (uv project)
+services/mcp-gateway   MCP gateway: the bot's one MCP endpoint, in front of the two servers
 services/mcp-accounts  MCP server, account tools
 services/mcp-payments  MCP server, payment tools
 packages/contracts     JSON Schema → generated TS (src/generated) and Pydantic (services/bot/app/contracts/generated)
