@@ -22,6 +22,8 @@
 
 .pin-dialog {
   width: min(22rem, calc(100vw - 2 * var(--space-4)));
+  /* CopilotKit's preflight zeroes every margin, which drops the native centering of a modal dialog. */
+  margin: auto;
   padding: var(--space-6);
   color: var(--color-text);
   background: var(--color-surface);

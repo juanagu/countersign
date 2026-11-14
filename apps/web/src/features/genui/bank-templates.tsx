@@ -26,7 +26,7 @@ function TransferConfirmCard({ data }: { data: TransferConfirmData }) {
           { label: 'Total', value: formatMoney(data.total, data.currency) },
         ]}
       />
-      <p className="bank-card__note">Válida hasta las {expires}. Nada se envía sin tu confirmación.</p>
+      <p className="bank-card__note">Nada se envía sin tu confirmación. Válida hasta las {expires}</p>
     </section>
   );
 }

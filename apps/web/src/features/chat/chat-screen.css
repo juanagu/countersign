@@ -41,3 +41,13 @@
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
 }
+
+/* The chat takes the page background so it doesn't read as a separate strip down the middle. */
+.chat-layout .chat-main [data-copilotkit] {
+  --background: var(--color-bg);
+}
+
+/* Attachments aren't supported; CopilotKit still renders the button, disabled. */
+.chat-main [data-testid='copilot-add-menu-button'] {
+  display: none;
+}
