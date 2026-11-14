@@ -18,7 +18,7 @@ _MONTH_NAMES = "|".join(_MONTH_INDEX)
 ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 SLASH_DATE = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:/(\d{4}|\d{2}))?(?![\d/])")
 WORD_DATE = re.compile(rf"(?i)(?:\b(\d{{1,2}})\s+de\s+)?\b({_MONTH_NAMES})\b(?:\s+(?:de|del)\s+(\d{{4}}))?")
-MASKED_ACCOUNT = re.compile(r"\*{2,}\s?(\d{2,6})(?!\d)")
+MASKED_ACCOUNT = re.compile(r"[*•]{2,}\s?(\d{2,6})(?!\d)")
 FULL_ACCOUNT = re.compile(r"(?<![\d-])(?:\d{4}-\d{4}-\d{4}|\d{10,22})(?![\d-])")
 NUMBER = re.compile(r"(?<![\w])\d+(?:[.,]\d+)*(?![\w])")
 CURRENCY_BEFORE = re.compile(r"(?i)(?:US\$|U\$S|USD|ARS|\$)\s?$")
@@ -124,7 +124,7 @@ def _blank(text: str, spans: list[tuple[int, int]]) -> str:
 class Figures:
     amounts: tuple[Amount, ...]
     dates: tuple[DateRef, ...]
-    masked_accounts: tuple[str, ...]  # Trailing digits of `****4521`-style numbers.
+    masked_accounts: tuple[str, ...]  # Trailing digits of `••••4521` (or `****4521`) numbers.
     full_accounts: tuple[str, ...]  # Digits only.
 
     @property

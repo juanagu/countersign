@@ -22,7 +22,8 @@ const amount = z
   .max(Math.max(...Object.values(TRANSFER_LIMITS)))
   .multipleOf(0.01);
 
-const mask = (value: string) => `****${value.slice(-4)}`;
+// Bullets, not asterisks: the model quotes this in markdown, where `**` would open bold.
+const mask = (value: string) => `••••${value.slice(-4)}`;
 
 function publicBeneficiary({ id, fullName, bankName, accountRef, currency }: Beneficiary) {
   return { id, name: fullName, bank: bankName, account: mask(accountRef), currency };

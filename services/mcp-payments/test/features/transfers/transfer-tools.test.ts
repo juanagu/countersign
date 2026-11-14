@@ -46,8 +46,8 @@ describe('mcp-payments tools', () => {
   it("lists only the caller's beneficiaries, masked", async () => {
     const body = parseText(await (await clientFor('juan')).callTool({ name: 'list_beneficiaries', arguments: {} }));
     expect(body.beneficiaries).toEqual([
-      { id: 'ben-juan-ana', name: 'Ana Gómez', bank: 'Banco Demo', account: '****5211', currency: 'ARS' },
-      { id: 'ben-juan-pablo-usd', name: 'Pablo Ruiz', bank: 'Banco Demo', account: '****9871', currency: 'USD' },
+      { id: 'ben-juan-ana', name: 'Ana Gómez', bank: 'Banco Demo', account: '••••5211', currency: 'ARS' },
+      { id: 'ben-juan-pablo-usd', name: 'Pablo Ruiz', bank: 'Banco Demo', account: '••••9871', currency: 'USD' },
     ]);
   });
 

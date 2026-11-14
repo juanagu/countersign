@@ -17,8 +17,9 @@ const category = z.preprocess(
   z.enum(TRANSACTION_CATEGORIES),
 );
 
+// Bullets, not asterisks: the model quotes this in markdown, where `**` would open bold.
 function maskNumber(number: string): string {
-  return `****${number.slice(-4)}`;
+  return `••••${number.slice(-4)}`;
 }
 
 function publicAccount({ id, kind, currency, alias, number }: Account) {

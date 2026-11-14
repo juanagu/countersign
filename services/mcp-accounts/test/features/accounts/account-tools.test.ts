@@ -40,7 +40,7 @@ describe('mcp-accounts tools', () => {
     const client = await connectClient(app, await anaToken());
     const body = parseText(await client.callTool({ name: 'list_accounts', arguments: {} }));
     expect(body.accounts).toEqual([
-      { id: 'acc-ana-ars', kind: 'savings', currency: 'ARS', alias: 'Pesos', number: '****4521' },
+      { id: 'acc-ana-ars', kind: 'savings', currency: 'ARS', alias: 'Pesos', number: '••••4521' },
     ]);
   });
 

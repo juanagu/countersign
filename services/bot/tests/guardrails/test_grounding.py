@@ -44,6 +44,7 @@ def test_normalises_es_ar_and_plain_number_formats(token: str, values: set[Decim
     [
         "Tu saldo es $ 1.254.300,50.",
         "En ****4521 tenés $ 1.254.300,5.",
+        "En ••••4521 tenés $ 1.254.300,5.",
         "El 10 de noviembre pagaste $ 380.000 a Inmobiliaria Sur.",
         "El 10/11 pagaste 380.000 pesos.",
         "Recibiste $ 15.000 el 2026-11-05.",
@@ -70,6 +71,12 @@ def test_grounded_sentences_pass(sentence: str, evidence: Evidence) -> None:
 )
 def test_ungrounded_figures_are_named(sentence: str, missing: list[str], evidence: Evidence) -> None:
     assert ungrounded(sentence, evidence) == missing
+
+
+def test_a_bullet_masked_account_is_an_account_not_an_amount() -> None:
+    figures = extract("**Pesos (••••4521):** $ 1.254.300,50")
+    assert figures.masked_accounts == ("4521",)
+    assert [amount.token for amount in figures.amounts] == ["1.254.300,50"]
 
 
 def test_dates_and_account_digits_are_not_read_again_as_amounts() -> None:
