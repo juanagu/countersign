@@ -168,4 +168,34 @@ describe('DurableAgentRunner', () => {
     expect(await runner.isThreadAccessible(threadId, { ownerId: 'juan' })).toBe(false);
     expect(await runner.isThreadAccessible(threadId, { ownerId: 'ana' })).toBe(true);
   });
+  it('a resumed approval logs and replays its answer without the step-up token', async () => {
+    bot = await startFakeBot({ deltas: ['listo'], delayMs: 1 });
+    const { log, runner } = setup();
+    const threadId = randomUUID();
+    const stepUpToken = 'eyJhbGciOiJFUzI1NiJ9.step-up.signature';
+    const resumed = {
+      ...input(threadId),
+      resume: [
+        {
+          interruptId: 'i1',
+          status: 'resolved' as const,
+          payload: { approved: true, editedArgs: { draft_id: 'd1', step_up_token: stepUpToken } },
+        },
+      ],
+    };
+    const live = await collect(
+      runner.run({ threadId, agent: new HttpAgent({ url: bot.url }), input: resumed, ownerId: 'ana' }),
+    );
+    const logged = (await log.readAfter(threadId, 0)).map((entry) => entry.event);
+    const replayed = await collect(runner.connect({ threadId, ownerId: 'ana' }));
+
+    for (const events of [live, logged, replayed]) {
+      expect(JSON.stringify(events)).not.toContain('step_up_token');
+      expect(JSON.stringify(events)).not.toContain(stepUpToken);
+    }
+    const started = replayed[0] as unknown as { input: typeof resumed };
+    expect(started.input.resume[0]?.payload).toEqual({ approved: true });
+    expect(started.input.messages).toEqual(resumed.messages);
+    expect(resumed.resume[0]?.payload.editedArgs.step_up_token).toBe(stepUpToken);
+  });
 });

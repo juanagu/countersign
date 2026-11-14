@@ -8,6 +8,7 @@ import {
 } from '@copilotkit/runtime/v2';
 import type { Logger } from 'pino';
 import { ReplaySubject, type Observable } from 'rxjs';
+import { loggableRunInput } from './logged-run-input.js';
 import { RunState } from './run-state.js';
 import type { ThreadLog } from './thread-log.js';
 
@@ -56,8 +57,10 @@ class OrderedWriter {
 
 function withRunInput(event: BaseEvent, input: RunAgentInput): BaseEvent {
   // The run's input (with the user's new message) is what a replay rebuilds the conversation from.
-  if (event.type !== EventType.RUN_STARTED || 'input' in event) return event;
-  return { ...event, input } as BaseEvent;
+  // The bot's own RUN_STARTED may echo the input too, so both paths go through the same redaction.
+  if (event.type !== EventType.RUN_STARTED) return event;
+  const echoed = (event as { input?: RunAgentInput }).input;
+  return { ...event, input: loggableRunInput(echoed ?? input) } as BaseEvent;
 }
 
 /** A run left open by a process that died gets its closing events before the next run starts. */

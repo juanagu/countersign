@@ -17,7 +17,8 @@ replays the thread instead of losing it (ADR 015).
 - `POST /copilotkit/agent/default/run` → session check → per-request `HttpAgent` with
   `Authorization: Bearer <aud=bot token>` → bot `POST /agent`. The runner claims the thread for the user,
   takes the run lease, and appends each event to `chat:thread:{id}:events` with a `seq` while streaming
-  it back. The run continues when the client disconnects.
+  it back. The run continues when the client disconnects. `RUN_STARTED` carries the run input (the
+  replay rebuilds user turns from its messages), minus a resume's `editedArgs`, which hold the step-up token.
 - `POST /copilotkit/agent/default/connect` → another user's thread gives nothing. Otherwise every logged
   event is replayed, then live events are followed from the last replayed `seq` until the run ends. With
   no events left (the 15-minute window passed), the bot's history for this user comes back as one
