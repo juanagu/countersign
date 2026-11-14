@@ -3,7 +3,9 @@ import type { BankTemplate, TransferConfirmData, TransferReceiptData } from '@po
 import templatesSchema from '@poc/contracts/schemas/bank-templates.json';
 import { z } from 'zod';
 import { formatMoney } from '../../shared/lib/format-money';
+import { Money } from '../../shared/ui/money';
 import { KeyValueListView } from './components/catalog-components';
+import './card.css';
 import './bank-templates.css';
 
 /** Must match `ACTIVITY_TYPE` in `services/bot/app/genui/templates.py`. */
@@ -15,9 +17,17 @@ function TransferConfirmCard({ data }: { data: TransferConfirmData }) {
   const expires = new Date(data.expiresAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
   return (
     <section className="bank-card" aria-label="Confirmar transferencia">
-      <p className="bank-card__eyebrow">Transferencia por confirmar</p>
-      <p className="bank-card__amount">{formatMoney(data.amount, data.currency)}</p>
-      <p className="bank-card__to">a {data.beneficiary.name}</p>
+      <div className="bank-card__top">
+        <span className="bank-card__status">Por confirmar</span>
+      </div>
+      <p className="bank-card__amount">
+        <Money hero value={formatMoney(data.amount, data.currency)} />
+      </p>
+      <p className="bank-card__to">
+        <span className="bank-card__name">
+          a <strong>{data.beneficiary.name}</strong>
+        </span>
+      </p>
       <KeyValueListView
         items={[
           { label: 'Destino', value: `${data.beneficiary.bank ?? ''} ${data.beneficiary.account}`.trim() },
@@ -35,9 +45,17 @@ function TransferReceiptCard({ data }: { data: TransferReceiptData }) {
   const when = new Date(data.executedAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
   return (
     <section className="bank-card bank-card--done" aria-label="Comprobante de transferencia">
-      <p className="bank-card__eyebrow">Transferencia enviada</p>
-      <p className="bank-card__amount">{formatMoney(data.amount, data.currency)}</p>
-      <p className="bank-card__to">a {data.beneficiary.name}</p>
+      <div className="bank-card__top">
+        <span className="bank-card__status">Enviada</span>
+      </div>
+      <p className="bank-card__amount">
+        <Money hero value={formatMoney(data.amount, data.currency)} />
+      </p>
+      <p className="bank-card__to">
+        <span className="bank-card__name">
+          a <strong>{data.beneficiary.name}</strong>
+        </span>
+      </p>
       <KeyValueListView
         items={[
           { label: 'Comprobante', value: data.reference },

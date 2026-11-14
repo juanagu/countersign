@@ -1,8 +1,15 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { BarChartView, CitationView, ListView } from '../../../src/features/genui/components/catalog-components';
+import {
+  BarChartView,
+  CitationView,
+  KeyValueListView,
+  ListView,
+  TableView,
+} from '../../../src/features/genui/components/catalog-components';
 import { formatMoney } from '../../../src/shared/lib/format-money';
+import { textOf } from '../../support/html-text';
 
 type WithChildren = ReactElement<{ children?: ReactNode }>;
 
@@ -27,7 +34,7 @@ describe('catalog components', () => {
     );
     expect(html).toContain('width:100%');
     expect(html).toContain('width:25%');
-    expect(html).toContain(formatMoney(200, 'ARS'));
+    expect(textOf(html)).toContain(formatMoney(200, 'ARS'));
   });
 
   it('keeps bar keys unique when the model repeats a label', () => {
@@ -45,7 +52,8 @@ describe('catalog components', () => {
   it('renders list items with trailing values', () => {
     const html = renderToString(<ListView items={[{ title: 'Super', trailing: '$ 10,00' }]} />);
     expect(html).toContain('Super');
-    expect(html).toContain('$ 10,00');
+    expect(textOf(html)).toContain('$ 10,00');
+    expect(html).toContain('money__cents');
   });
 
   it('names each cited section', () => {
@@ -56,6 +64,30 @@ describe('catalog components', () => {
     );
     expect(html).toContain('Comisiones');
     expect(html).toContain('Transferencias');
+  });
+
+  it('puts the cited section on its own line, under the document title', () => {
+    const html = renderToString(
+      <CitationView sources={[{ docId: 'comisiones', title: 'Comisiones', section: 'Transferencias' }]} />,
+    );
+    expect(html).toContain('<span class="gen-citations__title">Comisiones</span>');
+    expect(html).toContain('<span class="gen-citations__section">Transferencias</span>');
+    expect(html).toContain('aria-label="Fuentes"');
+  });
+
+  it('shows no section line when it repeats the title', () => {
+    const html = renderToString(
+      <CitationView sources={[{ docId: 'tarjetas', title: 'Tarjetas', section: 'Tarjetas' }]} />,
+    );
+    expect(html).not.toContain('gen-citations__section');
+  });
+
+  it('formats money in key-value rows and table cells, and leaves other text alone', () => {
+    const kv = renderToString(<KeyValueListView items={[{ label: 'Total', value: '$ 1.000,00' }]} />);
+    expect(kv).toContain('money__cents');
+    const table = renderToString(<TableView columns={['Fecha', 'Monto']} rows={[['12/11', '+$ 500,00']]} />);
+    expect(table).toContain('money--in');
+    expect(textOf(table)).toContain('12/11');
   });
 });
 

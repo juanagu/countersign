@@ -13,6 +13,7 @@ import {
   TableView,
   TextView,
 } from './components/catalog-components';
+import './card.css';
 
 /** Must match `CATALOG_ID` in the bot (`services/bot/app/genui/a2ui.py`). */
 export const CATALOG_ID = 'bank-catalog-v1';
@@ -37,10 +38,16 @@ function leaf<P extends object>(name: PropsName, View: ComponentType<P>): A2UICo
 function CardView({ props, children }: { props: CardProps; children: (id: string) => ReactNode }) {
   return (
     <section className="gen-card">
-      {props.title && <h2 className="gen-card__title">{props.title}</h2>}
-      {props.subtitle && <p className="gen-card__subtitle">{props.subtitle}</p>}
+      {(props.title || props.subtitle) && (
+        <header className="gen-card__head">
+          {props.title && <h2 className="gen-card__title">{props.title}</h2>}
+          {props.subtitle && <p className="gen-card__subtitle">{props.subtitle}</p>}
+        </header>
+      )}
       {props.children.map((id) => (
-        <div key={id}>{children(id)}</div>
+        <div key={id} className="gen-card__item">
+          {children(id)}
+        </div>
       ))}
     </section>
   );

@@ -9,6 +9,8 @@ import type {
   TextProps,
 } from '@poc/contracts';
 import { Button } from '../../../shared/ui/button';
+import { Icon } from '../../../shared/ui/icon';
+import { Money } from '../../../shared/ui/money';
 import { formatMoney } from '../../../shared/lib/format-money';
 import { useChatActions } from '../chat-actions';
 import './catalog-components.css';
@@ -24,7 +26,9 @@ export function KeyValueListView({ items }: KeyValueListProps) {
       {items.map((item) => (
         <div key={item.label} className="gen-kv__row">
           <dt>{item.label}</dt>
-          <dd>{item.value}</dd>
+          <dd>
+            <Money value={item.value} />
+          </dd>
         </div>
       ))}
     </dl>
@@ -40,7 +44,11 @@ export function ListView({ items }: ListProps) {
             <span className="gen-list__title">{item.title}</span>
             {item.subtitle && <span className="gen-list__subtitle">{item.subtitle}</span>}
           </span>
-          {item.trailing && <span className="gen-list__trailing">{item.trailing}</span>}
+          {item.trailing && (
+            <span className="gen-list__trailing">
+              <Money value={item.trailing} />
+            </span>
+          )}
         </li>
       ))}
     </ul>
@@ -61,7 +69,9 @@ export function BarChartView({ title, currency, bars }: BarChartProps) {
             <span className="gen-chart__track" aria-hidden="true">
               <span className="gen-chart__fill" style={{ width: `${(bar.value / max) * 100}%` }} />
             </span>
-            <span className="gen-chart__value">{label(bar.value)}</span>
+            <span className="gen-chart__value">
+              <Money value={label(bar.value)} />
+            </span>
           </li>
         ))}
       </ul>
@@ -86,7 +96,9 @@ export function TableView({ columns, rows }: TableProps) {
           {rows.map((row, index) => (
             <tr key={index}>
               {row.map((cell, cellIndex) => (
-                <td key={cellIndex}>{cell}</td>
+                <td key={cellIndex}>
+                  <Money value={cell} />
+                </td>
               ))}
             </tr>
           ))}
@@ -122,15 +134,20 @@ export function QuickRepliesView({ options }: QuickRepliesProps) {
 export function CitationView({ sources }: CitationProps) {
   return (
     <aside className="gen-citations" aria-label="Fuentes">
-      <span className="gen-citations__label">Fuentes</span>
-      <ol className="gen-citations__list">
+      <p className="gen-citations__label">Fuentes</p>
+      <ul className="gen-citations__list">
         {sources.map((source) => (
           <li key={`${source.docId}#${source.anchor ?? ''}`} title={`${source.docId}#${source.anchor ?? ''}`}>
-            {source.title}
-            {source.section && source.section !== source.title && <> — {source.section}</>}
+            <Icon name="doc" size={16} />
+            <span>
+              <span className="gen-citations__title">{source.title}</span>
+              {source.section && source.section !== source.title && (
+                <span className="gen-citations__section">{source.section}</span>
+              )}
+            </span>
           </li>
         ))}
-      </ol>
+      </ul>
     </aside>
   );
 }

@@ -9,6 +9,11 @@ Renders what the bot sends besides text.
   `@poc/contracts/schemas/a2ui-catalog.json`. There are no input components.
 - `bankTemplateRenderer` (`bank-templates.tsx`): the activity renderer for `bank-template`
   (`transfer-confirm`, `transfer-receipt`), validated against `bank-templates.json`.
+- `card.css`: the one card style for A2UI `Card` (`.gen-card`) and the transfer templates (`.bank-card`). A Card
+  with no title whose only child is a Citation renders as a plain "Fuentes" footer; inside a titled card the
+  Citation gets a top rule instead.
+- Money-looking strings in lists, key-value rows, bar values, table cells and the transfer templates render
+  through `shared/ui` `Money` (cents muted, a leading `+` in the positive colour); other text is unchanged.
 - `ChatActionsProvider` / `useChatActions().sendMessage`: what catalog buttons and quick replies call.
 
 ## Data flow

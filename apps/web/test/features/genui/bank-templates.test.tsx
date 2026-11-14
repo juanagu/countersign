@@ -4,6 +4,7 @@ import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { BankTemplateView } from '../../../src/features/genui/bank-templates';
+import { textOf } from '../../support/html-text';
 
 const confirm: BankTemplate = {
   template: 'transfer-confirm',
@@ -29,7 +30,7 @@ describe('bank templates', () => {
   it('renders the confirm card from the draft data', () => {
     const html = renderToString(<BankTemplateView template={confirm} />);
     expect(html).toContain('Ana Gómez');
-    expect(html).toMatch(/\$ 50\.000,00/);
+    expect(textOf(html)).toMatch(/\$ 50\.000,00/);
     expect(html).toContain('****7810');
   });
 
