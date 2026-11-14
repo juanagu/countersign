@@ -1,6 +1,6 @@
 # 018 — LLM failover in process: a `FallbackModel` chain per role, a first-event deadline and a circuit breaker
 
-**Status:** accepted; tasks 1–4 built (commits 608d160, f32459c). Task 5, the live calibration run, is pending.
+**Status:** accepted; tasks 1–4 built (commits 608d160, f32459c). Task 5 ran live on 2026-11-14 (results below).
 
 As built: the fault spec is `target:fault`, where target is `orchestrator`, `guard`, `primary` (both roles' primaries) or
 `all` (every model in both chains), and 429/529/503/500 are accepted as fault aliases. The guard deadline is
@@ -111,3 +111,16 @@ Checked in the installed pydantic-ai 2.68:
   Sonnet guard classifies differently, so `make eval-backup` records whether the backup meets the gates.
 - Breaker state is per process, like the guardrail caps (ADR 014).
 - The fault-injection env var must stay empty outside local runs. Nothing but review enforces that.
+
+## Live results (2026-11-14)
+- `make failover-demo FAULT=orchestrator:stall`: the first request hit `first_event_timeout` at 10 s and Haiku
+  answered with the correct balances and card; the breaker then skipped Sonnet up front (`circuit_open`) until
+  the fault was removed. `orchestrator:529` failed over the same way in about 6 s end to end.
+- `make eval-backup` (both primaries forced to fail): 6/7 gates. Scenarios 4/4, KB grounding 5/5, tool
+  selection 6/6, citation judge 1.00, red team 27/27, controls 3/3; the quality judge scored 0.75 against the
+  0.80 gate (Haiku sometimes points at the card or is terser). Whether backup mode needs the same quality gate
+  is the user's call.
+- Calibration: across five full `make eval` runs and the e2e suite on Sonnet (several hundred model requests)
+  no request tripped the 10 s first-event deadline, while run-level time to first token was p50 5.8 s / p95
+  12.9 s (a run spans several requests). The 10 s default stays.
+
