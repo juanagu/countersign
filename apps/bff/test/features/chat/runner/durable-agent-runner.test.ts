@@ -122,6 +122,43 @@ describe('DurableAgentRunner', () => {
     expect(history.asked).toEqual(['ana', 'juan']);
   });
 
+  it('a log started after the window lapsed gets its earlier turns, cards included, from stored history', async () => {
+    const threadId = randomUUID();
+    const receipt = { id: 'card-1', role: 'activity', activityType: 'bank-template', content: { template: 'r' } };
+    const stored = [
+      { id: 'u1', role: 'user', content: 'mandale 50.000 a ana' },
+      receipt,
+      { id: 'a1-stored', role: 'assistant', content: 'Listo.' },
+      { id: 'u2', role: 'user', content: '¿cuánto saldo tengo?' },
+      { id: 'a2-stored', role: 'assistant', content: 'Tenés $ 1.000.' },
+    ] as Message[];
+    const { log, runner } = setup(new FakeHistory({ [`ana:${threadId}`]: stored }));
+    await log.claim(threadId, 'ana');
+    const carried = [stored[0], { id: 'a1-client', role: 'assistant', content: 'Listo.' }, stored[3]];
+    const run = { threadId, runId: 'r2' };
+    for (const event of [
+      { type: 'RUN_STARTED', ...run, input: { ...input(threadId), messages: carried } },
+      { type: 'TEXT_MESSAGE_START', messageId: 'a2', role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'a2', delta: 'Tenés $ 1.000.' },
+      { type: 'TEXT_MESSAGE_END', messageId: 'a2' },
+      { type: 'RUN_FINISHED', ...run },
+    ]) {
+      await log.append(threadId, event as BaseEvent);
+    }
+
+    const events = await collect(runner.connect({ threadId, ownerId: 'ana' }));
+
+    expect(events.map((e) => e.type).slice(0, 4)).toEqual([
+      'RUN_STARTED',
+      'MESSAGES_SNAPSHOT',
+      'RUN_FINISHED',
+      'RUN_STARTED',
+    ]);
+    expect((events[1] as unknown as { messages: Message[] }).messages).toEqual(stored.slice(0, 3));
+    const replayed = events[3] as unknown as { input: { messages: Message[] } };
+    expect(replayed.input.messages.map((m) => m.id)).toEqual(['u2']);
+  });
+
   it('never asks for history on a thread another user holds', async () => {
     const { log, runner, history } = setup();
     const threadId = randomUUID();

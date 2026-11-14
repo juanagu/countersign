@@ -87,3 +87,9 @@ ADR 007 also left message history client-managed, so a client could forge assist
   model's context comes only from Postgres.
 - Every run's `RUN_STARTED` carries the client's message list, so the log grows with the conversation. The
   15-minute window bounds that growth.
+
+**Addendum (Phase 8, browser testing).** The Redis log can hold only the tail of a thread: once the window lapses,
+the next run opens a fresh log whose `RUN_STARTED` carries the earlier turns as the client held them, text only.
+On connect, the BFF now rebuilds the turns before that run's newest user message from stored history (cards
+included) and trims the run's carried messages to that turn, so nothing shows twice. Matching is by the user
+message id, which the bot stores as the client sent it.
