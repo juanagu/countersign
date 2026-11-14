@@ -72,3 +72,29 @@
     padding-inline: var(--space-6);
   }
 }
+
+/* The connection pill, centred above the composer. */
+.chat-main [data-testid='copilot-input-overlay'] > .conn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--space-4));
+  margin: 0 auto var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  pointer-events: auto;
+}
+
+.conn .icon {
+  flex: none;
+  color: var(--color-primary);
+}
+
+.conn:has(> .icon:not(.icon--spin)) .icon {
+  color: var(--color-text-muted);
+}

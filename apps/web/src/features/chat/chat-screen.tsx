@@ -1,5 +1,4 @@
 import { CopilotChat, CopilotKitProvider } from '@copilotkit/react-core/v2';
-import { RESUME_FAILED_NOTICE } from '../approval/lib/resume-outcome';
 import { TransferApproval } from '../approval/transfer-approval';
 import { bankTemplateRenderer } from '../genui/bank-templates';
 import { bankCatalog } from '../genui/catalog';
@@ -13,7 +12,9 @@ import { ChatView } from './chat-view';
 import { shouldRecheckSession } from './lib/session-recheck';
 import { forgetThread, startNewThread, threadIdFor } from './lib/thread-id';
 import { firstName } from './lib/user-name';
+import { RunErrorNotice } from './run-error-notice';
 import { StreamReconnect } from './stream-reconnect';
+import { ToolStatus } from './tool-status';
 import { TypingIndicator } from './typing-indicator';
 import { WelcomeNameContext } from './welcome-screen';
 import './chat-screen.css';
@@ -61,11 +62,6 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
           No pudimos cerrar la sesión. Probá de nuevo.
         </p>
       )}
-      {resumeFailed && (
-        <p role="alert" className="chat-alert">
-          {RESUME_FAILED_NOTICE}
-        </p>
-      )}
       <main className="chat-main">
         <CopilotKitProvider
           runtimeUrl={RUNTIME_URL}
@@ -78,18 +74,21 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
           }}
         >
           <StreamReconnect />
-          <TransferApproval setResumeFailed={setResumeFailed} />
-          <ChatActionsProvider>
-            <WelcomeNameContext.Provider value={firstName(user.name)}>
-              <CopilotChat
-                labels={CHAT_LABELS}
-                threadId={threadId}
-                chatView={ChatView}
-                messageView={MESSAGE_VIEW}
-                connectingIndicator={CONNECTING_INDICATOR}
-              />
-            </WelcomeNameContext.Provider>
-          </ChatActionsProvider>
+          <ToolStatus />
+          <RunErrorNotice />
+          <TransferApproval resumeFailed={resumeFailed} setResumeFailed={setResumeFailed}>
+            <ChatActionsProvider>
+              <WelcomeNameContext.Provider value={firstName(user.name)}>
+                <CopilotChat
+                  labels={CHAT_LABELS}
+                  threadId={threadId}
+                  chatView={ChatView}
+                  messageView={MESSAGE_VIEW}
+                  connectingIndicator={CONNECTING_INDICATOR}
+                />
+              </WelcomeNameContext.Provider>
+            </ChatActionsProvider>
+          </TransferApproval>
         </CopilotKitProvider>
       </main>
     </div>

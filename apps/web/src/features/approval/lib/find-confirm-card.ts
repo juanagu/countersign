@@ -18,3 +18,12 @@ export function findConfirmCard(messages: readonly MessageLike[], draftId: strin
   }
   return undefined;
 }
+
+/** Whether the thread holds the receipt the bot rendered once this draft was executed. */
+export function hasReceipt(messages: readonly MessageLike[], draftId: string): boolean {
+  return messages.some((message) => {
+    if (message.role !== 'activity' || message.activityType !== 'bank-template') return false;
+    const template = message.content as BankTemplate | undefined;
+    return template?.template === 'transfer-receipt' && template.data.draftId === draftId;
+  });
+}

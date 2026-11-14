@@ -13,6 +13,9 @@ export function isStreamBreak(code: CopilotKitCoreErrorCode): boolean {
 /** Waits between attempts; after the last one the chat stays as it is until the next break. */
 export const RECONNECT_DELAYS_MS: readonly number[] = [500, 1_000, 2_000, 4_000, 8_000];
 
+/** `waiting-online`: the browser is offline, so nothing is tried yet. `retrying`: a reconnect is scheduled or running. */
+export type ReconnectState = 'idle' | 'waiting-online' | 'retrying';
+
 export interface ReconnectorDeps {
   /** Re-attaches to the thread: the BFF replays it and follows the live run. */
   connect: () => Promise<void>;
@@ -22,6 +25,7 @@ export interface ReconnectorDeps {
   /** Calls back after `ms`; returns a cancel. */
   after: (ms: number, callback: () => void) => () => void;
   delaysMs?: readonly number[];
+  onStateChange?: (state: ReconnectState) => void;
 }
 
 export interface Reconnector {
@@ -36,10 +40,18 @@ export function createReconnector(deps: ReconnectorDeps): Reconnector {
   let pending: (() => void) | null = null;
   let connecting = false;
   let disposed = false;
+  let state: ReconnectState = 'idle';
+
+  function setState(next: ReconnectState) {
+    if (next === state) return;
+    state = next;
+    deps.onStateChange?.(next);
+  }
 
   async function reconnect() {
     pending = null;
     connecting = true;
+    setState('retrying');
     try {
       await deps.connect();
       attempt = 0;
@@ -49,14 +61,22 @@ export function createReconnector(deps: ReconnectorDeps): Reconnector {
       return;
     }
     connecting = false;
+    setState('idle');
   }
 
   function streamBroke() {
     // A failed connect reports itself too; one retry is already on its way.
-    if (disposed || pending || connecting || attempt >= delays.length) return;
+    if (disposed || pending || connecting) return;
+    if (attempt >= delays.length) return setState('idle');
     const delay = delays[attempt] ?? 0;
     attempt += 1;
-    pending = deps.isOnline() ? deps.after(delay, () => void reconnect()) : deps.whenOnline(() => void reconnect());
+    if (deps.isOnline()) {
+      pending = deps.after(delay, () => void reconnect());
+      setState('retrying');
+    } else {
+      pending = deps.whenOnline(() => void reconnect());
+      setState('waiting-online');
+    }
   }
 
   return {
@@ -65,6 +85,7 @@ export function createReconnector(deps: ReconnectorDeps): Reconnector {
       disposed = true;
       pending?.();
       pending = null;
+      setState('idle');
     },
   };
 }

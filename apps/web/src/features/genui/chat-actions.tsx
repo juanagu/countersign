@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useMemo, type ReactNode } from 
 interface ChatActions {
   /** Sends `text` as the user's next message, as if typed. */
   sendMessage: (text: string) => void;
+  /** True while the agent is answering: chips are disabled, as `sendMessage` would ignore them. */
+  running: boolean;
 }
 
 const ChatActionsContext = createContext<ChatActions | null>(null);
@@ -19,7 +21,8 @@ export function ChatActionsProvider({ children }: { children: ReactNode }) {
     },
     [agent, copilotkit],
   );
-  const value = useMemo(() => ({ sendMessage }), [sendMessage]);
+  const running = agent.isRunning;
+  const value = useMemo(() => ({ sendMessage, running }), [sendMessage, running]);
   return <ChatActionsContext.Provider value={value}>{children}</ChatActionsContext.Provider>;
 }
 

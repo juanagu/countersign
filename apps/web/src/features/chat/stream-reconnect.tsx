@@ -1,5 +1,6 @@
 import { useCopilotKit } from '@copilotkit/react-core/v2';
 import { useEffect } from 'react';
+import { setConnectionStatus } from './lib/connection-status';
 import { createReconnector, isStreamBreak } from './lib/reconnector';
 
 const AGENT_ID = 'default';
@@ -19,6 +20,7 @@ export function StreamReconnect() {
         window.addEventListener('online', callback, { once: true });
         return () => window.removeEventListener('online', callback);
       },
+      onStateChange: setConnectionStatus,
       after: (ms, callback) => {
         const timer = setTimeout(callback, ms);
         return () => clearTimeout(timer);

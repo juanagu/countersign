@@ -8,7 +8,7 @@ import type {
   TableProps,
   TextProps,
 } from '@poc/contracts';
-import { Button } from '../../../shared/ui/button';
+import { Chip } from '../../../shared/ui/chip';
 import { Icon } from '../../../shared/ui/icon';
 import { Money } from '../../../shared/ui/money';
 import { formatMoney } from '../../../shared/lib/format-money';
@@ -109,22 +109,22 @@ export function TableView({ columns, rows }: TableProps) {
 }
 
 export function ButtonView({ label, message }: ButtonProps) {
-  const { sendMessage } = useChatActions();
+  const { sendMessage, running } = useChatActions();
   return (
-    <Button variant="secondary" onClick={() => sendMessage(message)}>
+    <Chip disabled={running} onClick={() => sendMessage(message)}>
       {label}
-    </Button>
+    </Chip>
   );
 }
 
 export function QuickRepliesView({ options }: QuickRepliesProps) {
-  const { sendMessage } = useChatActions();
+  const { sendMessage, running } = useChatActions();
   return (
     <div className="gen-replies" role="group" aria-label="Respuestas rápidas">
       {options.map((option) => (
-        <Button key={option.label} variant="secondary" onClick={() => sendMessage(option.message)}>
+        <Chip key={option.label} disabled={running} onClick={() => sendMessage(option.message)}>
           {option.label}
-        </Button>
+        </Chip>
       ))}
     </div>
   );

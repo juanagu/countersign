@@ -2,6 +2,9 @@ import type { TransferConfirmData } from '@poc/contracts';
 import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanel } from '../../../src/features/approval/approval-panel';
+import { MissingDraftCard } from '../../../src/features/approval/missing-draft-card';
+import { ResolvedLine } from '../../../src/features/approval/resolved-line';
+import { hasReceipt } from '../../../src/features/approval/lib/find-confirm-card';
 import { PinDialog } from '../../../src/features/approval/pin-dialog';
 import { findConfirmCard } from '../../../src/features/approval/lib/find-confirm-card';
 import { requestStepUp, StepUpFailed } from '../../../src/features/approval/lib/step-up-api';
@@ -40,17 +43,51 @@ describe('findConfirmCard', () => {
 });
 
 describe('ApprovalPanel', () => {
-  it('shows the draft figures from the card', () => {
+  it('is the card footer: the expiry note, then Cancelar and Confirmar, both enabled', () => {
     const html = renderToString(<ApprovalPanel draft={DRAFT} onDecide={async () => undefined} />);
-    expect(html).toContain('Ana Gómez');
-    expect(textOf(html)).toMatch(/\$ 50\.000,00/);
-    expect(html).toContain('Confirmar');
+    expect(textOf(html)).toMatch(/Válida hasta las \d{2}:\d{2}CancelarConfirmar/);
+    expect(html).not.toContain('disabled');
+    expect(html).not.toContain('Nada se envía');
+    expect(html).not.toContain('¿Transferir');
   });
+});
 
+describe('MissingDraftCard', () => {
   it('offers only to discard when the draft card is missing', () => {
-    const html = renderToString(<ApprovalPanel draft={undefined} onDecide={async () => undefined} />);
+    const html = renderToString(<MissingDraftCard onDecide={async () => undefined} />);
     expect(html).not.toContain('Confirmar');
     expect(html).toContain('Descartar');
+    expect(html).toContain('gen-card');
+  });
+});
+
+describe('ResolvedLine', () => {
+  const line = (state: Parameters<typeof ResolvedLine>[0]['state']) =>
+    renderToString(<ResolvedLine state={state} draft={DRAFT} />);
+
+  it.each([
+    ['confirmed', 'Confirmaste la transferencia con tu PIN.', 'status'],
+    ['not-sent', 'No se envió la transferencia de $ 50.000,00 a Ana Gómez.', 'status'],
+    ['expired', 'La transferencia de $ 50.000,00 a Ana Gómez venció sin confirmarse.', 'status'],
+    ['resume-failed', 'No pudimos confirmar la transferencia. Pedime de nuevo que la envíe.', 'alert'],
+  ] as const)('says %s in one line', (state, text, role) => {
+    const html = line(state);
+    expect(textOf(html)).toBe(text);
+    expect(html).toContain(`role="${role}"`);
+  });
+});
+
+describe('hasReceipt', () => {
+  const receipt = (draftId: string) => ({
+    role: 'activity',
+    activityType: 'bank-template',
+    content: { template: 'transfer-receipt', version: 1, surfaceId: 's', nonce: 'n', data: { draftId } },
+  });
+
+  it('is true only for a server receipt of the same draft', () => {
+    expect(hasReceipt([card(DRAFT), receipt('drf_1')], 'drf_1')).toBe(true);
+    expect(hasReceipt([card(DRAFT), receipt('drf_2')], 'drf_1')).toBe(false);
+    expect(hasReceipt([{ ...receipt('drf_1'), role: 'assistant' }], 'drf_1')).toBe(false);
   });
 });
 

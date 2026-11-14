@@ -1,3 +1,4 @@
+import './icon.css';
 import type { ReactNode } from 'react';
 
 const GLYPHS = {
@@ -69,6 +70,34 @@ const GLYPHS = {
       <circle cx="12" cy="16.5" r=".6" />
     </>
   ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
+  check: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8 12 3 3 5-6" />
+    </>
+  ),
+  cross: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m9 9 6 6" />
+      <path d="m15 9-6 6" />
+    </>
+  ),
+  wifiOff: (
+    <>
+      <path d="M2 8.5a15 15 0 0 1 20 0" />
+      <path d="M5.5 12a10 10 0 0 1 13 0" />
+      <path d="M9 15.5a5 5 0 0 1 6 0" />
+      <circle cx="12" cy="19" r=".8" />
+    </>
+  ),
+  spinner: <path d="M21 12a9 9 0 1 1-6.2-8.6" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof GLYPHS;
@@ -77,13 +106,15 @@ export interface IconProps {
   name: IconName;
   /** Pixel size of the square icon box. */
   size?: number;
+  /** Turns the icon; `spinner` is the only glyph meant for it. Static under `prefers-reduced-motion`. */
+  spin?: boolean;
 }
 
 /** Decorative inline icon in the current text colour; pair it with a visible or aria label. */
-export function Icon({ name, size = 20 }: IconProps) {
+export function Icon({ name, size = 20, spin = false }: IconProps) {
   return (
     <svg
-      className="icon"
+      className={spin ? 'icon icon--spin' : 'icon'}
       width={size}
       height={size}
       viewBox="0 0 24 24"

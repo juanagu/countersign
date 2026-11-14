@@ -13,7 +13,7 @@ import {
   TableView,
   TextView,
 } from './components/catalog-components';
-import './card.css';
+import '../../shared/ui/card.css';
 
 /** Must match `CATALOG_ID` in the bot (`services/bot/app/genui/a2ui.py`). */
 export const CATALOG_ID = 'bank-catalog-v1';

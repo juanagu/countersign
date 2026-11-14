@@ -18,6 +18,14 @@ The message rhythm and the composer are CSS over CopilotKit's DOM (`chat-message
 CopilotKit's palette variables are mapped to our tokens in `chat-screen.css`, so the chat follows the OS theme
 (`styles/color-scheme.ts` mirrors it onto `.dark`). Those selectors target CopilotKit's `data-testid`s.
 
+Status the chat shows without a message: `ConnectionPill` (`connection-pill.tsx`, the `input` slot of `ChatView`)
+centred above the composer from the reconnector's state (`lib/connection-status.ts`: `idle`, `waiting-online` →
+"Sin conexión. Reintentamos al reconectar.", `retrying` → "Reconectando…"); `ToolStatus` (`useRenderTool('*')`,
+labels in `lib/tool-labels.ts`: a spinner and a fixed phrase while a bot-side tool runs, nothing for unlisted
+tools, never arguments or results); `RunErrorNotice`, an inline "No pudimos responder tu consulta." with
+Reintentar in CopilotKit's interrupt slot at the end of the thread after a failed run (a failed approval resume
+is reported on the confirm card instead).
+
 ## Data flow
 
 `CopilotChat` → `POST /api/copilotkit/agent/default/run` (SSE) → BFF → bot AG-UI endpoint.

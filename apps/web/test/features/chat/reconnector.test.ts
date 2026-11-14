@@ -65,6 +65,42 @@ describe('createReconnector', () => {
     expect(await flush()).toEqual([10]);
   });
 
+  it('reports retrying, then idle once the connect succeeds', async () => {
+    const states: string[] = [];
+    const { reconnector, flush } = harness({ onStateChange: (state) => states.push(state) });
+    reconnector.streamBroke();
+    expect(states).toEqual(['retrying']);
+    await flush();
+    expect(states).toEqual(['retrying', 'idle']);
+  });
+
+  it('reports waiting-online while the browser is offline, then retrying once it is back', async () => {
+    const states: string[] = [];
+    const { reconnector, onlineWaiters } = harness({ isOnline: () => false, onStateChange: (s) => states.push(s) });
+    reconnector.streamBroke();
+    expect(states).toEqual(['waiting-online']);
+    onlineWaiters[0]?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(states).toEqual(['waiting-online', 'retrying', 'idle']);
+  });
+
+  it('goes idle when it gives up, and when it is disposed mid-wait', async () => {
+    const states: string[] = [];
+    const connect = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    const { reconnector, flush } = harness({ connect, delaysMs: [10], onStateChange: (s) => states.push(s) });
+    reconnector.streamBroke();
+    await flush();
+    expect(states.at(-1)).toBe('idle');
+
+    const second: string[] = [];
+    const other = harness({ onStateChange: (s) => second.push(s) });
+    other.reconnector.streamBroke();
+    other.reconnector.dispose();
+    expect(second).toEqual(['retrying', 'idle']);
+  });
+
   it('only reacts to failed requests, not to errors the bot reported', () => {
     expect(isStreamBreak(CopilotKitCoreErrorCode.AGENT_RUN_FAILED)).toBe(true);
     expect(isStreamBreak(CopilotKitCoreErrorCode.AGENT_CONNECT_FAILED)).toBe(true);

@@ -1,9 +1,9 @@
-import type { ButtonHTMLAttributes } from 'react';
+import type { ComponentPropsWithRef } from 'react';
 import './button.css';
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost';
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends ComponentPropsWithRef<'button'> {
   variant?: ButtonVariant;
   block?: boolean;
 }

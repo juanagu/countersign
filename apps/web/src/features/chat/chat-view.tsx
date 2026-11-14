@@ -1,4 +1,5 @@
 import { CopilotChatView, type CopilotChatViewProps } from '@copilotkit/react-core/v2';
+import { ChatInput } from './connection-pill';
 import { WelcomeScreen } from './welcome-screen';
 
 /**
@@ -6,5 +7,5 @@ import { WelcomeScreen } from './welcome-screen';
  * thread per user). The welcome still waits for the connect to finish, so a restored thread never flashes it.
  */
 export function ChatView(props: CopilotChatViewProps) {
-  return <CopilotChatView {...props} hasExplicitThreadId={false} welcomeScreen={WelcomeScreen} />;
+  return <CopilotChatView {...props} hasExplicitThreadId={false} welcomeScreen={WelcomeScreen} input={ChatInput} />;
 }
