@@ -38,6 +38,6 @@ forgets the id, so the next sign-in starts a fresh thread; "Nueva conversación"
 id at once (`startNewThread`). `StreamReconnect` (inside the provider) listens for
 `agent_run_failed` / `agent_connect_failed`, the way a dropped stream surfaces, and calls `connectAgent` again
 with backoff (0.5–8 s, five tries), waiting for the browser's `online` event when offline
-(`lib/reconnector.ts`). CopilotKit resets the transcript before applying a replay, so the resumed answer
+(`lib/reconnector.ts`). After the fifth it waits for the next break or `online` event and starts over. CopilotKit resets the transcript before applying a replay, so the resumed answer
 appears once, complete. A failed runtime request (how an expired session's 401 surfaces)
 calls `onRuntimeRequestFailed`; `App` re-checks `/api/auth/me` and shows the login screen on a 401.

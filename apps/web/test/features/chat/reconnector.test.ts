@@ -101,6 +101,56 @@ describe('createReconnector', () => {
     expect(second).toEqual(['retrying', 'idle']);
   });
 
+  it('starts a fresh cycle on a break after it gave up', async () => {
+    const states: string[] = [];
+    const connect = vi.fn<() => Promise<void>>(async () => {
+      throw new Error('offline');
+    });
+    const { reconnector, flush } = harness({ connect, onStateChange: (s) => states.push(s) });
+    reconnector.streamBroke();
+    for (let i = 0; i < 4; i += 1) await flush();
+    expect(states.at(-1)).toBe('idle');
+
+    connect.mockImplementation(async () => undefined);
+    reconnector.streamBroke();
+    expect(states.at(-1)).toBe('retrying');
+    expect(await flush()).toEqual([10]);
+    expect(connect).toHaveBeenCalledTimes(4);
+    expect(states.at(-1)).toBe('idle');
+  });
+
+  it('reconnects when the browser comes back online after it gave up', async () => {
+    const states: string[] = [];
+    const connect = vi.fn<() => Promise<void>>(async () => {
+      throw new Error('offline');
+    });
+    const { reconnector, flush, onlineWaiters } = harness({
+      connect,
+      delaysMs: [10],
+      onStateChange: (s) => states.push(s),
+    });
+    reconnector.streamBroke();
+    await flush();
+    expect(states).toEqual(['retrying', 'idle']);
+
+    connect.mockImplementation(async () => undefined);
+    onlineWaiters.at(-1)?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(states).toEqual(['retrying', 'idle', 'retrying', 'idle']);
+  });
+
+  it('counts a connect that reported a break as failed, as CopilotKit resolves it', async () => {
+    const holder: { reconnector?: { streamBroke(): void } } = {};
+    const connect = vi.fn(async () => holder.reconnector?.streamBroke());
+    const { reconnector, flush } = harness({ connect });
+    holder.reconnector = reconnector;
+    reconnector.streamBroke();
+    const waits = [...(await flush()), ...(await flush()), ...(await flush()), ...(await flush())];
+    expect(waits).toEqual([10, 20, 40]);
+    expect(connect).toHaveBeenCalledTimes(3);
+  });
+
   it('only reacts to failed requests, not to errors the bot reported', () => {
     expect(isStreamBreak(CopilotKitCoreErrorCode.AGENT_RUN_FAILED)).toBe(true);
     expect(isStreamBreak(CopilotKitCoreErrorCode.AGENT_CONNECT_FAILED)).toBe(true);
