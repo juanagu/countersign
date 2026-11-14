@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import cache
 from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI
 from psycopg_pool import AsyncConnectionPool
 from pydantic_ai.conversation_store import ConversationStore, InMemoryConversationStore
+from pydantic_ai.models import Model
 
 from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier, TokenVerifier, http_jwks_fetcher
 from app.banking.mcp_toolsets import banking_toolset
@@ -17,6 +19,7 @@ from app.config import Settings
 from app.conversations.pg_store import PgConversationStore
 from app.conversations.routes import conversations_router
 from app.core.clock import BankClock
+from app.core.llm.model_chain import ModelChains
 from app.core.logging import configure_logging
 from app.core.telemetry import setup_telemetry
 from app.guardrails.log_redaction import RedactingFilter
@@ -32,6 +35,7 @@ SERVICE_NAME = "bot"
 
 def _default_agent(
     settings: Settings,
+    model: Model,
     http: httpx.AsyncClient,
     pool: AsyncConnectionPool,
     embedder: LazyEmbedder,
@@ -47,7 +51,7 @@ def _default_agent(
     tools = banking_toolset(exchanger, accounts_url=settings.mcp_accounts_url, payments_url=settings.mcp_payments_url)
     knowledge = knowledge_toolset(embedder, PgKnowledgeStore(pool))
     return build_agent(
-        settings.bot_model,
+        model,
         skills=skills,
         domain_tools=[tools, knowledge],
         clock=clock,
@@ -96,8 +100,10 @@ def create_app(
 
     skills = SkillRegistry.from_dir(settings.skills_dir)
     clock = BankClock(ZoneInfo(settings.bank_timezone))  # One calendar for the prompt, the policy and grounding.
-    guardrails = guardrails or Guardrails.on_model(settings.guard_model, clock=clock)
-    run_agent = agent or _default_agent(settings, http, pool, embedder, skills, clock)
+    # Built only when needed: injected test doubles need no provider key. The eval judges keep the bare GUARD_MODEL.
+    chains = cache(lambda: ModelChains.from_settings(settings))
+    guardrails = guardrails or Guardrails.on_model(chains().guard, clock=clock)
+    run_agent = agent or _default_agent(settings, chains().orchestrator, http, pool, embedder, skills, clock)
     app.include_router(chat_router(run_agent, skills, guardrails, store))
     app.include_router(conversations_router(store))
     setup_telemetry(app, settings, wrap_exporter=RedactingSpanExporter)

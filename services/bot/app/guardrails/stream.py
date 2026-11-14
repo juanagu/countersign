@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 
 from ag_ui.core import BaseEvent, EventType, RunErrorEvent, RunFinishedEvent, RunStartedEvent
 
+from app.core.llm.run_record import current_run_record
 from app.guardrails.input_classifier import SAFE_REPLIES
 from app.guardrails.output_guard import OutputGuard, text_message
 from app.guardrails.run_guard import RunGuard
@@ -120,7 +121,8 @@ async def guarded_stream(
                     timer.observe(event)
                     yield event
     finally:
-        timer.finish()
+        record = current_run_record()
+        timer.finish(record.span_attributes() if record is not None else {})
         announcer.cancel()
         guard.cancel()
         await _stop(pump, CANCEL_GRACE_SECONDS if run.blocked else 0.0)

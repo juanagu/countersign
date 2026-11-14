@@ -5,7 +5,8 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 
 ## Exposed interface
 
-- `Guardrails(classifier, write_intent)`, `Guardrails.on_model(GUARD_MODEL)`; `.start_run(user_id,
+- `Guardrails(classifier, write_intent)`, `Guardrails.on_model(guard chain)` (`GUARD_MODEL` then
+  `GUARD_MODEL_FALLBACKS`, ADR 018); `.start_run(user_id,
   customer_messages, third_party_text_seen) -> RunGuard` starts the input classifier in the background.
 - `RunGuard` (in `BotDeps.guard`): `input_verdict()` (the gate), `record_tool_result()`, `evidence`,
   `third_party_text_seen`, `write_intent`, `customer_messages`. `RunGuard.unchecked()` is the blocked default.
@@ -20,7 +21,8 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 - `RedactingFilter` (logging) and `RedactingSpanExporter` (OpenTelemetry), wired in `app/main.py`.
 - `SAFE_REPLIES` (Spanish replies per blocked category), metric names `guardrail.*`.
 - `StreamTimer` (`stream_timing.py`): `guarded_stream` records a `bot.stream` span per run with the time to the
-  first text delta and the first UI surface the client receives (timings only), read by `make metrics`.
+  first text delta and the first UI surface the client receives, plus `bot.models_served` and `bot.failovers` from
+  the run's LLM record (ADR 018); no content. Read by `make metrics`.
 
 ## Data flow
 

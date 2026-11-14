@@ -1,15 +1,17 @@
 """How fast one run reached the customer: time to the first text delta and to the first UI surface.
 
 Measured on what leaves the bot, after the input gate and the sentence-by-sentence output guard, so it is the
-latency the customer feels. Recorded on a `bot.stream` span and one log line; both carry timings only.
+latency the customer feels. Recorded on a `bot.stream` span and one log line; neither carries content. The span
+also says which models served the run and how many failovers it took (ADR 018).
 """
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from ag_ui.core import ActivitySnapshotEvent, BaseEvent, TextMessageContentEvent
 from opentelemetry import trace
+from opentelemetry.util.types import AttributeValue
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +47,15 @@ class StreamTimer:
         ):
             self.first_surface_ms = self._elapsed_ms()
 
-    def finish(self) -> None:
+    def finish(self, attributes: Mapping[str, AttributeValue] | None = None) -> None:
+        """`attributes` adds what the run's model chains did (`bot.models_served`, `bot.failovers`)."""
         timings = {
             TTFT_ATTRIBUTE: self.first_token_ms,
             FIRST_SURFACE_ATTRIBUTE: self.first_surface_ms,
             DURATION_ATTRIBUTE: self._elapsed_ms(),
         }
         recorded = {name: value for name, value in timings.items() if value is not None}
-        self._span.set_attributes(recorded)
+        self._span.set_attributes({**recorded, **(attributes or {})})
         self._span.end()
         fields = {name.removeprefix("bot."): value for name, value in recorded.items()}
         logger.info("stream timing", extra={"metric": TIMING_METRIC, **fields})

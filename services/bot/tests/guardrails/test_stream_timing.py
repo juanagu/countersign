@@ -73,3 +73,12 @@ def test_a_server_template_card_counts_as_the_first_surface() -> None:
     [span] = exporter.get_finished_spans()
     assert span.attributes is not None
     assert span.attributes[FIRST_SURFACE_ATTRIBUTE] == 2000.0
+
+
+def test_the_span_also_says_which_models_served_and_how_many_failovers() -> None:
+    timer, _, exporter = _timer()
+    timer.finish({"bot.models_served": ["orchestrator:claude-haiku-5-5"], "bot.failovers": 1})
+    [span] = exporter.get_finished_spans()
+    assert span.attributes is not None
+    assert span.attributes["bot.models_served"] == ("orchestrator:claude-haiku-5-5",)
+    assert span.attributes["bot.failovers"] == 1

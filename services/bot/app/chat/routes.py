@@ -14,6 +14,7 @@ from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
 from app.chat.interrupt_answers import resumed_calls, without_interrupt_answers
 from app.conversations.history import conversation_id_for, new_turn, stored_messages
+from app.core.llm.run_record import start_run_record
 from app.genui.render_ui import RENDER_UI_TOOL
 from app.guardrails.messages import (
     customer_spoke_since_last_response,
@@ -69,6 +70,7 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, 
         # A client-built resume proves nothing: only answering an interrupt raised here skips the classifier.
         resumed = resumed_calls(adapter)
         genuine_resume = bool(resumed) and guardrails.pending_approvals.consume(conversation, resumed)
+        start_run_record()  # Before the guard and the run start their tasks, so both report to it (ADR 018).
         guard = guardrails.start_run(
             user_id=principal.user_id,
             customer_messages=customer_texts(history),
