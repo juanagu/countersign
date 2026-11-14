@@ -17,9 +17,9 @@ class _TokenResponse(BaseModel):
 
 
 class TokenExchanger:
-    """Exchanges the user's `aud=bot` token for an audience-bound token per MCP server (security rule 1).
+    """Exchanges the user's `aud=bot` token for an `aud=mcp-gateway` token (security rule 1, ADR 017).
 
-    Nothing is cached: the BFF mints a fresh bot token per request, and a run exchanges once per server.
+    The gateway exchanges again for each backend. Nothing is cached: the BFF mints a fresh bot token per request.
     """
 
     def __init__(
