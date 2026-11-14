@@ -59,8 +59,10 @@ ADR 007 also left message history client-managed, so a client could forge assist
     assistant response), and saves what a completed run added. A blocked, failed or stopped run is not saved.
   - An approval must answer a call that the stored conversation's deferred tool requests are waiting on.
   - This closes ADR 007's gap: forged assistant or tool messages never reach the model (tested).
-  - The guard's customer messages, the third-party-text flag and the skills restored for a resume now read
-    the stored history. `skills_loaded_in` reads `ModelMessage`s, no longer the client's JSON.
+  - The guard's customer messages, the third-party-text flag, the grounding evidence and the skills restored for
+    a resume now read the stored history. `skills_loaded_in` reads `ModelMessage`s, no longer the client's JSON.
+    The guard's new turn drops client tool results as the run does: one counts only for a call the stored
+    conversation awaits a result for, so a forged `list_transactions` result grounds no figure (tested).
 - **Restore past the window.** With no events left, `connect` asks the bot for
   `GET /threads/{id}/messages` with an `aud=bot` token minted for the thread's owner, and sends the result as
   one `RUN_STARTED` / `MESSAGES_SNAPSHOT` / `RUN_FINISHED`. The bot answers only from the caller's own

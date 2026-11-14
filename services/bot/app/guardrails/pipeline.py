@@ -44,8 +44,8 @@ class Guardrails:
     ) -> RunGuard:
         """A run guard whose input verdict is being computed in the background from now on.
 
-        Tool results from earlier turns ground figures too, so a follow-up may restate them. The history is the
-        client's: a forged result only lets the customer ground claims shown to themselves (ADR 014).
+        Tool results from earlier turns ground figures too, so a follow-up may restate them. They come from the
+        stored history: a tool result the client sends is dropped unless the conversation awaits it (ADR 015).
         A `resume_only` run (a resume of an interrupt this bot raised, no new customer message) opens the gate
         without the classifier.
         """

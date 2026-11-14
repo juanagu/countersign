@@ -13,7 +13,7 @@ from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
 from app.chat.interrupt_answers import resumed_calls, without_interrupt_answers
-from app.conversations.history import NON_EVIDENCE_TOOLS, conversation_id_for, new_turn, stored_messages
+from app.conversations.history import NON_EVIDENCE_TOOLS, conversation_id_for, load_thread, new_turn
 from app.core.llm.run_record import start_run_record
 from app.guardrails.messages import (
     customer_spoke_since_last_response,
@@ -61,7 +61,8 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, 
         except ValidationError as error:
             return _invalid_body(error)
         run = adapter.run_input
-        history = [*await stored_messages(store, principal.user_id, run.thread_id), *new_turn(adapter.messages)]
+        stored = await load_thread(store, principal.user_id, run.thread_id)
+        history = [*stored.messages, *new_turn(adapter.messages, awaiting_results=stored.awaiting_results)]
         conversation = (principal.user_id, run.thread_id)
         # A client-built resume proves nothing: only answering an interrupt raised here skips the classifier.
         resumed = resumed_calls(adapter)

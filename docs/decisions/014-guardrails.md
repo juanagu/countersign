@@ -46,9 +46,8 @@ tool may run, and no text may reach the client, before its verdict.
   percentage, date and account number must appear in this run's domain-tool results, recorded by
   `PolicyToolset` before the model sees them, or in the tool results of earlier turns in the history (not
   `load_skill` or `render_ui`, which carry no bank data), so a follow-up may restate an earlier figure. That
-  history comes from the client, so a forged tool result could ground a made-up figure, but only in an answer
-  streamed back to the customer who forged it: it moves no money (writes go through the tool policy and the
-  MCP servers, which read the bank's own data) and reaches no one else. es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
+  history is the bot's stored one since ADR 015: a tool result the client sends counts only for a call the stored
+  conversation awaits a result for, so a forged one grounds nothing (tested). es-AR and plain formats are normalised (`$ 1.254.300,50` ↔
   `1254300.50`, `****4521` by its last digits, `15 de octubre`, `15/10`, ISO dates). A failing sentence becomes a
   fallback; an `a2ui-surface` has PII masked in every string it shows (ids and references left intact), then
   is dropped for a text fallback if a number is ungrounded (ADR 012's promise).

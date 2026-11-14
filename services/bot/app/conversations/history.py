@@ -1,13 +1,21 @@
 """The bot's server-owned conversation: its id, what a run continues from, and the transcript a reload shows."""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from copy import deepcopy
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, TypeGuard
 
 from ag_ui.core import ActivityMessage
 from pydantic import BaseModel
 from pydantic_ai.conversation_store import ConversationStore
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    RetryPromptPart,
+    ToolReturnPart,
+)
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.core.clock import BankClock
@@ -23,20 +31,49 @@ TRANSCRIPT_ROLES = frozenset({"user", "assistant"})
 NON_EVIDENCE_TOOLS = frozenset({LOAD_SKILL, RENDER_UI_TOOL})
 
 
+@dataclass(frozen=True)
+class StoredThread:
+    messages: list[ModelMessage]
+    awaiting_results: frozenset[str]  # Tool calls the conversation waits on a result for, not on an approval.
+
+
 def conversation_id_for(user_id: str, thread_id: str) -> str:
     """Prefixed with the user, so nobody can take another user's thread id first and lock its owner out."""
     return f"{user_id}:{thread_id}"
 
 
-def new_turn(client_messages: Sequence[ModelMessage]) -> list[ModelMessage]:
-    """The client's messages after its last model response: all a run takes from the client (ADR 015)."""
+def new_turn(client_messages: Sequence[ModelMessage], *, awaiting_results: Collection[str]) -> list[ModelMessage]:
+    """The client's requests after its last model response, as the run takes them (ADR 015).
+
+    A tool result is kept only for a call the stored conversation awaits one for, so a client-built result never
+    becomes grounding evidence or third-party text (rule 6). Interrupt answers arrive as `resume` entries instead.
+    """
     last = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
-    return list(client_messages[last + 1 :])
+    turn: list[ModelMessage] = []
+    for message in client_messages[last + 1 :]:
+        if not isinstance(message, ModelRequest):
+            continue
+        parts = [p for p in message.parts if not _is_tool_result(p) or p.tool_call_id in awaiting_results]
+        if parts:
+            turn.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
+    return turn
+
+
+def _is_tool_result(part: ModelRequestPart) -> TypeGuard[ToolReturnPart | RetryPromptPart]:
+    return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+
+
+async def load_thread(store: ConversationStore, user_id: str, thread_id: str) -> StoredThread:
+    conversation = await store.load(conversation_id_for(user_id, thread_id), scope=user_id)
+    if conversation is None:
+        return StoredThread(messages=[], awaiting_results=frozenset())
+    waiting = conversation.deferred_tool_requests
+    awaiting = frozenset(call.tool_call_id for call in waiting.calls) if waiting is not None else frozenset()
+    return StoredThread(messages=conversation.messages, awaiting_results=awaiting)
 
 
 async def stored_messages(store: ConversationStore, user_id: str, thread_id: str) -> list[ModelMessage]:
-    conversation = await store.load(conversation_id_for(user_id, thread_id), scope=user_id)
-    return conversation.messages if conversation is not None else []
+    return (await load_thread(store, user_id, thread_id)).messages
 
 
 def transcript(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
