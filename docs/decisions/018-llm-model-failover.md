@@ -1,6 +1,10 @@
 # 018 — LLM failover in process: a `FallbackModel` chain per role, a first-event deadline and a circuit breaker
 
-**Status:** proposed.
+**Status:** accepted; tasks 1–4 built (commits 608d160, f32459c). Task 5, the live calibration run, is pending.
+
+As built: the fault spec is `target:fault`, where target is `orchestrator`, `guard`, `primary` (both roles' primaries) or
+`all` (every model in both chains), and 429/529/503/500 are accepted as fault aliases. The guard deadline is
+`GUARD_REQUEST_TIMEOUT_SECONDS` (default 6). Breakers are keyed by model name and shared by both roles.
 
 ## Context
 The user wants a backup for when a model fails or its latency spikes. The orchestrator (`BOT_MODEL`) streams

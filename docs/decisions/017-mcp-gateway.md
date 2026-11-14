@@ -1,6 +1,8 @@
 # 017 — MCP gateway: a thin Hono service on the MCP SDK, one more hop in the token-exchange chain
 
-**Status:** proposed. `docs/PLAN.md` lists "an MCP gateway as a separate service" as out of scope. The user
+**Status:** accepted in part. Tasks 1–5 (mcp-kit actor chains, IdP gateway client, the gateway service with
+its proxy, rate limits, breaker and audit) are built and run beside today's direct path (commits bfddad5, cd68aee,
+413430f). Task 6, the cutover, waits for the user to approve the rule 1 rewording. `docs/PLAN.md` lists "an MCP gateway as a separate service" as out of scope. The user
 asked for one, which overrides that line. Rule 1 in `AGENTS.md` needs new wording before this is built (below).
 
 ## Context
