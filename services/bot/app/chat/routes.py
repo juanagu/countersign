@@ -1,4 +1,4 @@
-from functools import cached_property
+from functools import cached_property, partial
 from http import HTTPStatus
 
 from fastapi import APIRouter, Request, Response
@@ -14,6 +14,7 @@ from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
 from app.chat.interrupt_answers import resumed_calls, without_interrupt_answers
 from app.conversations.history import conversation_id_for, load_thread, new_turn
+from app.conversations.run_store import RunConversationStore
 from app.core.llm.run_record import start_run_record
 from app.guardrails.history_guard import NON_EVIDENCE_TOOLS
 from app.guardrails.messages import (
@@ -25,7 +26,8 @@ from app.guardrails.messages import (
 )
 from app.guardrails.pending_approvals import recording_interrupts
 from app.guardrails.pipeline import Guardrails
-from app.guardrails.stream import guarded_stream
+from app.guardrails.run_guard import RunGuard
+from app.guardrails.stream import guarded_stream, refusal_shown
 from app.policy.policy_toolset import THIRD_PARTY_TEXT_TOOLS
 from app.skills.history import skills_loaded_in
 from app.skills.registry import SkillRegistry
@@ -49,6 +51,18 @@ def _invalid_body(error: ValidationError) -> Response:
     return Response(content=content, media_type="application/json", status_code=HTTPStatus.UNPROCESSABLE_ENTITY)
 
 
+def _start_guard(
+    guardrails: Guardrails, user_id: str, history: list[ModelMessage], *, genuine_resume: bool
+) -> RunGuard:
+    return guardrails.start_run(
+        user_id=user_id,
+        customer_messages=customer_texts(history),
+        third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
+        earlier_tool_results=tool_results_in(history, excluding=NON_EVIDENCE_TOOLS),
+        resume_only=genuine_resume and not customer_spoke_since_last_response(history),
+    )
+
+
 def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, store: ConversationStore) -> APIRouter:
     router = APIRouter()
 
@@ -69,13 +83,7 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, 
         resumed = resumed_calls(adapter)
         genuine_resume = bool(resumed) and guardrails.pending_approvals.consume(conversation, resumed)
         start_run_record()  # Before the guard and the run start their tasks, so both report to it (ADR 018).
-        guard = guardrails.start_run(
-            user_id=principal.user_id,
-            customer_messages=customer_texts(history),
-            third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
-            earlier_tool_results=tool_results_in(history, excluding=NON_EVIDENCE_TOOLS),
-            resume_only=genuine_resume and not customer_spoke_since_last_response(history),
-        )
+        guard = _start_guard(guardrails, principal.user_id, history, genuine_resume=genuine_resume)
         deps = BotDeps(
             user_id=principal.user_id,
             access_token=principal.token,
@@ -83,6 +91,8 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, 
             session_id=run.thread_id,
             guard=guard,
         )
+        # Saved as the guard released it: a refused run keeps the customer's turn and the refusal, not the answer.
+        adapter.conversation_store = RunConversationStore(store, refusal=partial(refusal_shown, guard))
         token = CancellationToken()
         try:
             events = adapter.run_stream(

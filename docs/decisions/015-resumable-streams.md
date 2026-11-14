@@ -56,7 +56,11 @@ ADR 007 also left message history client-managed, so a client could forge assist
   - `conversation_scope` is the token's user. The conversation id is `"{user}:{threadId}"`, so nobody can
     take another user's thread id first and lock its owner out.
   - The adapter loads the stored conversation, takes only the client's new turn (its messages after the last
-    assistant response), and saves what a completed run added. A blocked, failed or stopped run is not saved.
+    assistant response), and saves what a completed run added. A failed or stopped run is not saved.
+  - A blocked run can complete before the input verdict lands, and the adapter saves on completion. The run
+    saves through `RunConversationStore`, whose `save` waits for the verdict: a refused run is stored as the
+    customer's turn plus the refusal they saw, never the model's answer, so neither a reload nor the next run's
+    model sees it (tested). One the block cancels before it completes is not saved.
   - An approval must answer a call that the stored conversation's deferred tool requests are waiting on.
   - This closes ADR 007's gap: forged assistant or tool messages never reach the model (tested).
   - The guard's customer messages, the third-party-text flag, the grounding evidence and the skills restored for

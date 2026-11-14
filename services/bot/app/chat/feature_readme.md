@@ -21,6 +21,7 @@ AG-UI state is ignored.
 
 History is server-owned (ADR 015): the adapter loads the conversation `"{user}:{threadId}"` from the
 `ConversationStore` under the user's scope, takes only the client's new turn (its messages after the last assistant
-response), and saves what the run added. The guard's customer messages, the third-party-text flag, the grounding
+response), and saves what the run added through `RunConversationStore`, so a run the input guard refused is stored
+as the customer's turn plus the refusal, not the model's answer. The guard's customer messages, the third-party-text flag, the grounding
 evidence and the skills to pre-load all come from that stored history, never from what the client echoes back; a
 client tool result counts only for a call the stored conversation awaits a result for.

@@ -11,7 +11,8 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 - `RunGuard` (in `BotDeps.guard`): `input_verdict()` (the gate), `record_tool_result()`, `evidence`,
   `third_party_text_seen`, `write_intent`, `customer_messages`. `RunGuard.unchecked()` is the blocked default.
 - `guarded_stream(events, guard, thread_id, run_id, cancel_run)`: holds AG-UI events until the verdict, then
-  runs them through `OutputGuard`; on block cancels the run and sends the safe reply.
+  runs them through `OutputGuard`; on block cancels the run and sends the safe reply. `refusal_shown(guard)`
+  awaits the verdict and returns that reply, or `None` when the answer goes out (the run's save uses it).
 - `PendingApprovals` (`Guardrails.pending_approvals`): `record()` / `consume()` the approval interrupts raised per
   user and thread; `recording_interrupts(events, pending, key)` records those a run ends with. Only a resume that
   consumes them skips the classifier.

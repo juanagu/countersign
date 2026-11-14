@@ -45,10 +45,20 @@ async def _announce_verdict(guard: RunGuard, queue: "asyncio.Queue[Item]") -> No
     await queue.put(_VERDICT)
 
 
+def refusal_text(verdict: Verdict) -> str:
+    return verdict.text or SAFE_REPLIES["error"]
+
+
+async def refusal_shown(guard: RunGuard) -> str | None:
+    """The reply `guarded_stream` sends instead of this run's answer, or None when the verdict lets the answer out."""
+    verdict = await guard.input_verdict()
+    return refusal_text(verdict) if verdict.blocked else None
+
+
 def blocked_reply(verdict: Verdict, *, started: bool, thread_id: str, run_id: str) -> Iterator[BaseEvent]:
     if not started:
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
-    yield from text_message(verdict.text or SAFE_REPLIES["error"])
+    yield from text_message(refusal_text(verdict))
     yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
 
 
