@@ -13,8 +13,8 @@ test.describe('@smoke', () => {
     await expectNoHorizontalScroll(page);
 
     await ask(page, 'Hola, ¿qué podés hacer por mí? Respondé en dos oraciones.');
-    const answer = page.locator('[data-message-role="assistant"], [data-role="assistant"]').last();
-    await expect(answer.or(page.getByText(/banco|cuenta|ayud/i).last())).toBeVisible();
+    const answer = page.getByTestId('copilot-assistant-message').last();
+    await expect(answer).not.toBeEmpty();
     await snapshot(page, info, 'chat');
     await expectNoHorizontalScroll(page);
   });

@@ -5,7 +5,7 @@ import { ask, signIn } from './support';
 test('an offline blip mid-answer resumes, and a reload restores the conversation', async ({ page, context }) => {
   await signIn(page, 'Ana Gómez');
   await ask(page, 'Explicame en cinco oraciones cómo funcionan las transferencias internacionales.');
-  const answer = page.locator('[data-message-role="assistant"], [data-role="assistant"]').last();
+  const answer = page.getByTestId('copilot-assistant-message').last();
   await expect(answer).not.toBeEmpty({ timeout: 30_000 });
 
   await context.setOffline(true);
