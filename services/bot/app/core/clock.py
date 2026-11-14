@@ -18,4 +18,7 @@ class BankClock:
     now: Callable[[], datetime] = _utc_now  # Injected by tests to pin the instant.
 
     def today(self) -> date:
-        return self.now().astimezone(self.tz).date()
+        return self.day_of(self.now())
+
+    def day_of(self, instant: datetime) -> date:
+        return instant.astimezone(self.tz).date()

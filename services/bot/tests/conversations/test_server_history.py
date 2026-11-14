@@ -1,10 +1,12 @@
 """The conversation lives on the bot: forged client history is ignored, and a reload reads only the owner's thread."""
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import (
     ModelMessage,
@@ -19,13 +21,13 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.auth.token_verifier import JwksTokenVerifier
-from app.chat.agent import build_agent
-from app.config import SKILLS_DIR
+from app.chat.agent import BotAgent, build_agent
+from app.config import SKILLS_DIR, Settings
 from app.conversations.history import new_turn
 from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 from app.main import create_app
 from app.skills.registry import SkillRegistry
-from tests.conftest import SigningKey, make_settings, open_guardrails
+from tests.conftest import TEST_CLIENT_SECRET, TEST_MODEL, SigningKey, make_settings, open_guardrails
 from tests.policy.test_approval_flow import DRAFT_ID, FakePayments
 
 HEADERS = {"accept": "text/event-stream"}
@@ -220,3 +222,29 @@ async def test_an_approval_resumes_from_the_stored_conversation(
         if isinstance(p, ToolCallPart)
     ]
     assert [c.tool_name for c in calls] == ["load_skill", "execute_transfer"]
+
+
+async def test_the_reload_grounds_dates_on_the_configured_bank_timezone(
+    agent: BotAgent, signing_key: SigningKey, verifier: JwksTokenVerifier
+) -> None:
+    # 01:30 UTC on the 14th is still the 13th in Buenos Aires, the default zone.
+    answer = ModelResponse(
+        parts=[TextPart(content="Hoy es 14/11/2026.")], timestamp=datetime(2026, 11, 14, 1, 30, tzinfo=UTC)
+    )
+    store = InMemoryConversationStore()
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="¿Qué día es?")]), answer]
+    await store.save(Conversation(messages=messages, conversation_id="ana:t"), scope="ana")
+    settings = Settings(
+        bot_model=TEST_MODEL,
+        guard_model=TEST_MODEL,
+        bot_client_secret=TEST_CLIENT_SECRET,
+        bank_timezone="Asia/Tokyo",
+    )
+    app = create_app(
+        settings, agent=agent, token_verifier=verifier, guardrails=open_guardrails(), conversation_store=store
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        auth = {"authorization": f"Bearer {signing_key.token(sub='ana')}"}
+        shown = (await http.get("/threads/t/messages", headers=auth)).json()
+
+    assert shown["messages"][-1]["content"] == "Hoy es 14/11/2026."

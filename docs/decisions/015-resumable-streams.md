@@ -66,7 +66,7 @@ ADR 007 also left message history client-managed, so a client could forge assist
 - **Restore past the window.** With no events left, `connect` asks the bot for
   `GET /threads/{id}/messages` with an `aud=bot` token minted for the thread's owner, and sends the result as
   one `RUN_STARTED` / `MESSAGES_SNAPSHOT` / `RUN_FINISHED`. The bot answers only from the caller's own
-  conversation, so another user's thread id reads as empty. The transcript holds user and assistant text plus the server-template cards (confirm, receipt), read from the stored tool returns; The stored answers predate the output guard, so the transcript runs its deterministic checks again (PII masking, and grounding against the tool results before each answer, the customer's latest message and the bank's day it was given): a sentence the guard replaced live comes back replaced. A2UI surfaces stay out, since the guard may have withheld them.
+  conversation, so another user's thread id reads as empty. The transcript holds user and assistant text plus the server-template cards (confirm, receipt), read from the stored tool returns; The stored answers predate the output guard, so the transcript runs its deterministic checks again (PII masking, and grounding against the tool results before each answer, the customer's latest message and the bank's day it was given, in `BANK_TIMEZONE`): a sentence the guard replaced live comes back replaced. A2UI surfaces stay out, since the guard may have withheld them.
   Tool calls are left out so the client never sees a call it might think is still pending.
 - **Web.**
   - `CopilotChat` gets an explicit `threadId`, one per signed-in user in `localStorage`. The chat therefore

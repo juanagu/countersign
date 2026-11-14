@@ -1,7 +1,6 @@
 """The bot's server-owned conversation: its id, what a run continues from, and the transcript a reload shows."""
 
 from collections.abc import Collection, Sequence
-from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any, TypeGuard
 
@@ -19,16 +18,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.core.clock import BankClock
-from app.genui.render_ui import RENDER_UI_TOOL
 from app.genui.templates import ACTIVITY_TYPE as TEMPLATE_ACTIVITY
-from app.guardrails.grounding import Evidence
-from app.guardrails.messages import customer_texts
-from app.guardrails.output_guard import released_text
-from app.skills.history import LOAD_SKILL
+from app.guardrails.history_guard import StoredAnswers
 
 TRANSCRIPT_ROLES = frozenset({"user", "assistant"})
-# Their results are instructions or UI, not bank data: like in a run (`PolicyToolset`), they ground no figure.
-NON_EVIDENCE_TOOLS = frozenset({LOAD_SKILL, RENDER_UI_TOOL})
 
 
 @dataclass(frozen=True)
@@ -76,56 +69,32 @@ async def stored_messages(store: ConversationStore, user_id: str, thread_id: str
     return (await load_thread(store, user_id, thread_id)).messages
 
 
-def transcript(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
+def transcript(messages: Sequence[ModelMessage], *, clock: BankClock) -> list[dict[str, Any]]:
     """What a reload past the replay window shows: the user's and the assistant's text, plus the server-template
     cards (confirm, receipt), in the order they happened. No tool traffic.
 
     Tool calls are left out so the client never sees a call it might think is still waiting on it. The stored
-    copy is the one before the output guard: answers go through its deterministic checks again (PII, grounding),
-    and A2UI surfaces stay out, since the guard may have withheld them.
+    copy is the one before the output guard: answers go through its deterministic checks again (PII, grounding
+    on the bank's day by `clock`), and A2UI surfaces stay out, since the guard may have withheld them.
     """
     shown: list[dict[str, Any]] = []
-    grounding = _ReloadEvidence()
+    answers = StoredAnswers(clock)
     for message in messages:
         shown.extend(_template_cards(message))
-        evidence = grounding.for_answer(message) if isinstance(message, ModelResponse) else None
-        shown.extend(_texts(message, evidence))
-        grounding.read(message)
+        shown.extend(_texts(message, answers))
+        answers.read(message)
     return shown
 
 
-class _ReloadEvidence:
-    """What the output guard grounded each answer on, rebuilt from the stored history: the tool results before it,
-    the customer's latest message and the bank's day the answer was given."""
-
-    def __init__(self) -> None:
-        self._tool_results = Evidence()
-        self._latest_prompt = ""
-
-    def read(self, message: ModelMessage) -> None:
-        if not isinstance(message, ModelRequest):
-            return
-        for part in message.parts:
-            if isinstance(part, ToolReturnPart) and part.tool_name not in NON_EVIDENCE_TOOLS:
-                self._tool_results.add(part.content)
-        self._latest_prompt = next(reversed(customer_texts([message])), self._latest_prompt)
-
-    def for_answer(self, response: ModelResponse) -> Evidence:
-        evidence = deepcopy(self._tool_results)
-        evidence.add_date(BankClock(now=lambda: response.timestamp).today())
-        evidence.add_text(self._latest_prompt)
-        return evidence
-
-
-def _texts(message: ModelMessage, evidence: Evidence | None) -> list[dict[str, Any]]:
+def _texts(message: ModelMessage, answers: StoredAnswers) -> list[dict[str, Any]]:
     texts: list[dict[str, Any]] = []
     for dumped_message in AGUIAdapter.dump_messages([message]):
         dumped = dumped_message.model_dump(by_alias=True, exclude_none=True)
         if dumped.get("role") not in TRANSCRIPT_ROLES or not dumped.get("content"):
             continue
         dumped.pop("toolCalls", None)
-        if dumped["role"] == "assistant" and evidence is not None and isinstance(dumped["content"], str):
-            dumped["content"] = released_text(dumped["content"], evidence)
+        if dumped["role"] == "assistant" and isinstance(message, ModelResponse) and isinstance(dumped["content"], str):
+            dumped["content"] = answers.released(dumped["content"], message)
         texts.append(dumped)
     return [text for text in texts if text["content"]]
 

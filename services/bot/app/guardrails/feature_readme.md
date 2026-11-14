@@ -17,7 +17,13 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
   consumes them skips the classifier.
 - `OutputGuard(evidence)`: sentence buffering, `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
   grounding, and a safe `RUN_ERROR` message.
-- `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`.
+- `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`,
+  `tools_returned_in()`, `tool_results_in()`, `customer_spoke_since_last_response()`.
+- `history_guard.py`, the output guard over stored history: `NON_EVIDENCE_TOOLS` (`load_skill`, `render_ui`:
+  their results ground no figure), and `StoredAnswers(clock)`, which walks a stored history (`read(message)`) and
+  returns each answer as the guard's deterministic checks released it (`released(text, answer)`): PII masking
+  and grounding against the tool results before it, the customer's latest message and the bank's day in
+  `clock`'s zone. For the reload transcript.
 - `RedactingFilter` (logging) and `RedactingSpanExporter` (OpenTelemetry), wired in `app/main.py`.
 - `SAFE_REPLIES` (Spanish replies per blocked category), metric names `guardrail.*`.
 - `StreamTimer` (`stream_timing.py`): `guarded_stream` records a `bot.stream` span per run with the time to the

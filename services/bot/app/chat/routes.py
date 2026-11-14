@@ -13,8 +13,9 @@ from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
 from app.chat.interrupt_answers import resumed_calls, without_interrupt_answers
-from app.conversations.history import NON_EVIDENCE_TOOLS, conversation_id_for, load_thread, new_turn
+from app.conversations.history import conversation_id_for, load_thread, new_turn
 from app.core.llm.run_record import start_run_record
+from app.guardrails.history_guard import NON_EVIDENCE_TOOLS
 from app.guardrails.messages import (
     customer_spoke_since_last_response,
     customer_texts,

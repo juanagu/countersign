@@ -105,6 +105,6 @@ def create_app(
     guardrails = guardrails or Guardrails.on_model(chains().guard, clock=clock)
     run_agent = agent or _default_agent(settings, chains().orchestrator, http, pool, embedder, skills, clock)
     app.include_router(chat_router(run_agent, skills, guardrails, store))
-    app.include_router(conversations_router(store))
+    app.include_router(conversations_router(store, clock))
     setup_telemetry(app, settings, wrap_exporter=RedactingSpanExporter)
     return app
