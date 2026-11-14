@@ -77,6 +77,24 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  # ADR 017: built and started beside the servers, but nothing points at it until the bot's cutover.
+  mcp-gateway:
+    <<: *node-service
+    build: { context: .., dockerfile: services/mcp-gateway/Dockerfile }
+    environment:
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      IDP_TOKEN_URL: http://bff:3000/token
+      MCP_ACCOUNTS_URL: http://mcp-accounts:8101/mcp
+      MCP_PAYMENTS_URL: http://mcp-payments:8102/mcp
+      MCP_GATEWAY_CLIENT_SECRET: ${MCP_GATEWAY_CLIENT_SECRET:-local-dev-gateway-secret-change-me}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: mcp-gateway
+    ports: ['127.0.0.1:${MCP_GATEWAY_HOST_PORT:-8100}:8100']
+    depends_on:
+      mcp-accounts: { condition: service_healthy }
+      mcp-payments: { condition: service_healthy }
+
   bot:
     <<: *node-service
     build: { context: ../services/bot }
@@ -108,6 +126,7 @@ services:
       IDP_ISSUER: http://bff:3000
       BOT_AGENT_URL: http://bot:8000/agent
       REDIS_URL: redis://redis:6379
+      MCP_GATEWAY_CLIENT_SECRET: ${MCP_GATEWAY_CLIENT_SECRET:-local-dev-gateway-secret-change-me}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
       OTEL_SERVICE_NAME: bff
       # Keep CopilotKit's runtime telemetry off even without a .env (it is optional above).
