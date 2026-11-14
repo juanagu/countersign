@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.toolsets import AbstractToolset
 
 from app.chat.deps import BotDeps
@@ -18,6 +19,14 @@ __all__ = ["SYSTEM_PROMPT", "BotAgent", "BotDeps", "build_agent"]
 
 # A run ends with text, or paused on tool calls awaiting the customer's approval (AG-UI interrupt).
 BotAgent = Agent[BotDeps, str | DeferredToolRequests]
+
+# Tool schemas, instructions and the growing conversation are re-sent on every model request of a run;
+# caching them cuts input cost and latency. Other model providers ignore these keys.
+PROMPT_CACHING = AnthropicModelSettings(
+    anthropic_cache_tool_definitions=True,
+    anthropic_cache_instructions=True,
+    anthropic_cache=True,
+)
 
 SYSTEM_PROMPT = """\
 You are the virtual assistant of a retail bank. This is a demo: every customer and figure is synthetic.
@@ -59,6 +68,7 @@ def build_agent(
         deps_type=BotDeps,
         output_type=[str, DeferredToolRequests],
         instructions=SYSTEM_PROMPT,
+        model_settings=PROMPT_CACHING,
         name="orchestrator",
         toolsets=toolsets,
         defer_model_check=True,

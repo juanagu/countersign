@@ -30,6 +30,8 @@ TTFT = "bot.time_to_first_token_ms"
 FIRST_SURFACE = "bot.time_to_first_surface_ms"
 MODEL_SPAN_PREFIX = "chat "  # pydantic-ai's model-request spans; the SDK's own spans would count tokens twice
 TOKENS = "llm.token_count.total"
+INPUT_TOKENS = "gen_ai.usage.input_tokens"
+CACHE_READ_TOKENS = "gen_ai.usage.details.cache_read_input_tokens"
 GUARDRAIL_PREFIX = "guardrail."
 FAILOVER_METRIC = "llm.failover"
 MODELS_SERVED = "bot.models_served"
@@ -80,6 +82,14 @@ def tokens_per_run(stream_spans: list[Span], model_spans: list[Span]) -> list[fl
         if span["name"].startswith(MODEL_SPAN_PREFIX):
             per_trace[span["context"]["trace_id"]] += float(span["attributes"].get(TOKENS) or 0)
     return [per_trace[s["context"]["trace_id"]] for s in stream_spans if s["context"]["trace_id"] in per_trace]
+
+
+def cache_read_share(model_spans: list[Span]) -> float | None:
+    """Share of model input tokens served from the prompt cache; None without input."""
+    model_requests = [s["attributes"] for s in model_spans if s["name"].startswith(MODEL_SPAN_PREFIX)]
+    total = sum(float(a.get(INPUT_TOKENS) or 0) for a in model_requests)
+    cached = sum(float(a.get(CACHE_READ_TOKENS) or 0) for a in model_requests)
+    return cached / total if total else None
 
 
 def metric_lines(log_text: str, prefix: str = GUARDRAIL_PREFIX) -> Iterator[dict[str, Any]]:
@@ -146,6 +156,8 @@ def main(hours: float) -> int:
     print(f"  time to first token, ms:    {summary(timing[TTFT])}")
     print(f"  time to first surface, ms:  {summary(timing[FIRST_SURFACE])}")
     print(f"  tokens per run:             {summary(tokens_per_run(stream_spans, model_spans))}")
+    share = cache_read_share(model_spans)
+    print(f"  input from prompt cache:    {'no data' if share is None else f'{share:.0%}'}")
     print("Runs by served orchestrator model (time to first token, ms):")
     runs = Counter(served_model(span) for span in stream_spans)
     for model, values in sorted(ttft_by_served_model(stream_spans).items()):

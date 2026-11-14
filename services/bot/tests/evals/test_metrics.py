@@ -7,6 +7,7 @@ from evals.metrics import (
     FIRST_SURFACE,
     TTFT,
     UNRECORDED,
+    cache_read_share,
     failover_counts,
     guardrail_counts,
     latencies,
@@ -14,6 +15,8 @@ from evals.metrics import (
     tokens_per_run,
     ttft_by_served_model,
 )
+
+INPUT, CACHED = "gen_ai.usage.input_tokens", "gen_ai.usage.details.cache_read_input_tokens"
 
 
 def _span(name: str, trace: str, **attributes: float) -> dict[str, object]:
@@ -44,6 +47,16 @@ def test_tokens_add_up_per_run_and_ignore_the_sdk_spans() -> None:
         _span("chat claude-sonnet-5-5", "b", **{"llm.token_count.total": 100}),
     ]
     assert tokens_per_run(runs, models) == [6500.0, 100.0]
+
+
+def test_cache_share_counts_model_requests_only() -> None:
+    models = [
+        _span("chat claude-sonnet-5-5", "a", **{INPUT: 6000, CACHED: 4500}),
+        _span("chat claude-haiku-5-5", "a", **{INPUT: 2000}),
+        _span("anthropic.messages.create", "a", **{INPUT: 6000, CACHED: 6000}),
+    ]
+    assert cache_read_share(models) == 4500 / 8000
+    assert cache_read_share([]) is None
 
 
 def test_guardrail_counts_by_metric_and_category() -> None:
