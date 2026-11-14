@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 RENDER_UI_TOOL = "render_ui"
 INVALID_UI_METRIC = "a2ui.invalid_payload"
 RENDERED = (
-    "Shown to the customer under your text. Only if you haven't answered yet, add one short sentence; "
-    "never refer to the card or repeat its figures."
+    "Shown to the customer under your text. A card is never the answer: if you haven't written your full answer "
+    "in text yet, write it now. Never refer to the card."
 )
 DROPPED = "The UI was invalid and was not shown. Answer in plain text instead."
 
