@@ -1,7 +1,8 @@
 .approval {
   display: grid;
   gap: var(--space-3);
-  max-width: 28rem;
+  width: 100%;
+  max-width: var(--card-max);
   padding: var(--space-4);
   color: var(--color-text);
   background: var(--color-surface);
@@ -13,53 +14,8 @@
   margin: 0;
 }
 
-.approval__actions,
-.pin-dialog__actions {
+.approval__actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
-}
-
-.pin-dialog {
-  width: min(22rem, calc(100vw - 2 * var(--space-4)));
-  /* CopilotKit's preflight zeroes every margin, which drops the native centering of a modal dialog. */
-  margin: auto;
-  padding: var(--space-6);
-  color: var(--color-text);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-}
-
-.pin-dialog::backdrop {
-  background: rgb(0 0 0 / 0.4);
-}
-
-.pin-dialog__form {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.pin-dialog__title {
-  margin: 0;
-  font-size: var(--text-lg);
-}
-
-.pin-dialog__input {
-  min-height: 2.75rem;
-  padding: var(--space-2) var(--space-3);
-  font: inherit;
-  font-size: var(--text-xl);
-  letter-spacing: 0.5em;
-  text-align: center;
-  color: var(--color-text);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-}
-
-.approval__error,
-.pin-dialog__error {
-  margin: 0;
-  font-size: var(--text-sm);
 }

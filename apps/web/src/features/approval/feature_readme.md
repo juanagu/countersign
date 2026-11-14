@@ -9,7 +9,8 @@ Human approval plus step-up for money movement (security rule 3).
   resume through `setResumeFailed`.
 - `lib/resume-outcome.ts`: `RESUME_FAILED_NOTICE`, `showsResumeFailed(shown, signal, input)`; the chat screen
   shows the notice in its alert slot, outside the interrupt element.
-- `ApprovalPanel` (`draft`, `onDecide`), `PinDialog`.
+- `ApprovalPanel` (`draft`, `onDecide`), `PinDialog` (`draft` for its summary row, which reads the server template's
+  amount and beneficiary): a bottom sheet below 768, a centred 24rem dialog from 768, still a modal `<dialog>`.
 - `lib/step-up-api.ts`: `requestStepUp(draft, pin)` → step-up token (`POST /api/auth/step-up`).
 - `lib/find-confirm-card.ts`: `findConfirmCard(messages, draftId)`.
 - `lib/approval-decision.ts`: `confirmTransfer(guard, draft, pin, deps)`, `cancelTransfer(guard, onDecide)`.

@@ -5,6 +5,7 @@ import { ApprovalPanel } from '../../../src/features/approval/approval-panel';
 import { PinDialog } from '../../../src/features/approval/pin-dialog';
 import { findConfirmCard } from '../../../src/features/approval/lib/find-confirm-card';
 import { requestStepUp, StepUpFailed } from '../../../src/features/approval/lib/step-up-api';
+import { textOf } from '../../support/html-text';
 
 const DRAFT: TransferConfirmData = {
   draftId: 'drf_1',
@@ -42,7 +43,7 @@ describe('ApprovalPanel', () => {
   it('shows the draft figures from the card', () => {
     const html = renderToString(<ApprovalPanel draft={DRAFT} onDecide={async () => undefined} />);
     expect(html).toContain('Ana Gómez');
-    expect(html).toMatch(/\$ 50\.000,00/);
+    expect(textOf(html)).toMatch(/\$ 50\.000,00/);
     expect(html).toContain('Confirmar');
   });
 
@@ -57,9 +58,35 @@ describe('PinDialog', () => {
   it('says how long a lockout lasts', () => {
     const noop = () => undefined;
     const html = renderToString(
-      <PinDialog pending={false} error="locked" onSubmit={noop} onPinChange={noop} onClose={noop} />,
+      <PinDialog draft={DRAFT} pending={false} error="locked" onSubmit={noop} onPinChange={noop} onClose={noop} />,
     );
     expect(html).toContain('Esperá 5 minutos');
+  });
+
+  it('summarises the transfer from the draft, so the amount is never model text', () => {
+    const noop = () => undefined;
+    const html = renderToString(
+      <PinDialog draft={DRAFT} pending={false} error={null} onSubmit={noop} onPinChange={noop} onClose={noop} />,
+    );
+    expect(textOf(html)).toContain('Transferís $ 50.000,00 a Ana Gómez');
+  });
+
+  it('marks the field invalid and links the alert when the PIN is wrong', () => {
+    const noop = () => undefined;
+    const html = renderToString(
+      <PinDialog draft={DRAFT} pending={false} error="invalid_pin" onSubmit={noop} onPinChange={noop} onClose={noop} />,
+    );
+    expect(html).toContain('aria-invalid="true"');
+    expect(html).toContain('El PIN no es correcto.');
+  });
+
+  it('shows the pending state on the primary button and disables both', () => {
+    const noop = () => undefined;
+    const html = renderToString(
+      <PinDialog draft={DRAFT} pending error={null} onSubmit={noop} onPinChange={noop} onClose={noop} />,
+    );
+    expect(html).toContain('Verificando…');
+    expect(html.match(/disabled/g)?.length).toBeGreaterThanOrEqual(2);
   });
 });
 

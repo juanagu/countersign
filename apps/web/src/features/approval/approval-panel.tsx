@@ -77,6 +77,7 @@ export function ApprovalPanel({ draft, onDecide }: ApprovalPanelProps) {
       </div>
       {askingPin && (
         <PinDialog
+          draft={draft}
           pending={pending}
           error={error}
           onSubmit={(pin) => void confirm(pin)}
