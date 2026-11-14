@@ -12,7 +12,7 @@ from evals.agui_client import RunTrace
 from evals.bank_db import Ledger
 from evals.golden import build_dataset, month_range
 from evals.live import LiveInput, LiveOutput, ResumeCheck
-from evals.live_evaluators import CalledTool, Cites, Contains, SpendingMatches
+from evals.live_evaluators import AnswersInText, CalledTool, Cites, Contains, SpendingMatches
 from evals.run import Gate
 from evals.scenario_evaluators import MovedMoneyOnce, ResumedIntact
 
@@ -51,16 +51,26 @@ def _value(result: bool | EvaluationReason) -> bool:
     return bool(result.value if isinstance(result, EvaluationReason) else result)
 
 
-def _chart(*values: float, trailing: tuple[str, ...] = ("$ 380.000,00", "$ 26.983,23")) -> LiveOutput:
+def _chart(*values: float, repeated_list: bool = False) -> LiveOutput:
     bars = {"component": "BarChart", "currency": "ARS", "bars": [{"label": "x", "value": v} for v in values]}
-    items = {"component": "List", "items": [{"title": "x", "trailing": t} for t in trailing]}
-    return LiveOutput([RunTrace([*_tool("spending_summary", {}, SPENDING), _surface(bars, items)])])
+    items = {"component": "List", "items": [{"title": "x", "trailing": "$ 380.000,00"}]}
+    components = (bars, items) if repeated_list else (bars,)
+    return LiveOutput([RunTrace([*_tool("spending_summary", {}, SPENDING), _surface(*components)])])
 
 
-def test_spending_must_match_the_tool_totals_in_chart_and_list() -> None:
+def test_spending_bars_must_match_the_tool_totals_with_no_list_repeating_them() -> None:
     assert _value(SpendingMatches().evaluate(_ctx(_chart(380000, 26983.23))))
     assert not _value(SpendingMatches().evaluate(_ctx(_chart(380000, 27000))))
-    assert not _value(SpendingMatches().evaluate(_ctx(_chart(380000, 26983.23, trailing=("$ 1,00", "$ 2,00")))))
+    assert not _value(SpendingMatches().evaluate(_ctx(_chart(380000, 26983.23, repeated_list=True))))
+
+
+def test_the_answer_is_in_the_text_and_never_points_to_a_card() -> None:
+    answered = LiveOutput([RunTrace(_text("Cuesta US$ 25 más el 0,5 %."))])
+    pointer = LiveOutput([RunTrace(_text("Te dejé el detalle en la tarjeta de arriba."))])
+    silent = LiveOutput([RunTrace([_surface({"component": "Text", "text": "US$ 25"})])])
+    assert _value(AnswersInText().evaluate(_ctx(answered)))
+    assert not _value(AnswersInText().evaluate(_ctx(pointer)))
+    assert not _value(AnswersInText().evaluate(_ctx(silent)))
 
 
 def test_tool_arguments_and_citations_are_checked() -> None:

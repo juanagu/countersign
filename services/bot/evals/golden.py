@@ -12,6 +12,7 @@ from pydantic_evals.evaluators import Evaluator
 from app.core.clock import BankClock
 from evals.live import LiveInput, LiveOutput, Meta
 from evals.live_evaluators import (
+    AnswersInText,
     CalledNone,
     CalledTool,
     Cites,
@@ -81,12 +82,13 @@ def scenario_cases(today: date, judge_model: str) -> list[LiveCase]:
     return [
         _kb_case(
             "scenario-1-kb-answer-with-citation", "scenario", "¿Cuánto cuesta una transferencia internacional?",
-            judge_model, Contains("US$ 25"), Contains("0,5"), Cites(FEE_DOCS), Grounded(),
+            judge_model, Contains("US$ 25"), Contains("0,5"), Cites(FEE_DOCS), Grounded(), AnswersInText(),
         ),
         _case(
             "scenario-2-spending-chart", "scenario", _ask("¿En qué gasté el mes pasado?"),
             loaded_skill("accounts"), CalledTool("spending_summary", spending_args),
-            HasComponents(("BarChart", "List")), SpendingMatches(), NoWithheldCalls(), Grounded(),
+            HasComponents(("BarChart", "QuickReplies")), SpendingMatches(), NoWithheldCalls(), Grounded(),
+            AnswersInText(),
         ),
         _case(
             "scenario-3-transfer-with-approval", "scenario", transfer,

@@ -146,18 +146,29 @@ def _spending_totals(output: LiveOutput) -> dict[str, list[Decimal]]:
 
 @dataclass
 class SpendingMatches(Evaluator[LiveInput, LiveOutput, Meta]):
-    """The BarChart's bars and the List's amounts are exactly the totals spending_summary returned."""
+    """The BarChart's bars are exactly the totals spending_summary returned, with no List repeating them (F31)."""
 
     def evaluate(self, ctx: Ctx) -> EvaluationReason:
         totals = _spending_totals(ctx.output)
         charts = [c for c in ctx.output.components if c.get("component") == "BarChart"]
         lists = [c for c in ctx.output.components if c.get("component") == "List"]
-        if not totals or not charts or not lists:
-            return reason_for(False, f"totals {bool(totals)}, charts {len(charts)}, lists {len(lists)}")
+        if not totals or not charts:
+            return reason_for(False, f"totals {bool(totals)}, charts {len(charts)}")
         chart = charts[0]
         bars = sorted(Decimal(str(bar["value"])) for bar in chart.get("bars", []))
         expected = sorted(totals.get(chart.get("currency", "ARS"), []))
-        every_total = {t for values in totals.values() for t in values}
-        items = [_amounts(str(item.get("trailing", ""))) for item in lists[0].get("items", [])]
-        list_ok = len(items) >= len(expected) and all(amounts & every_total for amounts in items)
-        return reason_for(bars == expected and list_ok, f"bars {bars} vs totals {expected}; list ok {list_ok}")
+        return reason_for(bars == expected and not lists, f"bars {bars} vs totals {expected}; lists {len(lists)}")
+
+
+# Phrases that send the customer to a card instead of answering (F28).
+CARD_POINTERS = re.compile(r"(?i)\b(arriba|en la tarjeta|te dej[eé] (el )?detalle|en el detalle)\b")
+
+
+@dataclass
+class AnswersInText(Evaluator[LiveInput, LiveOutput, Meta]):
+    """The answer is in the assistant's own text, which never points the customer to a card (F28)."""
+
+    def evaluate(self, ctx: Ctx) -> EvaluationReason:
+        text = ctx.output.text.strip()
+        pointer = CARD_POINTERS.search(text)
+        return reason_for(bool(text) and pointer is None, f"text {text[:80]!r}, points to a card: {bool(pointer)}")
