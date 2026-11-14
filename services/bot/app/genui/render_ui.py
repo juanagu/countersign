@@ -20,8 +20,9 @@ RENDERED = (
     "in text yet, write it now. Never refer to the card."
 )
 DROPPED = "The UI was invalid and was not shown. Answer in plain text instead."
-WRITE_FIRST = (
-    "Not shown yet. Write your full answer to the customer in text now, then call render_ui again with the card."
+UNANSWERED = (
+    "Shown, under your text. The customer has not read any answer yet: the card only holds data or sources. "
+    "Now write your full answer to their question in text, with its figures. Never refer to the card."
 )
 
 DESCRIPTION = """\
@@ -56,10 +57,14 @@ def answered_in_text(messages: Sequence[ModelMessage]) -> bool:
 
 
 def render_ui_after_answer(ctx: RunContext[BotDeps], **tree: Any) -> ToolReturn | str:
-    """A card is never the answer: until the model has written its answer in text, the card waits (F28)."""
-    if not answered_in_text(ctx.messages):
-        return WRITE_FIRST
-    return render_ui(**tree)
+    """A card is never the answer (F28): drawn before any answer text, the model is told to write the answer now.
+
+    The card is still shown (the output guard places it under the text), so its sources are never lost.
+    """
+    result = render_ui(**tree)
+    if isinstance(result, ToolReturn) and not answered_in_text(ctx.messages):
+        return ToolReturn(return_value=UNANSWERED, metadata=result.metadata)
+    return result
 
 
 def genui_toolset() -> FunctionToolset[BotDeps]:
