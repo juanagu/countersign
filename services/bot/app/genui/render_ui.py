@@ -13,7 +13,10 @@ logger = logging.getLogger(__name__)
 
 RENDER_UI_TOOL = "render_ui"
 INVALID_UI_METRIC = "a2ui.invalid_payload"
-RENDERED = "Shown to the customer on screen. Add at most one short sentence; don't repeat the figures."
+RENDERED = (
+    "Shown to the customer under your text. Only if you haven't answered yet, add one short sentence; "
+    "never refer to the card or repeat its figures."
+)
 DROPPED = "The UI was invalid and was not shown. Answer in plain text instead."
 
 DESCRIPTION = """\
