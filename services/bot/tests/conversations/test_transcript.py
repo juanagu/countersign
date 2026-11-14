@@ -8,6 +8,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from app.conversations.history import transcript
 from app.genui.a2ui import ACTIVITY_TYPE as SURFACE_ACTIVITY
 from app.genui.templates import ACTIVITY_TYPE as TEMPLATE_ACTIVITY
+from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 
 RECEIPT = {"template": "transfer-receipt", "version": 1, "data": {"reference": "BD-1"}}
 
@@ -18,11 +19,16 @@ def _event(activity_type: str, message_id: str, content: dict[str, Any]) -> Acti
     )
 
 
-def _turn(tool: str, metadata: list[Any]) -> list[ModelRequest | ModelResponse]:
+def _turn(tool: str, metadata: list[Any], content: Any = "ok") -> list[ModelRequest | ModelResponse]:
     return [
         ModelResponse(parts=[ToolCallPart(tool_name=tool, args={}, tool_call_id=f"c-{tool}")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name=tool, content="ok", tool_call_id=f"c-{tool}", metadata=metadata)]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name=tool, content=content, tool_call_id=f"c-{tool}", metadata=metadata)]
+        ),
     ]
+
+
+ACCOUNTS = {"untrusted_data": [{"number": "****7810", "balance": 486750.25}], "note": "data"}
 
 
 def test_the_receipt_card_comes_back_in_place_and_tool_traffic_does_not() -> None:
@@ -56,6 +62,32 @@ def test_a_stored_a2ui_surface_is_not_restored_because_the_output_guard_may_have
 def test_an_answer_stored_with_an_asterisk_mask_is_shown_with_bullets() -> None:
     stored = ModelResponse(parts=[TextPart(content="- **Cuenta corriente en pesos (****7810):** $ 486.750,25")])
 
-    [shown] = transcript([stored])
+    [shown] = transcript([*_turn("list_accounts", [], ACCOUNTS), stored])
 
     assert shown["content"] == "- **Cuenta corriente en pesos (••••7810):** $ 486.750,25"
+
+
+def test_a_reload_shows_what_the_output_guard_released_not_the_stored_answer() -> None:
+    stored = ModelResponse(
+        parts=[
+            TextPart(
+                content="Tu saldo es $ 486.750,25. Además tenés $ 999.999 en un plazo fijo. "
+                "Te escribo a ana.perez@example.com."
+            )
+        ]
+    )
+    messages = [ModelRequest(parts=[UserPromptPart(content="¿Cuánto tengo?")]), *_turn("list_accounts", [], ACCOUNTS)]
+
+    [_, answer] = transcript([*messages, stored])
+
+    assert answer["content"] == f"Tu saldo es $ 486.750,25. {UNGROUNDED_FALLBACK} Te escribo a [email]."
+    assert "999.999" not in answer["content"]
+    assert "ana.perez@example.com" not in answer["content"]
+
+
+def test_a_figure_from_a_later_tool_result_does_not_ground_an_earlier_answer() -> None:
+    early = ModelResponse(parts=[TextPart(content="Tenés $ 486.750,25.")])
+
+    [shown, *_] = transcript([early, *_turn("list_accounts", [], ACCOUNTS)])
+
+    assert shown["content"] == UNGROUNDED_FALLBACK

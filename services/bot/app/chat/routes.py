@@ -13,9 +13,8 @@ from app.auth.dependencies import CurrentPrincipal
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
 from app.chat.interrupt_answers import resumed_calls, without_interrupt_answers
-from app.conversations.history import conversation_id_for, new_turn, stored_messages
+from app.conversations.history import NON_EVIDENCE_TOOLS, conversation_id_for, new_turn, stored_messages
 from app.core.llm.run_record import start_run_record
-from app.genui.render_ui import RENDER_UI_TOOL
 from app.guardrails.messages import (
     customer_spoke_since_last_response,
     customer_texts,
@@ -27,11 +26,8 @@ from app.guardrails.pending_approvals import recording_interrupts
 from app.guardrails.pipeline import Guardrails
 from app.guardrails.stream import guarded_stream
 from app.policy.policy_toolset import THIRD_PARTY_TEXT_TOOLS
-from app.skills.history import LOAD_SKILL, skills_loaded_in
+from app.skills.history import skills_loaded_in
 from app.skills.registry import SkillRegistry
-
-# Their results are instructions or UI, not bank data: like in a run (`PolicyToolset`), they ground no figure.
-NON_EVIDENCE_TOOLS = frozenset({LOAD_SKILL, RENDER_UI_TOOL})
 
 
 class BankAGUIAdapter(AGUIAdapter[BotDeps, str | DeferredToolRequests]):

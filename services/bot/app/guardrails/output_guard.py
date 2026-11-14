@@ -66,6 +66,29 @@ def grounding_check(sentence: str, evidence: Evidence) -> Verdict:
 DEFAULT_CHECKS: tuple[SentenceCheck, ...] = (pii_leak_check, grounding_check)
 
 
+def checked_sentence(
+    sentence: str, evidence: Evidence, checks: Sequence[SentenceCheck] = DEFAULT_CHECKS
+) -> tuple[str, list[Verdict]]:
+    """The sentence as the customer gets it, and the verdicts that changed it."""
+    sentence = bullet_masks(sentence)
+    changes: list[Verdict] = []
+    for check in checks:
+        verdict = check(sentence, evidence)
+        if verdict.action is Action.ALLOW:
+            continue
+        changes.append(verdict)
+        sentence = verdict.text or ""
+        if verdict.blocked:
+            break
+    return sentence, changes
+
+
+def released_text(text: str, evidence: Evidence) -> str:
+    """A whole answer as the guard released it, sentence by sentence; for a reload, so nothing is logged."""
+    sentences, rest = split_sentences(text)
+    return "".join(checked_sentence(sentence, evidence)[0] for sentence in [*sentences, rest] if sentence)
+
+
 def split_sentences(buffer: str) -> tuple[list[str], str]:
     """Complete sentences (each with its trailing whitespace) and the incomplete rest."""
     sentences: list[str] = []
@@ -124,16 +147,10 @@ class OutputGuard:
         return getattr(event, "tool_call_id", None) in self._withheld_calls
 
     def check_sentence(self, sentence: str) -> str:
-        sentence = bullet_masks(sentence)
-        for check in self._checks:
-            verdict = check(sentence, self._evidence)
-            if verdict.action is Action.ALLOW:
-                continue
+        sentence, changes = checked_sentence(sentence, self._evidence, self._checks)
+        for verdict in changes:
             metric = UNGROUNDED_METRIC if verdict.blocked else PII_METRIC
             logger.warning("output sentence changed", extra={"metric": metric, "reason": verdict.reason})
-            sentence = verdict.text or ""
-            if verdict.blocked:
-                break
         return sentence
 
     def _content(self, event: TextMessageContentEvent) -> Iterator[BaseEvent]:

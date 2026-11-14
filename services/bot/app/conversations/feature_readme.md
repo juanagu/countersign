@@ -8,7 +8,8 @@ transcript a reload shows once the BFF's 15-minute replay window has passed.
 - `PgConversationStore(pool)`: records and message entries in the `chat` schema (`ensure_schema()` at startup;
   `make seed` resets only `bank`). Writes are conditional on the stored revision, in one transaction.
 - `conversation_id_for(user_id, thread_id)`, `new_turn(client_messages)`, `stored_messages(store, user, thread)`,
-  `transcript(messages)` (user and assistant text plus the stored `bank-template` cards, in order; no tool calls, no A2UI surfaces).
+  `NON_EVIDENCE_TOOLS`, `transcript(messages)` (user and assistant text plus the stored `bank-template` cards, in
+  order; answers re-run the output guard's PII and grounding checks; no tool calls, no A2UI surfaces).
 - `GET /threads/{thread_id}/messages` (bearer `aud=bot`): `{"messages": [...]}` for the caller's own conversation
   on that thread id; anyone else's reads as empty.
 
