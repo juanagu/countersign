@@ -151,6 +151,28 @@ describe('createReconnector', () => {
     expect(connect).toHaveBeenCalledTimes(3);
   });
 
+  it('resumes an offline break with one connect that follows the run to its end, leaving nothing armed', async () => {
+    const states: string[] = [];
+    let finishRun: () => void = () => undefined;
+    const connect = vi.fn(() => new Promise<void>((resolve) => (finishRun = resolve)));
+    const { reconnector, onlineWaiters, timers } = harness({
+      connect,
+      isOnline: () => false,
+      onStateChange: (s) => states.push(s),
+    });
+    reconnector.streamBroke();
+    onlineWaiters.shift()?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(states).toEqual(['waiting-online', 'retrying']);
+
+    finishRun();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(states).toEqual(['waiting-online', 'retrying', 'idle']);
+    expect(onlineWaiters).toHaveLength(0);
+    expect(timers).toHaveLength(0);
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+
   it('only reacts to failed requests, not to errors the bot reported', () => {
     expect(isStreamBreak(CopilotKitCoreErrorCode.AGENT_RUN_FAILED)).toBe(true);
     expect(isStreamBreak(CopilotKitCoreErrorCode.AGENT_CONNECT_FAILED)).toBe(true);
