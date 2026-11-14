@@ -97,4 +97,4 @@ async def test_confirm_card_comes_from_the_draft_not_the_model_text(
     # The card keeps the draft's figures; the model's invented amount never reaches the client (output guard).
     assert "999.999" not in text
     assert UNGROUNDED_FALLBACK in text
-    assert "999" not in json.dumps(card)
+    assert "999" not in json.dumps(card["data"])  # The card's nonce is a random uuid.
