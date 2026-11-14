@@ -38,3 +38,13 @@ export function forgetThread(userId: string, storage: ThreadIdStorage | null = b
     // Nothing to forget if storage is unavailable.
   }
 }
+
+/** "Nueva conversación": drops the saved thread and saves a fresh id for the next reload to restore. */
+export function startNewThread(
+  userId: string,
+  storage: ThreadIdStorage | null = browserStorage(),
+  newId: () => string = () => crypto.randomUUID(),
+): string {
+  forgetThread(userId, storage);
+  return threadIdFor(userId, storage, newId);
+}

@@ -4,26 +4,6 @@
   flex-direction: column;
 }
 
-.chat-header {
-  height: var(--header-height);
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
-  background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.chat-header__brand {
-  font-weight: 700;
-}
-
-.chat-header__user {
-  margin-left: auto;
-  font-size: var(--text-sm);
-}
-
 .chat-main {
   flex: 1;
   min-height: 0;
@@ -42,12 +22,32 @@
   border-bottom: 1px solid var(--color-border);
 }
 
-/* The chat takes the page background so it doesn't read as a separate strip down the middle. */
+/* CopilotKit reads its own palette variables (and switches them on a `.dark` class); pointing them at our
+   tokens keeps the chat on the same theme as the cards, with no differently-coloured strip down the middle. */
 .chat-layout .chat-main [data-copilotkit] {
   --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --muted: var(--color-surface-sunken);
+  --muted-foreground: var(--color-text-muted);
+  --border: var(--color-border-input);
+  --input: var(--color-border-input);
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-on-primary);
+  --ring: var(--color-primary);
+  --card: var(--color-surface);
+  font-family: var(--font-sans);
+}
+
+.chat-main [data-testid='copilot-chat'],
+.chat-main [data-testid='copilot-scroll-content'] {
+  background: transparent;
 }
 
 /* Attachments aren't supported; CopilotKit still renders the button, disabled. */
 .chat-main [data-testid='copilot-add-menu-button'] {
   display: none;
+}
+
+.chat-main .chat-connecting {
+  padding-top: var(--space-8);
 }

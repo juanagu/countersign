@@ -7,17 +7,25 @@ import { ChatActionsProvider } from '../genui/chat-actions';
 import '@copilotkit/react-core/v2/styles.css';
 import { useState } from 'react';
 import type { SessionUser } from '../auth/lib/auth-api';
-import { Button } from '../../shared/ui/button';
+import { ChatHeader } from './chat-header';
 import { CHAT_LABELS } from './chat-labels';
+import { ChatView } from './chat-view';
 import { shouldRecheckSession } from './lib/session-recheck';
-import { forgetThread, threadIdFor } from './lib/thread-id';
+import { forgetThread, startNewThread, threadIdFor } from './lib/thread-id';
+import { firstName } from './lib/user-name';
 import { StreamReconnect } from './stream-reconnect';
+import { TypingIndicator } from './typing-indicator';
+import { WelcomeNameContext } from './welcome-screen';
 import './chat-screen.css';
+import './chat-messages.css';
+import './chat-composer.css';
 
 const RUNTIME_URL = '/api/copilotkit';
 // Stable references: the provider re-registers renderers when these change identity.
 const A2UI = { catalog: bankCatalog };
 const ACTIVITY_RENDERERS = [bankTemplateRenderer];
+const MESSAGE_VIEW = { cursor: TypingIndicator };
+const CONNECTING_INDICATOR = 'chat-connecting';
 
 export interface ChatScreenProps {
   user: SessionUser;
@@ -29,8 +37,8 @@ export interface ChatScreenProps {
 
 export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScreenProps) {
   const [signOutFailed, setSignOutFailed] = useState(false);
-  // One thread per signed-in user, restored on reload; sign-out starts a new one.
-  const [threadId] = useState(() => threadIdFor(user.id));
+  // One thread per signed-in user, restored on reload; sign-out and "Nueva conversación" start a new one.
+  const [threadId, setThreadId] = useState(() => threadIdFor(user.id));
   const [resumeFailed, setResumeFailed] = useState(false);
 
   function signOut() {
@@ -40,15 +48,14 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
       .catch(() => setSignOutFailed(true));
   }
 
+  function newConversation() {
+    setResumeFailed(false);
+    setThreadId(startNewThread(user.id));
+  }
+
   return (
     <div className="chat-layout">
-      <header className="chat-header">
-        <span className="chat-header__brand">Asistente bancario</span>
-        <span className="chat-header__user muted">{user.name}</span>
-        <Button variant="ghost" onClick={signOut}>
-          Salir
-        </Button>
-      </header>
+      <ChatHeader user={user} onNewConversation={newConversation} onSignOut={signOut} />
       {signOutFailed && (
         <p role="alert" className="chat-alert">
           No pudimos cerrar la sesión. Probá de nuevo.
@@ -73,7 +80,15 @@ export function ChatScreen({ user, onSignOut, onRuntimeRequestFailed }: ChatScre
           <StreamReconnect />
           <TransferApproval setResumeFailed={setResumeFailed} />
           <ChatActionsProvider>
-            <CopilotChat labels={CHAT_LABELS} threadId={threadId} />
+            <WelcomeNameContext.Provider value={firstName(user.name)}>
+              <CopilotChat
+                labels={CHAT_LABELS}
+                threadId={threadId}
+                chatView={ChatView}
+                messageView={MESSAGE_VIEW}
+                connectingIndicator={CONNECTING_INDICATOR}
+              />
+            </WelcomeNameContext.Provider>
           </ChatActionsProvider>
         </CopilotKitProvider>
       </main>

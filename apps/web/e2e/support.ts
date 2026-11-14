@@ -3,7 +3,7 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
 export async function signIn(page: Page, name: 'Ana Gómez' | 'Juan Pérez') {
   await page.goto('/');
   await page.getByRole('button', { name }).click();
-  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name })).toBeVisible();
 }
 
 export async function ask(page: Page, question: string) {
