@@ -99,6 +99,7 @@ services:
     <<: *node-service
     build: { context: ../services/bot }
     environment:
+      LLM_FAULT_INJECTION: ${LLM_FAULT_INJECTION:-}
       IDP_ISSUER: http://bff:3000
       IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
       IDP_TOKEN_URL: http://bff:3000/token
