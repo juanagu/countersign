@@ -1,8 +1,19 @@
 """`make metrics` reads the right spans and log lines."""
 
 import json
+from typing import Any
 
-from evals.metrics import FIRST_SURFACE, TTFT, guardrail_counts, latencies, percentile, tokens_per_run
+from evals.metrics import (
+    FIRST_SURFACE,
+    TTFT,
+    UNRECORDED,
+    failover_counts,
+    guardrail_counts,
+    latencies,
+    percentile,
+    tokens_per_run,
+    ttft_by_served_model,
+)
 
 
 def _span(name: str, trace: str, **attributes: float) -> dict[str, object]:
@@ -45,3 +56,39 @@ def test_guardrail_counts_by_metric_and_category() -> None:
     ]
     counts = guardrail_counts("\n".join(lines))
     assert counts == {"guardrail.input.blocked [jailbreak]": 2, "guardrail.output.ungrounded": 1}
+
+
+def test_runs_group_by_the_orchestrator_model_that_served_them() -> None:
+    def run(served: list[str] | None, ttft: float | None) -> dict[str, Any]:
+        attributes: dict[str, Any] = {} if ttft is None else {TTFT: ttft}
+        if served is not None:
+            attributes["bot.models_served"] = served
+        return {"attributes": attributes}
+
+    spans = [
+        run(["guard:claude-haiku-5-5", "orchestrator:claude-sonnet-5-5"], 900),
+        run(["orchestrator:claude-haiku-5-5"], 1500),
+        run(["orchestrator:claude-haiku-5-5"], None),
+        run(None, 700),
+    ]
+    assert ttft_by_served_model(spans) == {
+        "claude-sonnet-5-5": [900.0],
+        "claude-haiku-5-5": [1500.0],
+        UNRECORDED: [700.0],
+    }
+
+
+def test_failovers_count_by_role_and_reason_from_the_log_lines() -> None:
+    def line(**fields: Any) -> str:
+        return "bot-1  | " + json.dumps({"level": "warning", "msg": "model failed over", **fields})
+
+    logs = "\n".join(
+        [
+            line(metric="llm.failover", role="orchestrator", reason="overloaded"),
+            line(metric="llm.failover", role="orchestrator", reason="overloaded"),
+            line(metric="llm.failover", role="guard", reason="first_event_timeout"),
+            line(metric="llm.circuit.opened", model="claude-sonnet-5-5"),
+            line(metric="guardrail.input.blocked", category="off_topic"),
+        ]
+    )
+    assert failover_counts(logs) == {"orchestrator overloaded": 2, "guard first_event_timeout": 1}

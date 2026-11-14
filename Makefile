@@ -6,7 +6,7 @@ export TEST_DATABASE_URL ?= postgres://bank:bank@localhost:$(POSTGRES_HOST_PORT)
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 BOT := uv run --directory services/bot
 
-.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval redteam pii-scan metrics lint format
+.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval eval-backup failover-demo redteam pii-scan metrics lint format
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -52,6 +52,19 @@ BOT_ENV := cd services/bot && set -a && . ../../.env && set +a &&
 
 eval: seed ## Live golden scenarios, KB grounding, tool selection, LLM judge and red team, gated by evals/thresholds.yaml (needs ANTHROPIC_API_KEY, make up, make ingest)
 	$(BOT_ENV) uv run python -m evals.run $(EVAL_ARGS)
+
+# ADR 018. The fault reaches the container through the bot's `LLM_FAULT_INJECTION` in infra/docker-compose.yml.
+FAULT ?= orchestrator:overloaded
+BACKUP_FAULT := primary:overloaded
+RESTART_BOT = $(COMPOSE) up -d --no-deps --force-recreate --wait bot
+
+failover-demo: ## Restart the bot with a model fault (FAULT=orchestrator:stall, guard:529...); FAULT= turns it off
+	LLM_FAULT_INJECTION='$(FAULT)' $(RESTART_BOT)
+
+eval-backup: seed ## Live eval suite with both roles' primaries forced to fail, so the backups answer; restores the bot
+	LLM_FAULT_INJECTION='$(BACKUP_FAULT)' $(RESTART_BOT)
+	( $(BOT_ENV) uv run python -m evals.run $(EVAL_ARGS) ); status=$$?; \
+		LLM_FAULT_INJECTION= $(RESTART_BOT); exit $$status
 
 redteam: ## Red-team prompts through the live BFF, scored blocked/safely handled (needs make up)
 	$(BOT_ENV) uv run python -m evals.redteam $(REDTEAM_ARGS)

@@ -3,7 +3,9 @@
 Phoenix 21 has no dashboard API, so this script is the dashboard:
 - time to first token and to first UI surface: the `bot.stream` span of each run (`app/guardrails/stream_timing.py`);
 - tokens per run: the pydantic-ai model spans (`chat <model>`) in that run's trace, orchestrator and guard together;
-- guardrail blocks: the `guardrail.*` metric log lines in `docker compose logs bot`, by kind.
+- guardrail blocks: the `guardrail.*` metric log lines in `docker compose logs bot`, by kind;
+- model failover (ADR 018): runs by the orchestrator model that served them (`bot.models_served` on `bot.stream`)
+  with their time to first token, and the `llm.failover` log lines by role and reason.
 """
 
 import argparse
@@ -29,6 +31,10 @@ FIRST_SURFACE = "bot.time_to_first_surface_ms"
 MODEL_SPAN_PREFIX = "chat "  # pydantic-ai's model-request spans; the SDK's own spans would count tokens twice
 TOKENS = "llm.token_count.total"
 GUARDRAIL_PREFIX = "guardrail."
+FAILOVER_METRIC = "llm.failover"
+MODELS_SERVED = "bot.models_served"
+ORCHESTRATOR_PREFIX = "orchestrator:"
+UNRECORDED = "(not recorded)"
 
 Span = dict[str, Any]
 
@@ -76,7 +82,7 @@ def tokens_per_run(stream_spans: list[Span], model_spans: list[Span]) -> list[fl
     return [per_trace[s["context"]["trace_id"]] for s in stream_spans if s["context"]["trace_id"] in per_trace]
 
 
-def metric_lines(log_text: str) -> Iterator[dict[str, Any]]:
+def metric_lines(log_text: str, prefix: str = GUARDRAIL_PREFIX) -> Iterator[dict[str, Any]]:
     for line in log_text.splitlines():
         start = line.find("{")
         if start < 0 or '"metric"' not in line:
@@ -85,7 +91,7 @@ def metric_lines(log_text: str) -> Iterator[dict[str, Any]]:
             entry = json.loads(line[start:])
         except json.JSONDecodeError:
             continue
-        if isinstance(entry, dict) and str(entry.get("metric", "")).startswith(GUARDRAIL_PREFIX):
+        if isinstance(entry, dict) and str(entry.get("metric", "")).startswith(prefix):
             yield entry
 
 
@@ -95,6 +101,33 @@ def guardrail_counts(log_text: str) -> Counter[str]:
     for entry in metric_lines(log_text):
         kind = entry["metric"] + (f" [{entry['category']}]" if entry.get("category") else "")
         counts[kind] += 1
+    return counts
+
+
+def served_model(span: Span) -> str:
+    """The orchestrator model(s) that answered a run; a run that failed over mid-way lists both."""
+    served = span["attributes"].get(MODELS_SERVED)
+    if not served:
+        return UNRECORDED
+    models = [entry.removeprefix(ORCHESTRATOR_PREFIX) for entry in served if entry.startswith(ORCHESTRATOR_PREFIX)]
+    return " + ".join(models) or UNRECORDED
+
+
+def ttft_by_served_model(stream_spans: list[Span]) -> dict[str, list[float]]:
+    """Runs grouped by served model, each with its time-to-first-token values (a run without text has none)."""
+    found: dict[str, list[float]] = defaultdict(list)
+    for span in stream_spans:
+        values = found[served_model(span)]
+        if (value := span["attributes"].get(TTFT)) is not None:
+            values.append(float(value))
+    return dict(found)
+
+
+def failover_counts(log_text: str) -> Counter[str]:
+    """`llm.failover` lines by role and reason class."""
+    counts: Counter[str] = Counter()
+    for entry in metric_lines(log_text, FAILOVER_METRIC):
+        counts[f"{entry.get('role', '?')} {entry.get('reason', '?')}"] += 1
     return counts
 
 
@@ -113,9 +146,18 @@ def main(hours: float) -> int:
     print(f"  time to first token, ms:    {summary(timing[TTFT])}")
     print(f"  time to first surface, ms:  {summary(timing[FIRST_SURFACE])}")
     print(f"  tokens per run:             {summary(tokens_per_run(stream_spans, model_spans))}")
-    counts = guardrail_counts(bot_logs(hours))
+    print("Runs by served orchestrator model (time to first token, ms):")
+    runs = Counter(served_model(span) for span in stream_spans)
+    for model, values in sorted(ttft_by_served_model(stream_spans).items()):
+        print(f"  {model:32} {runs[model]:5} runs  {summary(values)}")
+    logs = bot_logs(hours)
+    counts = guardrail_counts(logs)
     print(f"Guardrail events (bot logs): {sum(counts.values())}")
     for kind, count in sorted(counts.items()):
+        print(f"  {count:5}  {kind}")
+    failovers = failover_counts(logs)
+    print(f"Model failovers by role and reason (bot logs): {sum(failovers.values())}")
+    for kind, count in sorted(failovers.items()):
         print(f"  {count:5}  {kind}")
     return 0
 

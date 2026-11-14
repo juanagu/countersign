@@ -90,6 +90,28 @@ The full attack set (27 attacks + 3 controls) is `services/bot/evals/redteam.yam
 
 The run keeps going on the server while the browser is offline, so the reconnect replays the whole answer.
 
+### Model failover (ADR 018)
+
+Each role has a backup model: the orchestrator falls back from Sonnet to Haiku, the guards from Haiku to Sonnet
+(`BOT_MODEL_FALLBACKS`, `GUARD_MODEL_FALLBACKS`). A rate limit, an overload, a 5xx, a connection error or a
+model that sends nothing within 10 s moves the request to the backup before anything reaches the customer.
+
+1. `make failover-demo FAULT=orchestrator:overloaded` restarts the bot with its primary orchestrator model
+   failing on purpose. The bot logs a `LLM FAULT INJECTION IS ON` warning at startup.
+2. As **Ana Gómez**, ask `¿Cuánto tengo en mi cuenta?`. The answer arrives once, from Haiku, with no error.
+3. `make logs` shows one `llm.failover` line per model step (`role`, `from_model`, `reason: overloaded`). After
+   three, `llm.circuit.opened`: the primary is skipped for 30 s with `reason: circuit_open`.
+4. `make failover-demo FAULT=orchestrator:stall` shows the latency case: the first answer waits for the 10 s
+   first-event deadline, then the backup answers.
+5. `make failover-demo FAULT=` turns the fault off.
+
+`make metrics` adds runs by the model that served them and failovers by role and reason. `make eval-backup` runs
+the live suite with both primaries failing, to see whether the backups pass the gates. Faults are `target:fault`,
+with target `orchestrator`, `guard`, `primary` (both roles' primaries) or `all` (every model), and fault
+`overloaded` (529), `rate_limited` (429), `unavailable` (503), `server_error` (500), `connection`, `stall` or
+`after_first_event`. That last one is the case failover does not cover: the answer has started, so the run
+ends with the usual error reply. Keep `LLM_FAULT_INJECTION` empty outside local runs.
+
 ## 3. Checking it: `make eval` and `make metrics`
 
 ```sh
