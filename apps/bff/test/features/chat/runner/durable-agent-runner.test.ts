@@ -173,19 +173,29 @@ describe('DurableAgentRunner', () => {
     const { log, runner } = setup();
     const threadId = randomUUID();
     const stepUpToken = 'eyJhbGciOiJFUzI1NiJ9.step-up.signature';
-    const resumed = {
-      ...input(threadId),
-      resume: [
+    const answer = { approved: true, editedArgs: { draft_id: 'd1', step_up_token: stepUpToken } };
+    const asked = { id: randomUUID(), role: 'user' as const, content: 'transferí 100 a Juan' };
+    const call = {
+      id: randomUUID(),
+      role: 'assistant' as const,
+      toolCalls: [
         {
-          interruptId: 'i1',
-          status: 'resolved' as const,
-          payload: { approved: true, editedArgs: { draft_id: 'd1', step_up_token: stepUpToken } },
+          id: 'call-1',
+          type: 'function' as const,
+          function: { name: 'execute_transfer', arguments: '{"draft_id":"d1"}' },
         },
       ],
     };
-    const live = await collect(
-      runner.run({ threadId, agent: new HttpAgent({ url: bot.url }), input: resumed, ownerId: 'ana' }),
-    );
+    // What CopilotKit 1.87 `useInterrupt.resolve` sends: the answer as a tool message, then the same answer in `resume`.
+    const answered = { id: randomUUID(), role: 'tool' as const, toolCallId: 'call-1', content: JSON.stringify(answer) };
+    const resumed = {
+      ...input(threadId),
+      messages: [asked, call, answered],
+      resume: [{ interruptId: 'int-call-1', status: 'resolved' as const, payload: answer }],
+    };
+    // The runtime hands the runner an agent that already holds the request's messages.
+    const agent = new HttpAgent({ url: bot.url, threadId, initialMessages: resumed.messages });
+    const live = await collect(runner.run({ threadId, agent, input: resumed, ownerId: 'ana' }));
     const logged = (await log.readAfter(threadId, 0)).map((entry) => entry.event);
     const replayed = await collect(runner.connect({ threadId, ownerId: 'ana' }));
 
@@ -195,7 +205,8 @@ describe('DurableAgentRunner', () => {
     }
     const started = replayed[0] as unknown as { input: typeof resumed };
     expect(started.input.resume[0]?.payload).toEqual({ approved: true });
-    expect(started.input.messages).toEqual(resumed.messages);
-    expect(resumed.resume[0]?.payload.editedArgs.step_up_token).toBe(stepUpToken);
+    expect(started.input.messages).toEqual([asked, call]);
+    expect(bot.requests[0]?.messages).toContainEqual(answered);
+    expect(bot.requests[0]?.resume).toEqual(resumed.resume);
   });
 });

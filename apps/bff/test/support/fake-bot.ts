@@ -14,6 +14,8 @@ export interface FakeBot {
   url: string;
   server: Server;
   runs: number;
+  /** Every run request body, parsed, in order. */
+  requests: { messages?: unknown[]; resume?: unknown[] }[];
   /** `sub` of every history request, in order. */
   historyCallers: string[];
 }
@@ -47,7 +49,7 @@ async function streamRun(
 /** A stand-in bot: streams a run slowly (so a test can cut it) and serves per-user stored history. */
 export async function startFakeBot(options: FakeBotOptions = {}): Promise<FakeBot> {
   const { deltas = DEFAULT_DELTAS, delayMs = 15, history = {} } = options;
-  const bot: FakeBot = { url: '', server: createServer(), runs: 0, historyCallers: [] };
+  const bot: FakeBot = { url: '', server: createServer(), runs: 0, requests: [], historyCallers: [] };
   bot.server.on('request', (req, res) => {
     const match = /^\/threads\/([^/]+)\/messages$/.exec(req.url ?? '');
     if (req.method === 'GET' && match) {
@@ -60,7 +62,10 @@ export async function startFakeBot(options: FakeBotOptions = {}): Promise<FakeBo
     bot.runs += 1;
     let raw = '';
     req.on('data', (chunk: Buffer) => (raw += chunk.toString()));
-    req.on('end', () => void streamRun(res, raw, deltas, delayMs));
+    req.on('end', () => {
+      bot.requests.push(JSON.parse(raw || '{}') as FakeBot['requests'][number]);
+      void streamRun(res, raw, deltas, delayMs);
+    });
   });
   await new Promise<void>((resolve) => bot.server.listen(0, '127.0.0.1', resolve));
   bot.url = `http://127.0.0.1:${(bot.server.address() as AddressInfo).port}/agent`;
