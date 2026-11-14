@@ -14,6 +14,7 @@ from ag_ui.core import (
     BaseEvent,
     EventType,
     RunErrorEvent,
+    RunFinishedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -83,6 +84,9 @@ class OutputGuard:
         self._checks = checks
         self._buffers: dict[str, str] = {}
         self._withheld_calls: set[str] = set()
+        # Model-built cards wait for the end of the next text message (or of the run), so the customer reads the
+        # answer first and the card under it, whichever order the model produced them in.
+        self._held_surfaces: list[BaseEvent] = []
 
     def process(self, event: BaseEvent) -> Iterator[BaseEvent]:
         if self._withheld(event):
@@ -95,12 +99,21 @@ class OutputGuard:
         elif isinstance(event, TextMessageEndEvent):
             yield from self._release(event.message_id, self._buffers.pop(event.message_id, ""))
             yield event
+            yield from self._release_surfaces()
         elif isinstance(event, ActivitySnapshotEvent) and event.activity_type == A2UI_ACTIVITY:
-            yield from self._surface(event)
+            self._held_surfaces.extend(self._surface(event))
         elif isinstance(event, RunErrorEvent):
+            yield from self._release_surfaces()
             yield safe_run_error(event)
+        elif isinstance(event, RunFinishedEvent):
+            yield from self._release_surfaces()
+            yield event
         else:
             yield event
+
+    def _release_surfaces(self) -> Iterator[BaseEvent]:
+        held, self._held_surfaces = self._held_surfaces, []
+        yield from held
 
     def _withheld(self, event: BaseEvent) -> bool:
         """Reasoning, and every event of a server-only tool call (start, args, end, result)."""

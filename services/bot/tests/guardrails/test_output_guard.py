@@ -12,6 +12,7 @@ from ag_ui.core import (
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
     RunErrorEvent,
+    RunFinishedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -41,8 +42,13 @@ def _text_events(*deltas: str) -> list[BaseEvent]:
     return [*events, TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=MID)]
 
 
+FINISHED = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="t", run_id="r")
+
+
 def _run(guard: OutputGuard, events: list[BaseEvent]) -> list[BaseEvent]:
-    return [out for event in events for out in guard.process(event)]
+    """Every event the guard lets out once the run ends (held cards come out at the end), without the end."""
+    out = [out for event in [*events, FINISHED] for out in guard.process(event)]
+    return [event for event in out if event is not FINISHED]
 
 
 def _text(events: list[BaseEvent]) -> str:
@@ -114,8 +120,21 @@ def test_a_grounded_surface_and_a_bank_template_pass_untouched(evidence: Evidenc
         type=EventType.ACTIVITY_SNAPSHOT, message_id="c", activity_type="bank-template", content={"amount": "999.99"}
     )
     other = ToolCallStartEvent(type=EventType.TOOL_CALL_START, tool_call_id="t", tool_call_name="x")
-    events: list[BaseEvent] = [_surface(1254300.5), card, other]
-    assert _run(OutputGuard(evidence), events) == events
+    surface = _surface(1254300.5)
+    # Template cards are never held; the model-built surface comes out at the end of the run.
+    assert _run(OutputGuard(evidence), [surface, card, other]) == [card, other, surface]
+
+
+def test_a_card_drawn_before_the_answer_is_shown_after_the_answer_text(evidence: Evidence) -> None:
+    surface = _surface(1254300.5)
+    out = _run(OutputGuard(evidence), [surface, *_text_events("Tenés $ 1.254.300,50.")])
+    kinds = [e.type for e in out]
+    assert kinds == [
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+        EventType.ACTIVITY_SNAPSHOT,
+    ]
 
 
 def _tool_call(call_id: str, name: str) -> list[BaseEvent]:
