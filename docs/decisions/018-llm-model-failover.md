@@ -118,9 +118,16 @@ Checked in the installed pydantic-ai 2.68:
   the fault was removed. `orchestrator:529` failed over the same way in about 6 s end to end.
 - `make eval-backup` (both primaries forced to fail): 6/7 gates. Scenarios 4/4, KB grounding 5/5, tool
   selection 6/6, citation judge 1.00, red team 27/27, controls 3/3; the quality judge scored 0.75 against the
-  0.80 gate (Haiku sometimes points at the card or is terser). Whether backup mode needs the same quality gate
-  is the user's call.
+  0.80 gate (Haiku sometimes points at the card or is terser).
 - Calibration: across five full `make eval` runs and the e2e suite on Sonnet (several hundred model requests)
   no request tripped the 10 s first-event deadline, while run-level time to first token was p50 5.8 s / p95
   12.9 s (a run spans several requests). The 10 s default stays.
 
+
+## Decided after the live run (user, 2026-11-14)
+- **Backup mode has its own quality gate.** `thresholds.yaml` `backup_mode` sets `judge_quality` to 0.70 for
+  `make eval-backup` (`evals.run --backup`); every other gate stays as in primary mode. A backup that answers
+  correctly, safely and with citations but more tersely is accepted for the minutes an outage lasts.
+- **Anthropic only.** No second provider in the POC; the chain stays Sonnet ↔ Haiku. The Consequences above
+  stand: an Anthropic-wide outage takes down both.
+- **The customer never sees a failover.** It shows only in logs, traces and `make metrics`.

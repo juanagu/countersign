@@ -8,9 +8,22 @@ from pydantic import BaseModel
 THRESHOLDS = Path(__file__).with_name("thresholds.yaml")
 
 
+class GateOverrides(BaseModel):
+    pass_rates: dict[str, float] = {}
+    judge_averages: dict[str, float] = {}
+
+
 class Thresholds(BaseModel):
     pass_rates: dict[str, float]
     judge_averages: dict[str, float]
+    backup_mode: GateOverrides = GateOverrides()
+
+    def for_backup(self) -> "Thresholds":
+        """The gates `make eval-backup` applies: these, with `backup_mode`'s values replacing theirs."""
+        return Thresholds(
+            pass_rates=self.pass_rates | self.backup_mode.pass_rates,
+            judge_averages=self.judge_averages | self.backup_mode.judge_averages,
+        )
 
 
 def load_thresholds(path: Path = THRESHOLDS) -> Thresholds:

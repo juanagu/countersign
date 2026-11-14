@@ -12,3 +12,9 @@ pass_rates:
 judge_averages:
   judge_quality: 0.8
   judge_citation: 0.8
+
+# `make eval-backup` (the backup models answer, ADR 018) applies these over the gates above. The backup is
+# judged on whether it stays safe and correct; a terser answer than the primary's is the accepted cost.
+backup_mode:
+  judge_averages:
+    judge_quality: 0.7

@@ -63,7 +63,7 @@ failover-demo: ## Restart the bot with a model fault (FAULT=orchestrator:stall, 
 
 eval-backup: seed ## Live eval suite with both roles' primaries forced to fail, so the backups answer; restores the bot
 	LLM_FAULT_INJECTION='$(BACKUP_FAULT)' $(RESTART_BOT)
-	( $(BOT_ENV) uv run python -m evals.run $(EVAL_ARGS) ); status=$$?; \
+	( $(BOT_ENV) uv run python -m evals.run --backup $(EVAL_ARGS) ); status=$$?; \
 		LLM_FAULT_INJECTION= $(RESTART_BOT); exit $$status
 
 redteam: ## Red-team prompts through the live BFF, scored blocked/safely handled (needs make up)

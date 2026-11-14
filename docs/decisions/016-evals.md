@@ -41,6 +41,7 @@ the BFF.
   | `kb_grounding` | 0.8 | 5 cases: one miss passes, two fail. Model wording varies, and Phase 6 saw one flaky KB case. |
   | `tool_selection` | 0.8 | 6 cases: one miss passes, two fail. Arguments such as date ranges are computed by the model. |
   | `judge_quality`, `judge_citation` | 0.8 mean | Measured: correct, cited answers score 0.9–1.0, an answer with one sentence whose passage is not cited 0.6–0.7, and an answer that only says "see the card" with no card content 0.05–0.1. A 0.8 mean over 6 cases absorbs one weak score but not a pattern. |
+  | `judge_quality` in backup mode | 0.7 mean | `make eval-backup` only (ADR 018): the backup model is terser; correctness, citations and safety keep their gates. |
 
   A partial run (`EVAL_ARGS="--only <name>"`) still applies every gate, so it fails the groups it skipped.
 - **Metrics are a script** (`make metrics`, `evals/metrics.py`), because Phoenix 21 has no API to create a

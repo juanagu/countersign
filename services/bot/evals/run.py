@@ -94,8 +94,8 @@ def write_summary(path: Path, report: Report, gates: list[Gate]) -> None:
     path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-async def main(out: Path | None, only: str | None) -> int:
-    thresholds = load_thresholds()
+async def main(out: Path | None, only: str | None, *, backup: bool = False) -> int:
+    thresholds = load_thresholds().for_backup() if backup else load_thresholds()
     dataset = build_dataset(Settings().guard_model)
     if only:  # A debugging aid: a partial run still applies every gate, so it fails the groups it skipped.
         dataset.cases = [case for case in dataset.cases if only in (case.name or "")]
@@ -114,5 +114,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, help="Write the gates and per-case results as JSON here.")
     parser.add_argument("--only", help="Run only the golden cases whose name contains this (skips the red team).")
+    parser.add_argument("--backup", action="store_true", help="Apply the backup-mode gates (make eval-backup).")
     args = parser.parse_args()
-    sys.exit(asyncio.run(main(args.out, args.only)))
+    sys.exit(asyncio.run(main(args.out, args.only, backup=args.backup)))
