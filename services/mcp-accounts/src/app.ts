@@ -7,6 +7,8 @@ import type { AccountsRepository } from './features/accounts/accounts-repository
 export const SERVICE_NAME = 'mcp-accounts';
 /** The `aud` this server accepts: tokens exchanged for any other audience are rejected. */
 export const AUDIENCE = 'mcp-accounts';
+/** The only delegation chain accepted, outermost first: the gateway, acting for the bot, acting for a customer (ADR 017). */
+export const ALLOWED_ACTOR_CHAINS = [['mcp-gateway', 'bot']] as const;
 
 export interface AppDeps {
   verify: VerifyAccessToken;

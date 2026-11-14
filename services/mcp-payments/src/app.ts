@@ -8,6 +8,8 @@ import type { TransfersRepository } from './features/transfers/transfers-reposit
 export const SERVICE_NAME = 'mcp-payments';
 /** The `aud` this server accepts: tokens exchanged for any other audience are rejected. */
 export const AUDIENCE = 'mcp-payments';
+/** The only delegation chain accepted, outermost first: the gateway, acting for the bot, acting for a customer (ADR 017). */
+export const ALLOWED_ACTOR_CHAINS = [['mcp-gateway', 'bot']] as const;
 
 export interface AppDeps {
   verify: VerifyAccessToken;

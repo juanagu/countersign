@@ -77,7 +77,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
-  # ADR 017: built and started beside the servers, but nothing points at it until the bot's cutover.
+  # ADR 017: the only way to the two servers above; the bot calls it, never them.
   mcp-gateway:
     <<: *node-service
     build: { context: .., dockerfile: services/mcp-gateway/Dockerfile }
@@ -103,8 +103,7 @@ services:
       IDP_ISSUER: http://bff:3000
       IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
       IDP_TOKEN_URL: http://bff:3000/token
-      MCP_ACCOUNTS_URL: http://mcp-accounts:8101/mcp
-      MCP_PAYMENTS_URL: http://mcp-payments:8102/mcp
+      MCP_GATEWAY_URL: http://mcp-gateway:8100/mcp
       DATABASE_URL: postgresql://${POSTGRES_USER:-bank}:${POSTGRES_PASSWORD:-bank}@postgres:5432/${POSTGRES_DB:-bank}
       KB_DIR: /kb
       EMBEDDING_CACHE_DIR: /models
@@ -117,8 +116,7 @@ services:
     depends_on:
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
-      mcp-accounts: { condition: service_healthy }
-      mcp-payments: { condition: service_healthy }
+      mcp-gateway: { condition: service_healthy }
 
   bff:
     <<: *node-service

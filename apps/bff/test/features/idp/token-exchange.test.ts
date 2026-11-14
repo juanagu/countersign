@@ -15,7 +15,7 @@ async function exchange(fields: Record<string, string>, authorization = basic('b
     grant_type: GRANT,
     subject_token: botToken,
     subject_token_type: ACCESS,
-    audience: 'mcp-accounts',
+    audience: 'mcp-gateway',
     ...fields,
   });
   const res = await app.request('/token', {
@@ -27,32 +27,32 @@ async function exchange(fields: Record<string, string>, authorization = basic('b
 }
 
 describe('POST /token (token exchange)', () => {
-  it('exchanges a bot token for an audience-bound token with narrowed scopes and an act claim', async () => {
+  it('exchanges a bot token for a gateway-bound token with the banking scopes and an act claim', async () => {
     const { res, app } = await exchange({});
     expect(res.status).toBe(200);
     const body = (await res.json()) as { access_token: string; scope: string; expires_in: number };
-    expect(body.scope).toBe('accounts:read');
+    expect(body.scope).toBe('accounts:read beneficiaries:read transfers:prepare transfers:execute');
     expect(body.expires_in).toBeLessThanOrEqual(300);
     const jwks = createLocalJWKSet(await (await app.request('/.well-known/jwks.json')).json());
-    const { payload } = await jwtVerify(body.access_token, jwks, { issuer: TEST_ISSUER, audience: 'mcp-accounts' });
-    expect(payload).toMatchObject({ sub: 'ana', scope: 'accounts:read', act: { sub: 'bot' } });
+    const { payload } = await jwtVerify(body.access_token, jwks, { issuer: TEST_ISSUER, audience: 'mcp-gateway' });
+    expect(payload).toMatchObject({ sub: 'ana', act: { sub: 'bot' } });
   });
 
-  it('grants mcp-payments the execute scope, which execute_transfer also requires', async () => {
-    const { res } = await exchange({ audience: 'mcp-payments' });
-    expect(((await res.json()) as { scope: string }).scope).toBe(
-      'beneficiaries:read transfers:prepare transfers:execute',
-    );
+  it('grants the gateway the execute scope, which execute_transfer also requires', async () => {
+    const { res } = await exchange({});
+    expect(((await res.json()) as { scope: string }).scope).toContain('transfers:execute');
   });
 
   it('narrows to a requested subset', async () => {
-    const { res } = await exchange({ audience: 'mcp-payments', scope: 'beneficiaries:read' });
+    const { res } = await exchange({ scope: 'beneficiaries:read' });
     expect(((await res.json()) as { scope: string }).scope).toBe('beneficiaries:read');
   });
 
   it.each([
-    ['a scope the audience does not allow', { scope: 'accounts:read transfers:prepare' }, 'invalid_scope'],
+    ['a scope the audience does not allow', { scope: 'accounts:read accounts:write' }, 'invalid_scope'],
     ['an unknown audience', { audience: 'mcp-evil' }, 'invalid_target'],
+    ['mcp-accounts, which only the gateway may ask for (rule 1)', { audience: 'mcp-accounts' }, 'invalid_target'],
+    ['mcp-payments, which only the gateway may ask for (rule 1)', { audience: 'mcp-payments' }, 'invalid_target'],
     ['the bot itself as audience', { audience: 'bot' }, 'invalid_target'],
     ['an Object.prototype key as audience', { audience: 'constructor' }, 'invalid_target'],
     ['another prototype key as audience', { audience: '__proto__' }, 'invalid_target'],
@@ -82,7 +82,7 @@ describe('POST /token (token exchange)', () => {
           grant_type: GRANT,
           subject_token: botToken,
           subject_token_type: ACCESS,
-          audience: 'mcp-accounts',
+          audience: 'mcp-gateway',
         }),
       });
     }
@@ -110,7 +110,7 @@ describe('POST /token (token exchange)', () => {
         grant_type: GRANT,
         subject_token: session,
         subject_token_type: ACCESS,
-        audience: 'mcp-accounts',
+        audience: 'mcp-gateway',
       }),
     });
     expect(await res.json()).toEqual({ error: 'invalid_grant' });
@@ -139,7 +139,7 @@ describe('POST /token (token exchange)', () => {
           grant_type: GRANT,
           subject_token: await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' }),
           subject_token_type: ACCESS,
-          audience: 'mcp-accounts',
+          audience: 'mcp-gateway',
         }),
       });
       return res.status;

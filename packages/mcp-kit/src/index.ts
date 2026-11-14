@@ -1,4 +1,4 @@
-export { chainsEqual, parseActorChains, readActorChain } from './actor-chain.js';
+export { chainsEqual, readActorChain } from './actor-chain.js';
 export { createJwtVerifier, InvalidAccessTokenError, remoteJwks } from './jwt-verifier.js';
 export type { JwtVerifierOptions, VerifyAccessToken } from './jwt-verifier.js';
 export { MCP_PATH, mcpRoute } from './mcp-route.js';

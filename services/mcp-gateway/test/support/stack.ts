@@ -6,9 +6,15 @@ import { Hono } from 'hono';
 import { pino } from 'pino';
 import { tokenExchangeRoutes } from '../../../../apps/bff/src/features/idp/token-exchange.js';
 import { TokenIssuer } from '../../../../apps/bff/src/features/idp/token-issuer.js';
-import { createApp as createAccountsApp } from '../../../mcp-accounts/src/app.js';
+import {
+  ALLOWED_ACTOR_CHAINS as ACCOUNTS_CHAINS,
+  createApp as createAccountsApp,
+} from '../../../mcp-accounts/src/app.js';
 import { InMemoryAccountsRepository } from '../../../mcp-accounts/test/support/in-memory-accounts.js';
-import { createApp as createPaymentsApp } from '../../../mcp-payments/src/app.js';
+import {
+  ALLOWED_ACTOR_CHAINS as PAYMENTS_CHAINS,
+  createApp as createPaymentsApp,
+} from '../../../mcp-payments/src/app.js';
 import { createStepUpVerifier } from '../../../mcp-payments/src/features/transfers/step-up-verifier.js';
 import { InMemoryTransfersRepository } from '../../../mcp-payments/test/support/in-memory-transfers.js';
 import { ALLOWED_ACTORS, AUDIENCE, createApp } from '../../src/app.js';
@@ -60,13 +66,22 @@ export async function createStack(options: StackOptions = {}) {
   );
   const accountsRepo = new InMemoryAccountsRepository();
   const transfersRepo = new InMemoryTransfersRepository();
-  const chains = { allowedActorChains: [['mcp-gateway', 'bot']], keys, issuer: ISSUER };
   const accounts = createAccountsApp({
-    verify: createJwtVerifier({ ...chains, audience: 'mcp-accounts' }),
+    verify: createJwtVerifier({
+      issuer: ISSUER,
+      audience: 'mcp-accounts',
+      allowedActorChains: ACCOUNTS_CHAINS,
+      keys,
+    }),
     accounts: accountsRepo,
   });
   const payments = createPaymentsApp({
-    verify: createJwtVerifier({ ...chains, audience: 'mcp-payments' }),
+    verify: createJwtVerifier({
+      issuer: ISSUER,
+      audience: 'mcp-payments',
+      allowedActorChains: PAYMENTS_CHAINS,
+      keys,
+    }),
     transfers: transfersRepo,
     verifyStepUp: createStepUpVerifier({ issuer: ISSUER, audience: 'mcp-payments', keys }),
   });

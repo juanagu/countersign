@@ -48,12 +48,15 @@ describe('MCP gateway hop of the token exchange (ADR 017)', () => {
     expect(payload).toMatchObject({ sub: 'ana', act: { sub: 'bot' } });
   });
 
-  it('still lets the bot ask for the backends directly, as today', async () => {
-    const env = await buildTestApp();
-    const { res, body } = await post(env, BOT, await botToken(env), 'mcp-payments');
-    expect(res.status).toBe(200);
-    expect(decodeJwt(body.access_token as string).act).toEqual({ sub: 'bot' });
-  });
+  it.each(['mcp-accounts', 'mcp-payments'])(
+    'refuses the bot a token for %s: only the gateway may ask (rule 1)',
+    async (audience) => {
+      const env = await buildTestApp();
+      const { res, body } = await post(env, BOT, await botToken(env), audience);
+      expect(res.status).toBe(400);
+      expect(body).toEqual({ error: 'invalid_target' });
+    },
+  );
 
   it('gives the gateway a backend token with a nested act chain', async () => {
     const env = await buildTestApp();
@@ -124,7 +127,7 @@ describe('MCP gateway hop of the token exchange (ADR 017)', () => {
 
     it('does not let the bot exchange a gateway token (wrong subject audience)', async () => {
       const env = await buildTestApp();
-      const { body } = await post(env, BOT, await gatewayToken(env), 'mcp-accounts');
+      const { body } = await post(env, BOT, await gatewayToken(env), 'mcp-gateway');
       expect(body).toEqual({ error: 'invalid_grant' });
     });
 

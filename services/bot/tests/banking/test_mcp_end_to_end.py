@@ -1,4 +1,4 @@
-"""The agent → policy → MCP path over real HTTP, against a fake MCP server that records what it receives."""
+"""The agent → policy → MCP path over real HTTP, against a fake MCP gateway that records what it receives."""
 
 import asyncio
 import json
@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.banking.mcp_toolsets import SKILLS_BY_AUDIENCE, banking_toolset
+from app.banking.mcp_toolsets import GATEWAY_NEEDED_BY, banking_toolset
 from app.banking.token_exchange import TokenExchanger
 from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
@@ -40,7 +40,7 @@ INCOMING_TOKEN = "incoming-aud-bot-token"
 
 
 Seen = list[tuple[str, str]]
-"""(server name, Authorization header) per HTTP request the fake MCP servers received."""
+"""(server name, Authorization header) per HTTP request the fake MCP gateway received."""
 
 
 class RecordAuth:
@@ -53,8 +53,9 @@ class RecordAuth:
         await self.app(scope, receive, send)
 
 
-def _fake_accounts_server() -> FastMCP:
-    mcp = FastMCP("fake-accounts")
+def _fake_gateway() -> FastMCP:
+    """The gateway's merged catalog: the accounts tools and the payments tools under one endpoint."""
+    mcp = FastMCP("fake-gateway")
 
     @mcp.tool(meta={"bank/riskTier": "T1"})
     def list_accounts() -> dict[str, Any]:
@@ -67,12 +68,6 @@ def _fake_accounts_server() -> FastMCP:
     @mcp.tool(meta={"bank/riskTier": "T1"})
     def secret_admin_tool() -> str:
         return "should never be callable"
-
-    return mcp
-
-
-def _fake_payments_server() -> FastMCP:
-    mcp = FastMCP("fake-payments")
 
     @mcp.tool(meta={"bank/riskTier": "T1"})
     def list_beneficiaries() -> dict[str, Any]:
@@ -88,21 +83,18 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-async def fake_servers() -> AsyncIterator[tuple[str, str, Seen]]:
+async def fake_gateway() -> AsyncIterator[tuple[str, Seen]]:
     seen: Seen = []
-    servers, urls = [], []
-    for fake in (_fake_accounts_server(), _fake_payments_server()):
-        port = _free_port()
-        app = RecordAuth(fake.http_app(path="/mcp", stateless_http=True, json_response=True), fake.name, seen)
-        servers.append(uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")))
-        urls.append(f"http://127.0.0.1:{port}/mcp")
-    tasks = [asyncio.create_task(server.serve()) for server in servers]
-    while not all(server.started for server in servers):  # noqa: ASYNC110 (uvicorn exposes no started event)
+    fake = _fake_gateway()
+    port = _free_port()
+    app = RecordAuth(fake.http_app(path="/mcp", stateless_http=True, json_response=True), fake.name, seen)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    task = asyncio.create_task(server.serve())
+    while not server.started:  # noqa: ASYNC110 (uvicorn exposes no started event)
         await asyncio.sleep(0.01)
-    yield urls[0], urls[1], seen
-    for server in servers:
-        server.should_exit = True
-    await asyncio.gather(*tasks)
+    yield f"http://127.0.0.1:{port}/mcp", seen
+    server.should_exit = True
+    await task
 
 
 def _exchanger(audiences: list[str] | None = None, *, status: int = 200) -> TokenExchanger:
@@ -140,20 +132,20 @@ def _scripted_model(seen_tools: list[list[str]]) -> FunctionModel:
 
 
 async def test_calls_mcp_with_the_exchanged_token_never_the_incoming_one(
-    fake_servers: tuple[str, str, Seen],
+    fake_gateway: tuple[str, Seen],
 ) -> None:
-    accounts_url, payments_url, seen = fake_servers
+    gateway_url, seen = fake_gateway
 
     exchanger = _exchanger()
     seen_tools: list[list[str]] = []
-    tools = banking_toolset(exchanger, accounts_url=accounts_url, payments_url=payments_url)
+    tools = banking_toolset(exchanger, gateway_url=gateway_url)
     agent = build_agent(_scripted_model(seen_tools), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
 
     result = await agent.run("¿Qué cuentas tengo?", deps=_deps())
 
     seen_auth = [header for _, header in seen]
-    assert seen_auth, "the fake MCP server received no request"
-    assert all(header in {"Bearer exchanged-mcp-accounts", "Bearer exchanged-mcp-payments"} for header in seen_auth)
+    assert seen_auth, "the fake MCP gateway received no request"
+    assert set(seen_auth) == {"Bearer exchanged-mcp-gateway"}
     assert not any(INCOMING_TOKEN in header for header in seen_auth)
     # Before load_skill no domain tool is visible; afterwards only the skill's allow-listed ones are.
     assert seen_tools[0] == ["load_skill", "render_ui"]
@@ -163,9 +155,9 @@ async def test_calls_mcp_with_the_exchanged_token_never_the_incoming_one(
 
 
 async def test_domain_errors_reach_the_model_without_spending_the_retry_budget(
-    fake_servers: tuple[str, str, Seen],
+    fake_gateway: tuple[str, Seen],
 ) -> None:
-    accounts_url, payments_url, _ = fake_servers
+    gateway_url, _ = fake_gateway
     steps = [
         ToolCallPart("load_skill", {"name": "accounts"}),
         ToolCallPart("get_balance", {"account_id": "acc-x"}),
@@ -178,7 +170,7 @@ async def test_domain_errors_reach_the_model_without_spending_the_retry_budget(
         step = len(messages) // 2
         return ModelResponse(parts=[steps[step] if step < len(steps) else TextPart("No encontré esas cuentas.")])
 
-    tools = banking_toolset(_exchanger(), accounts_url=accounts_url, payments_url=payments_url)
+    tools = banking_toolset(_exchanger(), gateway_url=gateway_url)
     agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
 
     result = await agent.run("¿Saldo de acc-x y acc-y?", deps=_deps())
@@ -188,11 +180,11 @@ async def test_domain_errors_reach_the_model_without_spending_the_retry_budget(
 
 
 async def test_a_run_that_loads_no_skill_contacts_neither_the_idp_nor_any_mcp_server(
-    fake_servers: tuple[str, str, Seen],
+    fake_gateway: tuple[str, Seen],
 ) -> None:
-    accounts_url, payments_url, seen = fake_servers
+    gateway_url, seen = fake_gateway
     exchanged: list[str] = []
-    tools = banking_toolset(_exchanger(exchanged), accounts_url=accounts_url, payments_url=payments_url)
+    tools = banking_toolset(_exchanger(exchanged), gateway_url=gateway_url)
     agent = build_agent(
         FunctionModel(lambda _m, _i: ModelResponse(parts=[TextPart("¡Hola!")])),
         skills=SkillRegistry.from_dir(SKILLS_DIR),
@@ -206,10 +198,10 @@ async def test_a_run_that_loads_no_skill_contacts_neither_the_idp_nor_any_mcp_se
     assert seen == []
 
 
-async def test_loading_accounts_contacts_only_mcp_accounts_and_closes_its_session(
-    fake_servers: tuple[str, str, Seen], monkeypatch: pytest.MonkeyPatch
+async def test_loading_accounts_exchanges_once_for_the_gateway_and_closes_its_session(
+    fake_gateway: tuple[str, Seen], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    accounts_url, payments_url, seen = fake_servers
+    gateway_url, seen = fake_gateway
     exchanged: list[str] = []
     opened: list[MCPToolset[BotDeps]] = []
     enter = MCPToolset.__aenter__
@@ -219,26 +211,26 @@ async def test_loading_accounts_contacts_only_mcp_accounts_and_closes_its_sessio
         return await enter(self)
 
     monkeypatch.setattr(MCPToolset, "__aenter__", recording_enter)
-    tools = banking_toolset(_exchanger(exchanged), accounts_url=accounts_url, payments_url=payments_url)
+    tools = banking_toolset(_exchanger(exchanged), gateway_url=gateway_url)
     agent = build_agent(_scripted_model([]), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
 
     await agent.run("¿Qué cuentas tengo?", deps=_deps())
 
-    assert exchanged == ["mcp-accounts"]
+    assert exchanged == ["mcp-gateway"]  # Never a backend audience: the gateway exchanges for those.
     assert seen
-    assert {server for server, _ in seen} == {"fake-accounts"}
+    assert {server for server, _ in seen} == {"fake-gateway"}
     sessions = {id(session): session for session in opened}.values()  # It re-enters itself per request.
-    assert [session.id for session in sessions] == ["mcp-accounts"]
+    assert [session.id for session in sessions] == ["mcp-gateway"]
     assert not any(session.is_running for session in sessions)
 
 
 @pytest.mark.parametrize("failure", ["idp_down", "mcp_unreachable"])
 async def test_a_server_that_fails_to_connect_degrades_the_run_instead_of_failing_it(
-    fake_servers: tuple[str, str, Seen], caplog: pytest.LogCaptureFixture, failure: str
+    fake_gateway: tuple[str, Seen], caplog: pytest.LogCaptureFixture, failure: str
 ) -> None:
-    accounts_url, payments_url, seen = fake_servers
+    gateway_url, seen = fake_gateway
     if failure == "mcp_unreachable":
-        accounts_url = f"http://127.0.0.1:{_free_port()}/mcp"
+        gateway_url = f"http://127.0.0.1:{_free_port()}/mcp"
     exchanger = _exchanger(status=500 if failure == "idp_down" else 200)
     seen_tools: list[list[str]] = []
     instructions: list[str] = []
@@ -250,21 +242,21 @@ async def test_a_server_that_fails_to_connect_degrades_the_run_instead_of_failin
             return ModelResponse(parts=[ToolCallPart("load_skill", {"name": "accounts"})])
         return ModelResponse(parts=[TextPart("El servicio no está disponible.")])
 
-    tools = banking_toolset(exchanger, accounts_url=accounts_url, payments_url=payments_url)
+    tools = banking_toolset(exchanger, gateway_url=gateway_url)
     agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[tools])
 
     result = await agent.run("¿Qué cuentas tengo?", deps=BotDeps(user_id="ana", access_token=INCOMING_TOKEN))
 
     assert result.output == "El servicio no está disponible."
     assert "list_accounts" not in seen_tools[1]
-    assert "unavailable right now: mcp-accounts" in instructions[1]
+    assert "unavailable right now: mcp-gateway" in instructions[1]
     assert "unavailable" not in instructions[0]
-    assert {server for server, _ in seen} <= {"fake-payments"}
+    assert seen == []  # The fake gateway is never reached, whichever hop failed.
     logged = [r for r in caplog.records if r.getMessage() == "mcp server unavailable"]
-    assert [r.__dict__["server"] for r in logged] == ["mcp-accounts"]  # Once per run, not once per step.
+    assert [r.__dict__["server"] for r in logged] == ["mcp-gateway"]  # Once per run, not once per step.
     assert not any(INCOMING_TOKEN in str(r.__dict__) for r in caplog.records)
 
 
-def test_every_skill_that_gates_a_server_exists() -> None:
+def test_every_skill_that_gates_the_gateway_exists() -> None:
     registry = SkillRegistry.from_dir(SKILLS_DIR)
-    assert all(registry.get(name) for skills in SKILLS_BY_AUDIENCE.values() for name in skills)
+    assert all(registry.get(name) for name in GATEWAY_NEEDED_BY)

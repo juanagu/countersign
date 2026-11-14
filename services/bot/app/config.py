@@ -34,8 +34,7 @@ class Settings(BaseSettings):
     bot_client_id: str = "bot"
     # Required with the BFF's minimum length, so a missing secret fails at startup, not on the first exchange.
     bot_client_secret: str = Field(min_length=16, repr=False)
-    mcp_accounts_url: str = "http://localhost:8101/mcp"
-    mcp_payments_url: str = "http://localhost:8102/mcp"
+    mcp_gateway_url: str = "http://localhost:8100/mcp"
     skills_dir: Path = SKILLS_DIR
     kb_dir: Path = KB_DIR
     database_url: str = "postgresql://bank:bank@localhost:5432/bank"

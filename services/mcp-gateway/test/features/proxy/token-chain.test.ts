@@ -17,12 +17,21 @@ describe('the delegation chain at every hop (ADR 017)', () => {
   });
 
   describe('a backend refuses', () => {
-    it("a token the bot exchanged for the backend itself (today's direct chain)", async () => {
-      const stack = await createStack();
-      const subject = await stack.issuer.issueBotToken({ sub: 'juan', name: 'Juan' });
-      const direct = await stack.exchangeAs('bot', BOT_SECRET, subject, 'mcp-payments');
-      await expect(stack.connectBackend('payments.test', direct)).rejects.toThrow();
-    });
+    it.each(['mcp-accounts', 'mcp-payments'] as const)(
+      'a token for itself whose act is only bot, as the bot once exchanged directly (%s)',
+      async (audience) => {
+        const stack = await createStack();
+        const direct = await stack.issuer.issueExchanged({
+          sub: 'juan',
+          audience,
+          scopes: ['accounts:read', 'beneficiaries:read', 'transfers:prepare', 'transfers:execute'],
+          act: { sub: 'bot' },
+          notAfter: Math.floor(Date.now() / 1000) + 300,
+        });
+        const host = audience === 'mcp-accounts' ? 'accounts.test' : 'payments.test';
+        await expect(stack.connectBackend(host, direct?.token ?? '')).rejects.toThrow();
+      },
+    );
 
     it("the gateway's own aud=mcp-gateway token sent straight to it", async () => {
       const stack = await createStack();
@@ -42,12 +51,25 @@ describe('the delegation chain at every hop (ADR 017)', () => {
     });
   });
 
+  describe('the IdP refuses', () => {
+    it.each(['mcp-accounts', 'mcp-payments'])('client bot asking for aud=%s directly', async (audience) => {
+      const stack = await createStack();
+      const subject = await stack.issuer.issueBotToken({ sub: 'juan', name: 'Juan' });
+      await expect(stack.exchangeAs('bot', BOT_SECRET, subject, audience)).rejects.toThrow(/invalid_target/);
+    });
+  });
+
   describe('the gateway refuses', () => {
     it('a token exchanged for a backend audience instead of the gateway', async () => {
       const stack = await createStack();
-      const subject = await stack.issuer.issueBotToken({ sub: 'juan', name: 'Juan' });
-      const backendToken = await stack.exchangeAs('bot', BOT_SECRET, subject, 'mcp-accounts');
-      await expect(stack.connect(backendToken)).rejects.toThrow();
+      const backendToken = await stack.issuer.issueExchanged({
+        sub: 'juan',
+        audience: 'mcp-accounts',
+        scopes: ['accounts:read'],
+        act: { sub: 'bot' },
+        notAfter: Math.floor(Date.now() / 1000) + 300,
+      });
+      await expect(stack.connect(backendToken?.token ?? '')).rejects.toThrow();
     });
 
     it('the bot token itself (aud=bot)', async () => {

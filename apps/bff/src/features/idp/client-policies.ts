@@ -23,11 +23,11 @@ export interface ClientPolicy {
 }
 
 export const CLIENT_POLICIES: Readonly<Record<string, ClientPolicy>> = {
-  // Today's path keeps working (the bot asks each backend directly) and the gateway hop is added beside it.
+  // The bot reaches the backends only through the gateway, so it may ask for no other audience (rule 1).
   [BOT_CLIENT]: {
     subjectAudience: 'bot',
     subjectActors: [],
-    targets: ['mcp-accounts', 'mcp-payments', GATEWAY_AUDIENCE],
+    targets: [GATEWAY_AUDIENCE],
     inheritSubjectScopes: false,
   },
   [GATEWAY_CLIENT]: {
