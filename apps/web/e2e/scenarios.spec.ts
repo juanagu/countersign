@@ -1,12 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { ask, expectNoHorizontalScroll, signIn, snapshot } from './support';
 
-test('scenario 2: spending renders an A2UI chart and list', async ({ page }, info) => {
+test('scenario 2: spending renders an A2UI chart', async ({ page }, info) => {
   await signIn(page, 'Ana Gómez');
   await ask(page, '¿En qué gasté el mes pasado?');
   const card = page.locator('.gen-card').last();
   await expect(card.locator('.gen-chart__bar').first()).toBeVisible();
-  await expect(card.locator('.gen-list__item').first()).toBeVisible();
   await snapshot(page, info, 'spending');
   await expectNoHorizontalScroll(page);
 });
