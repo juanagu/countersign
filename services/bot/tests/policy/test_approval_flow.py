@@ -54,7 +54,7 @@ class FakePayments:
         self.executed: list[dict[str, Any]] = []
         self.toolset: FunctionToolset[BotDeps] = FunctionToolset()
 
-        # execute_transfer runs only on a draft a prepare_transfer result recorded in the conversation (ADR 021).
+        # execute_transfer runs only on the open draft a prepare_transfer result recorded in the conversation.
         @self.toolset.tool_plain(metadata={"meta": {"bank/riskTier": "T2"}})
         def prepare_transfer(beneficiary_id: str, amount: float, currency: str) -> dict[str, Any]:
             return DRAFT
@@ -427,7 +427,7 @@ async def test_a_genuine_resume_is_not_classified_and_executes_once(
 async def test_a_delegated_transfer_pauses_on_the_orchestrator_and_its_resume_executes_once(
     signing_key: SigningKey, verifier: JwksTokenVerifier, tmp_path: Path
 ) -> None:
-    """ADR 021: the payments subagent prepares, the orchestrator alone raises the interrupt and executes."""
+    """The payments subagent prepares, the orchestrator alone raises the interrupt and executes."""
     from tests.subagents import fakes
 
     tree = fakes.build_tree(fakes.scripted(*fakes.ROOT_STEPS), fakes.scripted(*fakes.PAYMENTS_STEPS))

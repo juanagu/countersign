@@ -27,8 +27,8 @@ KID = "test-key"
 STREAMED_CHUNKS = ["Hola. ", "¿En qué ", "te ayudo?"]
 TEST_MODEL = "test"
 TEST_CLIENT_SECRET = "test-bot-client-secret"
-# The shipped accounts and knowledge skills, plus the root payments skill from before ADR 021 (prepare and execute in
-# one T3 skill): the approval and template mechanism tests run on it, apart from the subagent's.
+# The shipped accounts and knowledge skills, plus a root payments skill that prepares and executes in one T3 skill: the
+# approval and template mechanism tests run on it, apart from the subagent's.
 TEST_SKILLS_DIR = Path(__file__).resolve().parent / "fixtures" / "skills"
 NO_SUBAGENTS_DIR = TEST_SKILLS_DIR.parent / "no-subagents"  # Missing on purpose: its payments skill would clash.
 

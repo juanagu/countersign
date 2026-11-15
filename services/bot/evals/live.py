@@ -27,7 +27,7 @@ class LiveInput(BaseModel):
     turns: list[str]
     flow: Literal["chat", "transfer", "resume"] = "chat"
     source_account: str | None = None  # transfer: the account whose ledger is read before and after
-    # A subagent domain (ADR 021): its calls are read from the run's Phoenix spans, which the client never sees.
+    # A subagent domain: its calls are read from the run's Phoenix spans, since its arguments never reach the client.
     reads_trace: bool = False
 
 

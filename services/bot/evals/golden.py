@@ -123,7 +123,7 @@ def kb_cases(judge_model: str) -> list[LiveCase]:
 def tool_cases(today: date) -> list[LiveCase]:
     month_from, month_to = month_range(today, 2)
     month = MONTHS[month_from.month - 1]
-    # Read from the confirm card (ADR 021 §6), which shows the source account's alias and number, not its id.
+    # Read from the confirm card, which shows the source account's alias and number, not its id.
     transfer_args = {"beneficiary_id": "ben-ana-juan", "amount": 10000, "currency": "ARS"}
     return [
         _case("tools-usd-balance", "tool_selection", _ask("¿Cuánto tengo en mi caja de ahorro en dólares?"),

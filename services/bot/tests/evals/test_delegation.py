@@ -1,4 +1,4 @@
-"""The eval hook reads a subagent's calls from the run's spans and their arguments from the cards (ADR 021 §6)."""
+"""The eval hook reads a subagent's calls from the run's spans and their arguments from the cards."""
 
 from decimal import Decimal
 from typing import Any

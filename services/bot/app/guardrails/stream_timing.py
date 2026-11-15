@@ -19,7 +19,7 @@ STREAM_SPAN = "bot.stream"
 TTFT_ATTRIBUTE = "bot.time_to_first_token_ms"
 FIRST_SURFACE_ATTRIBUTE = "bot.time_to_first_surface_ms"
 DURATION_ATTRIBUTE = "bot.stream_duration_ms"
-# The AG-UI thread (a random id, no content): an eval finds a run's trace by it (`evals/delegation.py`, ADR 021).
+# The AG-UI thread (a random id, no content): an eval finds a run's trace by it (`evals/delegation.py`).
 THREAD_ATTRIBUTE = "bot.thread_id"
 TIMING_METRIC = "bot.stream.timing"
 # Model-built A2UI surfaces and the server-template cards (confirm, receipt) both count as UI.

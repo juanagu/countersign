@@ -6,7 +6,7 @@ import { AUDIENCE_SCOPES, GATEWAY_AUDIENCE } from '../../../../../apps/bff/src/f
 import { createStack, GATEWAY_SECRET } from '../../support/stack.js';
 
 // Frontmatter `scopes` repeats what each tool's `_meta` says. A mismatch hides a tool with no error, so this
-// reads both from the real backends and the real skills and subagents (drift; ADR 021).
+// reads both from the real backends and the real skills and subagents (drift).
 const SKILLS_DIR = new URL('../../../../bot/skills/', import.meta.url);
 const SUBAGENTS_DIR = new URL('../../../../bot/subagents/', import.meta.url);
 
@@ -67,7 +67,7 @@ describe('skill and subagent scopes against the tools the real backends serve', 
     expect(subagents.map((s) => s.name)).toEqual(['payments']);
   });
 
-  it('never lets a subagent allow-list a T3 tool or request a T3 call scope (ADR 021: the orchestrator owns T3)', async () => {
+  it('never lets a subagent allow-list a T3 tool or request a T3 call scope (the orchestrator owns T3)', async () => {
     const served = await servedTools();
     const t3 = served.filter((t) => t.tier === 'T3');
     expect(t3.map((t) => t.name)).toContain('execute_transfer');
