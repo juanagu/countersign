@@ -1,7 +1,9 @@
-# Conversational Banking Assistant — POC
+# Countersign
 
-A proof of concept for a banking-grade chatbot that answers in Spanish, shows its sources and moves money only
-after the customer approves it.
+**A reference architecture for AI agents that take real actions, safely.** The model proposes; a person countersigns.
+
+The worked example is a banking assistant: a proof of concept that answers in Spanish, shows its sources and moves
+money only after the customer approves it.
 
 It proves one reference architecture end to end: answers streamed over SSE (AG-UI) that resume after a dropped
 connection; generative UI, with model-built A2UI cards validated against a catalog and server-built templates for
@@ -96,8 +98,8 @@ so the Playwright suite and `make eval`, which need the live stack and a paid mo
 
 Eight rules shape the design, and each one needs a negative test. The full text is in [`AGENTS.md`](AGENTS.md).
 
-1. The model never holds credentials: the bot exchanges the user's token for one per MCP server (bound `aud`, only
-   the scopes it needs) and never forwards the incoming one.
+1. The model never holds credentials: the bot exchanges the user's token for one bound to the MCP gateway, the gateway
+   exchanges again per MCP server (bound `aud`, only the scopes it needs), and no hop forwards the token it received.
 2. Every tool declares a risk tier (T0 public read to T3 money movement), enforced by code, not by the prompt.
 3. Money movement needs human approval plus a short-lived, single-use step-up token bound to the exact draft.
 4. Confirm and receipt cards are server templates filled from tool results, never from model text.

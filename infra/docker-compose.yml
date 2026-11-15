@@ -1,4 +1,4 @@
-name: chatbotpoc
+name: countersign
 
 x-node-service: &node-service
   restart: unless-stopped
