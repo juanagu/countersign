@@ -7,7 +7,8 @@ replays the thread instead of losing it (ADR 015).
 ## Exposed interface
 
 - `chatRoutes({ issuer, botAgentUrl, threadLog, logger })`: the runtime under `/copilotkit/*`, behind
-  `requireSession`, with no CORS headers. `identifyUser` scopes each thread to the session's user.
+  `requireSession`, with no CORS headers. `identifyUser` scopes each thread to the session's user. Any path
+  ending in `cpk-debug-events` (CopilotKit's cross-thread event feed) answers 404.
 - Agent id: `default`.
 - `runner/`: `DurableAgentRunner` (the runtime's `AgentRunner`), the `ThreadLog` port with
   `RedisThreadLog`, and `BotThreadHistory` (the bot's stored conversation, for restores past the window).

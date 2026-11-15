@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createLocalJWKSet, jwtVerify } from 'jose';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildTestApp, loginCookie, TEST_ISSUER } from '../../support/build-app.js';
 
 const RUN_PATH = '/copilotkit/agent/default/run';
@@ -150,4 +150,20 @@ describe('chat endpoint', () => {
     });
     expect(preflight.headers.get('access-control-allow-origin')).toBeNull();
   });
+
+  // CopilotKit serves its cross-thread event feed whenever NODE_ENV is "development", whatever `debug` says.
+  it.each(['/copilotkit/cpk-debug-events', '/copilotkit/agent/default/cpk-debug-events/'])(
+    'does not serve the debug event feed at %s, even in development',
+    async (path) => {
+      vi.stubEnv('NODE_ENV', 'development');
+      try {
+        const { app } = await buildTestApp();
+        const res = await app.request(path, { headers: { cookie: await loginCookie(app) } });
+        await res.body?.cancel();
+        expect(res.status).toBe(404);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 });

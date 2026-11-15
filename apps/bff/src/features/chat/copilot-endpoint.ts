@@ -19,6 +19,14 @@ export interface ChatRoutesOptions {
   logger: Logger;
 }
 
+// CopilotKit serves every thread's events here under NODE_ENV=development, and no runtime option turns that off.
+const DEBUG_FEED_SEGMENT = 'cpk-debug-events';
+
+/** The runtime routes on the last path segment, so the feed answers under any path that ends in it. */
+function isDebugFeed(request: Request): boolean {
+  return new URL(request.url).pathname.split('/').filter(Boolean).at(-1) === DEBUG_FEED_SEGMENT;
+}
+
 async function sessionOrThrow(issuer: TokenIssuer, request: Request) {
   const session = await readSession(issuer, request);
   if (!session) throw new Error('unauthenticated');
@@ -46,6 +54,7 @@ export function chatRoutes({ issuer, botAgentUrl, threadLog, logger }: ChatRoute
   const handler = createCopilotRuntimeHandler({ runtime, basePath: COPILOT_BASE_PATH, cors: false });
 
   const app = new Hono<SessionEnv>();
+  app.use(`${COPILOT_BASE_PATH}/*`, async (c, next) => (isDebugFeed(c.req.raw) ? c.notFound() : next()));
   app.use(`${COPILOT_BASE_PATH}/*`, requireSession(issuer));
   app.all(`${COPILOT_BASE_PATH}/*`, (c) => handler(c.req.raw));
   return app;
