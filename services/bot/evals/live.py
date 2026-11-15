@@ -50,11 +50,9 @@ class LiveOutput:
     resume: ResumeCheck | None = None
     notes: list[str] = field(default_factory=list)
     delegated: list[ObservedCall] = field(default_factory=list)  # From the trace, not the client.
-    # A CUJ's extras: the ledger after the journey, each step-up request's HTTP status, the interrupted calls the
-    # customer refused.
+    # A CUJ's extras: the ledger after the journey and each step-up request's HTTP status.
     ledger_after: Ledger | None = None
     step_up_statuses: list[int] = field(default_factory=list)
-    cancelled_calls: frozenset[str] = frozenset()
 
     @property
     def text(self) -> str:
@@ -73,7 +71,9 @@ class LiveOutput:
     @property
     def calls(self) -> list[ObservedCall]:
         """Every call in order with its outcome, the subagent's included."""
-        return with_delegated(client_calls(self.traces, self.cancelled_calls), self.delegated)
+        return with_delegated(
+            client_calls(self.traces, frozenset().union(*(t.cancelled for t in self.traces))), self.delegated
+        )
 
     @property
     def handoffs(self) -> set[str]:

@@ -26,6 +26,7 @@ class RunTrace:
     """What one run sent to the client."""
 
     events: list[dict[str, Any]]
+    cancelled: frozenset[str] = frozenset()  # Interrupted calls the customer refused in the resume that made this run.
 
     def of(self, kind: str) -> list[dict[str, Any]]:
         return [e for e in self.events if e.get("type") == kind]
@@ -148,6 +149,15 @@ def fold(events: list[dict[str, Any]], messages: list[dict[str, Any]]) -> list[d
     return messages
 
 
+@dataclass(frozen=True)
+class StepUpAttempt:
+    """One PIN entry: the BFF's status and, only when the PIN was right, the single-use step-up token."""
+
+    status: int
+    token: str | None
+    body: dict[str, Any]
+
+
 @dataclass
 class BffSession:
     """A signed-in browser session: the BFF's HttpOnly cookie is kept by the client."""
@@ -155,6 +165,7 @@ class BffSession:
     http: httpx.AsyncClient
     thread_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[dict[str, Any]] = field(default_factory=list)
+    step_up_statuses: list[int] = field(default_factory=list)  # Each PIN entry's HTTP status, in order.
 
     @classmethod
     async def login(cls, http: httpx.AsyncClient, username: str) -> "BffSession":
@@ -187,15 +198,27 @@ class BffSession:
                 "content": json.dumps(payload),
             }
         )
-        return await self._run([{"interruptId": interrupt["id"], "status": "resolved", "payload": payload}])
+        trace = await self._run([{"interruptId": interrupt["id"], "status": "resolved", "payload": payload}])
+        if payload.get("approved") is False:
+            trace.cancelled = frozenset({interrupt["toolCallId"]})
+        return trace
 
-    async def step_up(self, card: Event, pin: str) -> str:
-        """The PIN dialog: a single-use step-up token bound to the confirm card's draft."""
+    async def try_step_up(self, card: Event, pin: str) -> StepUpAttempt:
+        """The PIN dialog: a single-use step-up token bound to the confirm card's draft. A wrong PIN is an answer."""
         data = card["data"]
         grant = {"amount": data["amount"], "currency": data["currency"], "beneficiary_id": data["beneficiaryId"]}
         res = await self.http.post(STEP_UP_PATH, json={"draft_id": data["draftId"], "pin": pin, **grant})
-        res.raise_for_status()
-        return str(res.json()["step_up_token"])
+        self.step_up_statuses.append(res.status_code)
+        body = res.json() if res.content else {}
+        token = str(body["step_up_token"]) if res.is_success else None
+        return StepUpAttempt(res.status_code, token, body)
+
+    async def step_up(self, card: Event, pin: str) -> str:
+        """`try_step_up` for the right PIN: anything but a token is an error."""
+        attempt = await self.try_step_up(card, pin)
+        if attempt.token is None:
+            raise RuntimeError(f"step-up refused: {attempt.status} {attempt.body}")
+        return attempt.token
 
     async def say_until(self, text: str, stop: StopWhen) -> list[Event]:
         """Starts a run and drops the connection once `stop` holds for the events read so far (a lost network)."""

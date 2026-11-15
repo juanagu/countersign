@@ -45,3 +45,18 @@ async def read_ledger(account_id: str) -> Ledger:
     if row is None:
         raise LookupError(f"no account {account_id!r}; run `make seed`")
     return Ledger(Decimal(row[0]), int(row[1]), int(row[2]))
+
+
+EXPIRE_SQL = """
+UPDATE bank.transfer_drafts SET expires_at = now() - interval '1 minute'
+ WHERE id = %(draft)s AND status = 'pending'
+"""
+
+
+async def expire_draft(draft_id: str) -> None:
+    """Moves a pending draft's expiry into the past. The one write the evals make to the bank besides `make seed`
+    (CUJ 08 proves an approval of an expired draft moves nothing)."""
+    async with await psycopg.AsyncConnection.connect(database_url()) as conn:
+        done = await conn.execute(EXPIRE_SQL, {"draft": draft_id})
+    if done.rowcount != 1:
+        raise LookupError(f"no pending draft {draft_id!r} to expire")

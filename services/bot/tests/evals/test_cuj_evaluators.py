@@ -10,7 +10,7 @@ from pydantic_evals.otel._errors import SpanTreeRecordingError
 
 from evals.agui_client import RunTrace
 from evals.bank_db import Ledger
-from evals.calls import CANCELLED, PAUSED, ObservedCall, client_calls, result_outcome
+from evals.calls import CANCELLED, PAUSED, ObservedCall, result_outcome
 from evals.cuj import Step
 from evals.cuj_evaluators import (
     BalanceMatchesLedger,
@@ -73,8 +73,8 @@ def _delegated() -> list[ObservedCall]:
     return [handoff, ObservedCall("list_beneficiaries", delegated=True), PREPARE]
 
 
-def _output(traces: list[RunTrace], cancelled: frozenset[str] = frozenset(), **fields: Any) -> LiveOutput:
-    return LiveOutput(traces, delegated=_delegated(), cancelled_calls=cancelled, **fields)
+def _output(traces: list[RunTrace], **fields: Any) -> LiveOutput:
+    return LiveOutput(traces, delegated=_delegated(), **fields)
 
 
 def test_a_transfer_that_pauses_then_resolves_is_the_expected_trajectory() -> None:
@@ -141,7 +141,9 @@ def test_arguments_are_compared_numerically() -> None:
 
 
 def test_a_refused_interrupt_is_cancelled_not_a_result() -> None:
-    calls = client_calls(_transfer_traces("El cliente canceló la transferencia."), cancelled={"x"})
+    traces = _transfer_traces("El cliente canceló la transferencia.")
+    traces[1].cancelled = frozenset({"x"})
+    calls = _output(traces).calls
     steps = [
         Step(tool="ask_payments"),
         Step(tool="execute_transfer", outcome="paused"),
@@ -149,7 +151,7 @@ def test_a_refused_interrupt_is_cancelled_not_a_result() -> None:
     ]
 
     assert [(c.name, c.outcome) for c in calls][-2:] == [("execute_transfer", PAUSED), ("execute_transfer", CANCELLED)]
-    assert trajectory_problems(calls, steps, [], ["execute_transfer:result"]) == []
+    assert trajectory_problems(calls, steps, [*ALLOW, "prepare_transfer"], ["execute_transfer:result"]) == []
 
 
 def test_a_tool_error_is_an_error_outcome() -> None:
