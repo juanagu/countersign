@@ -114,7 +114,8 @@ export class TokenIssuer {
     const expiresIn = Math.min(EXCHANGED_TOKEN_TTL_SECONDS, req.notAfter - now);
     if (expiresIn < MIN_EXCHANGED_TOKEN_TTL_SECONDS) return undefined;
     const jti = randomUUID();
-    const token = await this.sign({ scope: req.scopes.join(' '), act: req.act }, req.sub, req.audience, expiresIn, jti);
+    const claims = { scope: req.scopes.join(' '), act: req.act };
+    const token = await this.sign(claims, req.sub, req.audience, expiresIn, jti, now);
     return { token, expiresIn, jti, exp: now + expiresIn };
   }
 
@@ -157,14 +158,15 @@ export class TokenIssuer {
     audience: string,
     ttlSeconds: number,
     jti: string = randomUUID(),
+    issuedAt: number = Math.floor(Date.now() / 1000),
   ): Promise<string> {
     return new SignJWT(claims)
       .setProtectedHeader({ alg: ALG, kid: this.kid, typ: 'JWT' })
       .setIssuer(this.issuer)
       .setSubject(sub)
       .setAudience(audience)
-      .setIssuedAt()
-      .setExpirationTime(`${ttlSeconds}s`)
+      .setIssuedAt(issuedAt)
+      .setExpirationTime(issuedAt + ttlSeconds)
       .setJti(jti)
       .sign(this.privateKey);
   }
