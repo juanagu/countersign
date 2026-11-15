@@ -10,15 +10,15 @@ Status: `todo` · `in progress` · `in review` · `done` (merged to `main`).
 
 | Phase | Status | Branch / PR | Notes |
 | --- | --- | --- | --- |
-| 0 — Scaffold | in review | `feat/p0-scaffold`, PR #13 | Reviewed together with Phase 1. |
-| 1 — Streaming chat skeleton | in review | `feat/p1-streaming-chat`, PR #14 | Converged: high pass (10 fixed), medium pass (7 small fixed). |
-| 2 — Domain tools over MCP | in review | `feat/p2-mcp-tools`, PR #16 | Converged after a high pass and three medium passes. |
-| 3 — RAG with citations | in review | `feat/p3-rag`, PR #17 | Reviewed with Phase 2. |
-| 4 — Generative UI | in progress | `feat/p4-genui` | Built, verified at the event level; not reviewed yet. |
-| 5 — Approval and step-up | in progress | `feat/p5-approval` | Scenario 3 verified live; not reviewed yet. |
-| 6 — Guardrails | in progress | `feat/p6-guardrails` | Being built. |
-| 7 — Resumable streams | in progress | `feat/p7-resumable-streams` | Redis-backed runner + Postgres history (ADR 015); Scenario 5 verified live and in tests; not reviewed yet. |
-| 8 — Evals and demo polish | in review | `feat/p8-evals-demo` | Live `make eval` (golden scenarios, KB grounding, tool selection, LLM judge, red team) gated by `thresholds.yaml`; `make metrics`; `docs/DEMO.md` (ADR 016). Passed from a clean clone; not reviewed yet. |
+| 0 — Scaffold | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 1 — Streaming chat skeleton | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 2 — Domain tools over MCP | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 3 — RAG with citations | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 4 — Generative UI | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 5 — Approval and step-up | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 6 — Guardrails | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 7 — Resumable streams | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
+| 8 — Evals and demo polish | done | PR #18 | Merged to `main` with all phases on 2026-11-15; the stacked PRs #13, #14, #16 and #17 were closed in favour of #18. |
 
 ## Follow-ups
 
