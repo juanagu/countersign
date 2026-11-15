@@ -71,7 +71,9 @@ function grantedScopes(
   if (allowed.length === 0) return undefined;
   if (requested === undefined) return [...allowed];
   const scopes = [...new Set(requested.split(' ').filter(Boolean))];
-  return scopes.every((scope) => allowed.includes(scope)) ? scopes : undefined;
+  if (!scopes.every((scope) => allowed.includes(scope))) return undefined;
+  const hasSolo = scopes.some((scope) => policy.soloScopes.includes(scope));
+  return hasSolo && scopes.length > 1 ? undefined : scopes;
 }
 
 function sameChain(subject: ExchangeSubject, expected: readonly string[]): boolean {
@@ -110,6 +112,7 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
     // Present but blank is a malformed request, never a fallback to the whole ceiling.
     const requestedScope = field('scope');
     if (requestedScope !== undefined && requestedScope.trim() === '') return oauthError(c, 'invalid_request');
+    if (requestedScope === undefined && policy.scopeRequired) return oauthError(c, 'invalid_request');
 
     const subject = await issuer.verifyExchangeSubject(subjectToken, policy.subjectAudience).catch(() => undefined);
     if (!subject || !sameChain(subject, policy.subjectActors)) return oauthError(c, 'invalid_grant');
