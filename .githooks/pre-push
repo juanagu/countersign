@@ -1,6 +1,6 @@
 #!/bin/sh
-# Pre-push hook: the POC's only automated gate (no CI, see docs/decisions/004). Runs contracts drift,
-# lint, typecheck and unit tests. Installed by scripts/install-git-hooks.mjs on install.
+# Pre-push hook: the same checks as CI's fast tier (docs/decisions/004), run before the push. Runs
+# contracts drift, lint, typecheck and unit tests. Installed by scripts/install-git-hooks.mjs on install.
 top="$(git rev-parse --show-toplevel)"
 [ -d "$top/node_modules" ] || { echo "pre-push: run make install first" >&2; exit 1; }
 if [ -n "$(git status --porcelain)" ]; then
