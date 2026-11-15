@@ -15,7 +15,8 @@ replays the thread instead of losing it (ADR 015).
 
 ## Data flow
 
-- `POST /copilotkit/agent/default/run` → session check → per-request `HttpAgent` with
+- `POST /copilotkit/agent/default/run` → session check → body limit (`MAX_RUN_BODY_BYTES`, 1 MiB, 413 over it:
+  the runtime parses bodies with zod 3) → per-request `HttpAgent` with
   `Authorization: Bearer <aud=bot token>` → bot `POST /agent`. The runner claims the thread for the user,
   takes the run lease, and appends each event to `chat:thread:{id}:events` with a `seq` while streaming
   it back. The run continues when the client disconnects. `RUN_STARTED` carries the run input (the

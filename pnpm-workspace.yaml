@@ -7,3 +7,15 @@ allowBuilds:
   esbuild: true
   '@scarf/scarf': false
   protobufjs: false
+
+# Patched versions for advisories in CopilotKit's transitive tree, so the weekly `pnpm audit --prod`
+# stays green. Drop each once a CopilotKit upgrade pulls the fix in itself.
+overrides:
+  'undici@<6.29.1': ^6.29.1
+  'graphql-scalars@<2.0.1': ^2.0.1
+
+# Accepted, not patched: zod 3's memory-exhaustion advisory. CopilotKit's A2UI renderer (@a2ui/web_core
+# 0.15) needs zod 3 internals and no patched zod 3 exists. The BFF caps run bodies to contain it.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-mrhx-c7xc-m3w5

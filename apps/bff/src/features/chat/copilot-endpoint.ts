@@ -1,6 +1,7 @@
 import { HttpAgent } from '@ag-ui/client';
 import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime/v2';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { Logger } from 'pino';
 import { readSession, requireSession, type SessionEnv } from '../idp/session.js';
 import type { TokenIssuer } from '../idp/token-issuer.js';
@@ -10,6 +11,10 @@ import type { ThreadLog } from './runner/thread-log.js';
 
 export const COPILOT_BASE_PATH = '/copilotkit';
 export const AGENT_ID = 'default';
+
+// The runtime parses run bodies with zod 3, whose memory-exhaustion advisory is accepted on the condition
+// that no request can carry an oversized collection.
+export const MAX_RUN_BODY_BYTES = 1024 * 1024;
 
 export interface ChatRoutesOptions {
   issuer: TokenIssuer;
@@ -56,6 +61,7 @@ export function chatRoutes({ issuer, botAgentUrl, threadLog, logger }: ChatRoute
   const app = new Hono<SessionEnv>();
   app.use(`${COPILOT_BASE_PATH}/*`, async (c, next) => (isDebugFeed(c.req.raw) ? c.notFound() : next()));
   app.use(`${COPILOT_BASE_PATH}/*`, requireSession(issuer));
+  app.use(`${COPILOT_BASE_PATH}/*`, bodyLimit({ maxSize: MAX_RUN_BODY_BYTES }));
   app.all(`${COPILOT_BASE_PATH}/*`, (c) => handler(c.req.raw));
   return app;
 }
