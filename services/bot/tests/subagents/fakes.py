@@ -182,8 +182,11 @@ class FakeIdp:
     """Records each exchange: (subject token, scopes). The issued token names its scopes."""
 
     exchanges: list[tuple[str, frozenset[str]]] = field(default_factory=list)
+    refused: frozenset[str] = frozenset()  # Scopes this IdP fails to exchange for, as if it were down.
 
     async def token_for(self, subject_token: str, audience: str, scopes: frozenset[str]) -> str:
+        if scopes & self.refused:
+            raise ConnectionError("idp unreachable")
         self.exchanges.append((subject_token, scopes))
         return "tok:" + ",".join(sorted(scopes))
 

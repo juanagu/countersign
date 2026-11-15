@@ -4,7 +4,14 @@ from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 from app.guardrails.pii import redact
 
@@ -53,16 +60,36 @@ def evidence_record(results: Sequence[tuple[str, Any]]) -> dict[str, Any]:
     return {"kind": EVIDENCE_RECORD, "results": [{"tool": tool, "content": content} for tool, content in results]}
 
 
-def _recorded(part: ToolReturnPart, delegates: Collection[str]) -> Iterator[tuple[str, Any]]:
-    """The evidence record's results, read only on a delegate tool's return: any other tool's metadata could be
-    filled by a backend."""
+def records_on(part: ToolReturnPart, delegates: Collection[str], kind: str) -> Iterator[Mapping[str, Any]]:
+    """The `kind` records code put in a tool return's `metadata`, read only on a delegate tool's return: any other
+    tool's metadata could be filled by a backend."""
     metadata = part.metadata if part.tool_name in delegates else None
     for item in metadata if isinstance(metadata, list) else ():
-        if not isinstance(item, Mapping) or item.get("kind") != EVIDENCE_RECORD:
-            continue
-        for result in item.get("results") or ():
+        if isinstance(item, Mapping) and item.get("kind") == kind:
+            yield item
+
+
+def _recorded(part: ToolReturnPart, delegates: Collection[str]) -> Iterator[tuple[str, Any]]:
+    for record in records_on(part, delegates, EVIDENCE_RECORD):
+        for result in record.get("results") or ():
             if isinstance(result, Mapping) and isinstance(result.get("tool"), str):
                 yield result["tool"], result.get("content")
+
+
+def tool_return_parts(messages: Sequence[ModelMessage]) -> Iterator[ToolReturnPart]:
+    """Each tool return the messages hold, oldest first."""
+    for message in messages:
+        for part in message.parts if isinstance(message, ModelRequest) else ():
+            if isinstance(part, ToolReturnPart):
+                yield part
+
+
+def tool_call_parts(messages: Sequence[ModelMessage]) -> Iterator[ToolCallPart]:
+    """Each tool call the model's responses hold, oldest first."""
+    for message in messages:
+        for part in message.parts if isinstance(message, ModelResponse) else ():
+            if isinstance(part, ToolCallPart):
+                yield part
 
 
 def tool_returns_in(
@@ -71,11 +98,9 @@ def tool_returns_in(
     """(tool name, content) for each tool result the history holds, oldest first. `delegates` names the delegate
     tools: the results their evidence record holds follow right after their own return."""
     returns: list[tuple[str, Any]] = []
-    for message in messages:
-        for part in message.parts if isinstance(message, ModelRequest) else ():
-            if isinstance(part, ToolReturnPart):
-                returns.append((part.tool_name, part.content))
-                returns.extend(_recorded(part, delegates))
+    for part in tool_return_parts(messages):
+        returns.append((part.tool_name, part.content))
+        returns.extend(_recorded(part, delegates))
     return returns
 
 

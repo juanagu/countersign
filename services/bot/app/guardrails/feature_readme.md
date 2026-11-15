@@ -20,7 +20,9 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
   grounding, and a safe `RUN_ERROR` message.
 - `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`,
   `tool_returns_in(messages, delegates=)` (each tool result, the `evidence_record()` entries of a delegate tool's
-  return included; no other tool's record is read), `tools_returned_in()`, `tool_results_in()`,
+  return included; no other tool's record is read), `tool_return_parts()` and `tool_call_parts()` (the one walker
+  over a history's returns and calls), `records_on(part, delegates, kind)` (the `kind` metadata records on a delegate
+  tool's return, which `skills.history` reads for `bot-skill-load`), `tools_returned_in()`, `tool_results_in()`,
   `customer_spoke_since_last_response()`. `delegates` is always the registry's delegate tool names, passed in by the
   caller, never a name pattern.
 - `output_guard.is_server_only(tool, delegates)`: `render_ui` and each delegate tool; their `TOOL_CALL_*` events are

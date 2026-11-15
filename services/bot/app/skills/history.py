@@ -1,7 +1,8 @@
-from collections.abc import Collection, Iterable, Iterator, Mapping
+from collections.abc import Collection, Mapping, Sequence
 
-from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart
 
+from app.guardrails.messages import records_on, tool_call_parts, tool_return_parts
 from app.skills.registry import SkillRegistry
 
 LOAD_SKILL = "load_skill"
@@ -25,15 +26,7 @@ def _skill_named_by(call: ToolCallPart) -> str | None:
     return name if isinstance(name, str) else None
 
 
-def _skills_recorded_on(part: ToolReturnPart, delegates: Collection[str]) -> Iterator[str]:
-    """Read only on a delegate tool's return: any other tool's metadata could be filled by a backend."""
-    metadata = part.metadata if part.tool_name in delegates else None
-    for item in metadata if isinstance(metadata, list) else ():
-        if isinstance(item, Mapping) and item.get("kind") == SKILL_LOAD_RECORD and isinstance(item.get("skill"), str):
-            yield item["skill"]
-
-
-def skills_loaded_in(messages: Iterable[ModelMessage], *, delegates: Collection[str] = frozenset()) -> set[str]:
+def skills_loaded_in(messages: Sequence[ModelMessage], *, delegates: Collection[str] = frozenset()) -> set[str]:
     """Skills a previous turn loaded: the model's `load_skill` calls in the stored history, and the loads code
     recorded on a delegate tool's return (`skill_load_record`, e.g. `transfers` when payments returns a draft).
 
@@ -42,18 +35,20 @@ def skills_loaded_in(messages: Iterable[ModelMessage], *, delegates: Collection[
     instructions and tool names; every call is still bound by the user's tokens and the tool policy, and money
     movement still needs approval plus step-up.
     """
-    loaded: set[str] = set()
-    for message in messages:
-        for part in message.parts:
-            if isinstance(part, ToolCallPart) and part.tool_name == LOAD_SKILL and (name := _skill_named_by(part)):
-                loaded.add(name)
-            elif isinstance(part, ToolReturnPart):
-                loaded.update(_skills_recorded_on(part, delegates))
-    return loaded
+    called = {
+        name for call in tool_call_parts(messages) if call.tool_name == LOAD_SKILL and (name := _skill_named_by(call))
+    }
+    recorded = {
+        record["skill"]
+        for part in tool_return_parts(messages)
+        for record in records_on(part, delegates, SKILL_LOAD_RECORD)
+        if isinstance(record.get("skill"), str)
+    }
+    return called | recorded
 
 
 def replayed_skills(
-    messages: Iterable[ModelMessage], skills: SkillRegistry, *, delegates: Collection[str] = frozenset()
+    messages: Sequence[ModelMessage], skills: SkillRegistry, *, delegates: Collection[str] = frozenset()
 ) -> set[str]:
     """The skills a run starts with: those the history loaded that `skills` still has, a renamed one by its new
     name."""

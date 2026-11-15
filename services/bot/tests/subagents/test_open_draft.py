@@ -1,7 +1,7 @@
 """A later turn cannot raise an interrupt on a draft the conversation already decided or replaced (rule 3)."""
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,7 @@ from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.deps import BotDeps
 from app.main import create_app
+from app.policy.risk_tier import RiskTier
 from app.skills.history import skills_loaded_in
 from evals.agui_client import fold
 from tests.conftest import SigningKey, open_guard, open_guardrails
@@ -23,6 +24,7 @@ from tests.subagents.fakes import (
     PAYMENTS_STEPS,
     ROOT_STEPS,
     FakeGateway,
+    Tree,
     build_tree,
     delegated_draft,
     per_turn,
@@ -109,6 +111,43 @@ async def test_a_superseded_draft_raises_no_interrupt_and_the_newer_one_does() -
     [approval] = result.output.approvals
     assert result.output.metadata[approval.tool_call_id]["draft_id"] == NEWER_DRAFT_ID
     assert gateway.called("execute_transfer") == []
+
+
+def _refuse_the_approved_token(tree: Tree) -> None:
+    tree.root_bank.idp.refused = frozenset({"transfers:execute"})  # The resume's token exchange fails.
+
+
+def _fill_the_t3_cap(tree: Tree) -> None:
+    while tree.caps.acquire(("juan", "t"), RiskTier.T3) is None:
+        pass
+
+
+@pytest.mark.parametrize(
+    ("fail_the_resume", "error"),
+    [(_refuse_the_approved_token, "service_unavailable"), (_fill_the_t3_cap, "policy_denied")],
+    ids=["service-unavailable", "policy-denied"],
+)
+async def test_after_a_resume_refused_before_sending_the_same_draft_raises_an_interrupt_again(
+    fail_the_resume: Callable[[Tree], None], error: str
+) -> None:
+    gateway = FakeGateway()
+    tree = build_tree(scripted(*ROOT_STEPS), scripted(*PAYMENTS_STEPS), gateway=gateway)
+    paused = await tree.root.run(CUSTOMER, deps=_deps([], CUSTOMER))
+    assert isinstance(paused.output, DeferredToolRequests)
+    fail_the_resume(tree)
+    history = paused.all_messages()
+    results = DeferredToolResults(approvals={paused.output.approvals[0].tool_call_id: APPROVED})
+    resumed = await tree.root.run(message_history=history, deferred_tool_results=results, deps=_deps(history, CUSTOMER))
+    [refusal] = _execute_returns(resumed.new_messages())
+    assert error in str(refusal) and gateway.called("execute_transfer") == []
+
+    history, again = resumed.all_messages(), "Probá de nuevo"
+    later = build_tree(per_turn(("execute_transfer", {"draft_id": DRAFT_ID}), "x"), scripted("x"), gateway=gateway)
+    result = await later.root.run(again, message_history=history, deps=_deps(history, CUSTOMER, again))
+
+    assert isinstance(result.output, DeferredToolRequests)
+    [approval] = result.output.approvals
+    assert result.output.metadata[approval.tool_call_id]["draft_id"] == DRAFT_ID
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
