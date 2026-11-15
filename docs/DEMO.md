@@ -50,7 +50,9 @@ and lists **Ana Gómez** and **Juan Pérez**. There is no password: the mock IdP
 ### Scenario 3: a transfer with approval and step-up
 
 1. Click **Salir**, then sign in as **Juan Pérez**.
-2. Type `Mandale 50.000 a Ana`.
+2. Type `Mandale 50.000 a Ana`. "Preparando la transferencia…" shows while the payments subagent finds Ana and
+   prepares the draft (ADR 021); in Phoenix the run shows an `ask_payments` span with the subagent's tool calls
+   under it.
 3. A **Transferencia por confirmar** card appears: Ana Gómez, Banco Demo, $ 50.000,00, Comisión $ 0,00, Desde
    "Cuenta corriente en pesos". Under it: "¿Transferir $ 50.000,00 a Ana Gómez?" with **Cancelar** and
    **Confirmar**. The run is paused: no money has moved.
@@ -173,7 +175,8 @@ The system's shape, token chain, flows and ADR index are in [`architecture.md`](
 - Frequency caps, gateway rate limits and breakers live in one process each; a run in flight dies with its BFF process.
 - A reload after the 15-minute replay window restores text and the confirm/receipt cards, not model-composed
   A2UI cards (F34).
-- The gateway token carries every banking scope once a banking skill is loaded (F42).
+- The payments subagent runs in the bot's process and shares its IdP client: its separate token guards against
+  mistakes, not against a compromised bot process (ADR 021).
 - The mock IdP is stateless: logout doesn't revoke a session (F2), and step-up has a fixed PIN.
 - The daily transfer limit the KB states is not enforced by `mcp-payments` yet (F4, F12).
 - The full list of follow-ups is in [`backlog.md`](backlog.md).
@@ -181,7 +184,8 @@ The system's shape, token chain, flows and ADR index are in [`architecture.md`](
 ## 7. Next steps (out of scope for the POC)
 
 - A production gateway (agentgateway) in place of the small Hono one; shared rate limits across replicas (ADR 017).
-- A2A and partner agents; multi-agent orchestration.
+- Separate agent services with their own IdP client and gateway audience, for domains that need real isolation
+  (ADR 021); A2A and partner agents.
 - MCP Apps, voice, a WebSocket channel.
 - A real IdP, DPoP, device attestation, FAPI 2.0.
 - A durable execution engine (Temporal); production deployment, autoscaling, a WAF.
