@@ -30,6 +30,8 @@ Work through it phase by phase.
 
 ## Architecture
 
+Flows, token chain and ADR index: `docs/architecture.md`.
+
 ```
 React web (CopilotKit v2) ──HTTPS / SSE──▶ BFF (Node, Hono)
                                             ├─ CopilotKit runtime → HttpAgent → bot

@@ -165,37 +165,7 @@ Guardrail blocks are counted from logs, not spans: `docker compose -f infra/dock
 
 ## 5. Architecture notes
 
-```
-React web (CopilotKit v2) ──SSE──▶ BFF (Hono): CopilotKit runtime + Redis run log, mock IdP
-                                     │ AG-UI over SSE, access token aud=bot
-                                     ▼
-                        Bot (FastAPI + Pydantic AI): orchestrator + skills, guardrails, RAG, A2UI
-                                     │ MCP over streamable HTTP, token exchanged for aud=mcp-gateway
-                                     ▼
-                        mcp-gateway: catalog, rate limits, breaker, audit; exchanges again per backend
-                                     │ MCP over streamable HTTP, aud per backend, act [mcp-gateway, bot]
-                                     ▼
-                        mcp-accounts, mcp-payments ──▶ Postgres (bank, chat, knowledge)
-```
-
-- **One orchestrator agent** with skills (`services/bot/skills/*.md`: instructions plus a tool allow-list),
-  loaded on demand with `load_skill`.
-- **Credentials never reach the model.** The bot exchanges the user's token for `aud=mcp-gateway`; the gateway
-  exchanges again for each backend's audience and only its scopes, and the backends accept only the chain
-  `[mcp-gateway, bot]` (ADRs 008 and 017).
-- **One endpoint for tools.** Every tool call is an audit line (`mcp.tool_call`: customer id, tool, tier, outcome,
-  duration, never arguments) in `docker compose logs mcp-gateway`. A backend that is down fails its own tools
-  at once and the other keeps working.
-- **Risk tiers** T0–T3 sit in the tool metadata and are enforced by the bot's tool policy. `execute_transfer`
-  (T3) is a deferred tool: it becomes an AG-UI interrupt, and `mcp-payments` executes only with a single-use
-  step-up token bound to the exact draft (ADR 013).
-- **Generative UI** comes in two kinds. The model builds A2UI surfaces, validated against the catalog in
-  `packages/contracts` before they leave the bot (ADR 012). Confirm and receipt cards are server templates
-  built from tool results (ADR 011).
-- **Guardrails**: PII masking, an input classifier, frequency caps, a write re-check after third-party text,
-  and a sentence-level output guard (grounding and PII) (ADR 014).
-- **Resumable streams**: the BFF logs every AG-UI event to Redis and replays it on `connect`. The bot owns the
-  conversation in Postgres (ADR 015).
+The system's shape, token chain, flows and ADR index are in [`architecture.md`](architecture.md).
 
 ## 6. Known limitations
 
