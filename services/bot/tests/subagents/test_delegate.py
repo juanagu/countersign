@@ -17,7 +17,7 @@ from app.policy.policy_toolset import UNTRUSTED_NOTE
 from app.policy.risk_tier import RiskTier
 from app.policy.tool_policy import ToolPolicy
 from app.skills.registry import SkillRegistry
-from app.subagents.delegate import subagent_prompt
+from app.subagents.delegate import DRAFT_NEXT_STEP, subagent_prompt
 from tests.conftest import open_guard
 from tests.subagents.fakes import (
     DRAFT_ID,
@@ -199,6 +199,7 @@ async def test_the_orchestrator_sees_the_subagents_reply_wrapped_as_untrusted_da
             "draft_id": DRAFT_ID,
         },
         "note": UNTRUSTED_NOTE,
+        "next_step": DRAFT_NEXT_STEP,  # Code's, outside the wrapper.
     }
 
 

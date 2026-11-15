@@ -16,7 +16,7 @@ gateway token. Subagents stop at T2: the orchestrator owns every T3 tool.
   with `genui_toolset()` and `PolicyToolset(TemplateToolset(banking))` over a registry holding only its own skill. Its
   output has no `DeferredToolRequests`, so a deferred call fails its run with `UserError`.
 - `delegate_toolset([Subagent(spec, agent)])` (`delegate.py`): one `ask_<name>(request)` tool per subagent, plus
-  `subagent_prompt`, `forwarded_events` and `last_prepared_draft`.
+  `subagent_prompt`, `forwarded_events`, `last_prepared_draft`, `DRAFT_SKILL` (`transfers`) and `DRAFT_NEXT_STEP`.
 - Shipped: `services/bot/subagents/payments.md` (T2: beneficiaries, accounts, `prepare_transfer`), on
   `PAYMENTS_AGENT_MODEL` (empty = the orchestrator's models). `main.build_agent_tree` wires it.
 
@@ -27,7 +27,11 @@ gateway token. Subagents stop at T2: the orchestrator owns every T3 tool.
 `RunGuard` carry over, and `usage=ctx.usage`. The prompt holds the customer's last three redacted messages and the
 request, labelled as the orchestrator's; there is no history. The return is
 `{"untrusted_data": {"agent", "status", "reply", "draft_id"}, "note"}`: `status` (`ok`, `unavailable`, `failed`) and
-`draft_id` (from the last successful `prepare_transfer` result) are set by code. Its `metadata` carries the
+`draft_id` (from the last successful `prepare_transfer` result) are set by code. When `draft_id` is set, the delegate
+also adds `transfers` to the orchestrator's `loaded_skills`, so its next step lists `execute_transfer` without a
+`load_skill` call, puts the fixed `DRAFT_NEXT_STEP` (call `execute_transfer` with exactly that `draft_id`) beside the
+wrapper as `next_step`, and records the load as a `skill_load_record` metadata item, which a resume's replay reads
+(`skills_loaded_in`). Without a draft it loads nothing. Its `metadata` carries the
 `bank-template` events of template tools and the `a2ui-surface` events of `render_ui` (the output guard checks them
 like the orchestrator's), plus one evidence record of the subagent's tool results for later turns. The call's events
 are withheld from the client (`is_server_only`). Each run logs one `subagent.run` line: agent, status, duration,

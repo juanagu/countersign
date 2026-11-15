@@ -420,5 +420,22 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
 - **Wiring** is `main.build_agent_tree`, which the tests also use. The bot image copies `subagents/` (`Dockerfile`).
 - **Tests** that pin the T3 mechanism itself run on a fixture skills dir that keeps the old root `payments` skill
   (`tests/fixtures/skills/`, with a drift check against the shipped files).
+- **Code loads `transfers` when payments returns a draft.** Live, the orchestrator delegated, showed the confirm card
+  and ended the turn without calling `load_skill('transfers')`, so `execute_transfer` was never in its tool list and
+  no interrupt was raised (4 of 4 Playwright runs of scenarios 3 and 3b). The instruction to call it lived only in
+  the `transfers` skill, which the model sees after loading it. Now, when an `ask_payments` return carries a
+  `draft_id`, the delegate adds `transfers` (`DRAFT_SKILL`) to the orchestrator's `loaded_skills`, so the next step
+  lists `execute_transfer` and the orchestrator's token gains `transfers:prepare` (ADR 020); the return carries a
+  fixed `next_step` beside the untrusted wrapper (call `execute_transfer` with exactly this answer's `draft_id`); and
+  the agent index says a `draft_id` answer has its sending skill loaded and its `next_step` written by code. The
+  `draft_id` check, the subagent's T2 ceiling, the separate tokens and the code-built cards are unchanged. Without a
+  draft nothing is loaded.
+- **The resume replays that load from a record, not from the delegate's answer.** `skills_loaded_in` rebuilt skills
+  only from `load_skill` calls (F59), so the approved `execute_transfer` would have found `transfers` missing. The
+  delegate records the load as a plain-JSON `metadata` item on its return, `{"kind": "bot-skill-load", "skill":
+  "transfers"}`, and `skills_loaded_in` reads such items beside `load_skill` calls. Chosen over parsing stored
+  `ask_payments` returns for a `draft_id` in `routes.py`: it keeps `skills` unaware of the delegate's answer shape and
+  `routes.py` unaware of subagents, and any later code-made load replays the same way. Only the bot writes stored tool
+  returns (ADR 015; a client's tool result is kept only for a call the thread awaits, and carries no metadata).
 - **Evals.** `tools-prepare-transfer` no longer checks `source_account_id`: arguments come from the confirm card, which
   shows the source account's alias and number, not its id.

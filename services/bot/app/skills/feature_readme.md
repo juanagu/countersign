@@ -13,9 +13,13 @@ files reuse `Skill` and `parse_skill`; a subagent may not share a skill's name.
   scopes}`, which `main.py` hands to `banking_toolset`), `Skill`.
 - `skills_toolset(registry)`: the `load_skill(name)` tool. It returns the skill's instructions and adds it
   to `BotDeps.loaded_skills` for the rest of the run.
+- `skills_loaded_in(messages)` and `skill_load_record(name)` (`history.py`): the skills a stored history loaded,
+  by `load_skill` call or by a load code recorded on a tool return.
 
 ## Data flow
 
 Index in the instructions → model calls `load_skill` → `PolicyToolset` starts showing that skill's tools.
 Loaded skills last the whole thread: `routes.py` rebuilds `loaded_skills` from every past `load_skill` in the
-history (an approval resume needs it), so a later turn keeps the wider token and tools (backlog F59).
+history (an approval resume needs it), so a later turn keeps the wider token and tools (backlog F59). `skills_loaded_in`
+also reads the loads code made, recorded as a `skill_load_record(name)` item (`{"kind": "bot-skill-load", "skill"}`)
+in a tool return's `metadata`: `ask_payments` records `transfers` when it returns a draft (ADR 021).

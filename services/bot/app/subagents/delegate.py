@@ -27,6 +27,7 @@ from app.guardrails.output_guard import A2UI_ACTIVITY
 from app.guardrails.write_intent import RECENT_MESSAGES
 from app.policy.policy_toolset import UNTRUSTED_NOTE
 from app.policy.tool_policy import PREPARE_TRANSFER, prepared_draft_id
+from app.skills.history import skill_load_record
 from app.skills.registry import Skill
 from app.subagents.build import SubagentAgent
 from app.subagents.registry import delegate_tool_name
@@ -41,6 +42,15 @@ FORWARDED_ACTIVITIES: dict[str, frozenset[str]] = {
     TEMPLATE_ACTIVITY: frozenset(DEFAULT_TEMPLATES),
     A2UI_ACTIVITY: frozenset({RENDER_UI_TOOL}),
 }
+# The root skill that owns the T3 call on a draft (ADR 021 §3). Code loads it when a draft comes back, so the
+# orchestrator's next step lists `execute_transfer` whether or not its model calls `load_skill`.
+DRAFT_SKILL = "transfers"
+# Written by code and set outside the untrusted wrapper, only on an answer that carries a draft.
+DRAFT_NEXT_STEP = (
+    "The draft's confirmation card is shown and the transfers skill is loaded. Write one short line without the "
+    "card's figures, then call `execute_transfer` with exactly this answer's `draft_id`: the run pauses while the "
+    "customer confirms in the app. Never say money was sent unless `execute_transfer` returns a receipt."
+)
 
 
 @dataclass(frozen=True)
@@ -87,7 +97,10 @@ def _delegate(subagent: Subagent) -> Any:
         status = "unavailable" if deps.unavailable_servers else "ok"
         _log_run(name, status, started, ctx.usage.requests - requests_before, _tool_names(messages))
         metadata: list[Any] = [*forwarded_events(messages), evidence_record(_evidence(messages))]
-        return _answer(name, status, reply=result.output, draft_id=last_prepared_draft(messages), metadata=metadata)
+        draft_id = last_prepared_draft(messages)
+        if draft_id:
+            _hand_off_draft(ctx.deps, metadata)
+        return _answer(name, status, reply=result.output, draft_id=draft_id, metadata=metadata)
 
     return delegate
 
@@ -101,10 +114,20 @@ def subagent_prompt(request: str, customer_messages: Sequence[str]) -> str:
     )
 
 
+def _hand_off_draft(deps: BotDeps, metadata: list[Any]) -> None:
+    """Loads `DRAFT_SKILL` for the rest of this run, and records it on the return so a resume's replay loads it too."""
+    deps.loaded_skills.add(DRAFT_SKILL)
+    metadata.append(skill_load_record(DRAFT_SKILL))
+
+
 def _answer(name: str, status: str, *, reply: str, draft_id: str | None, metadata: list[Any] | None) -> ToolReturn:
-    """`status` and `draft_id` are set by code; `reply` is the subagent's text, wrapped as untrusted data (rule 6)."""
+    """`status`, `draft_id` and `next_step` are set by code; `reply` is the subagent's text, wrapped as untrusted data
+    (rule 6)."""
     answer = {"agent": name, "status": status, "reply": reply, "draft_id": draft_id}
-    return ToolReturn(return_value={"untrusted_data": answer, "note": UNTRUSTED_NOTE}, metadata=metadata)
+    value: dict[str, Any] = {"untrusted_data": answer, "note": UNTRUSTED_NOTE}
+    if draft_id:
+        value["next_step"] = DRAFT_NEXT_STEP
+    return ToolReturn(return_value=value, metadata=metadata)
 
 
 def _tool_returns(messages: Sequence[ModelMessage]) -> list[ToolReturnPart]:
