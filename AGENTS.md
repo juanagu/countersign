@@ -39,7 +39,7 @@ React web (CopilotKit v2) ──HTTPS / SSE──▶ BFF (Node, Hono)
                                                          │ AG-UI over SSE
                                                          ▼
                                 Bot (Python, FastAPI + Pydantic AI)
-                                ├─ orchestrator agent + domain skills
+                                ├─ orchestrator agent + domain skills + in-process subagents (payments)
                                 ├─ guardrails (input / tool policy / output)
                                 ├─ RAG (pgvector hybrid search)
                                 └─ MCP client ──streamable HTTP, aud=mcp-gateway JWT──▶
@@ -51,8 +51,14 @@ React web (CopilotKit v2) ──HTTPS / SSE──▶ BFF (Node, Hono)
 Infra: Postgres + pgvector, Redis (event log for resume), Phoenix (OpenTelemetry traces)
 ```
 
-One orchestrator agent, no multi-agent and no A2A in this POC. Domain behaviour comes
-from **skills** (markdown instruction files plus a tool allow-list) loaded on demand.
+One orchestrator agent, plus **domain subagents** for complex domains (ADR 021). Thin domain
+behaviour comes from **skills** (markdown instruction files plus a tool allow-list) that the
+orchestrator loads on demand. A subagent is a skill that runs as its own Pydantic AI agent in the
+bot's process, on its own model, called by the orchestrator as a tool, with its own tool policy
+and gateway token. Subagents stop at T2: the orchestrator owns every T3 tool. They share one
+process and one IdP client, so their separate tokens guard against mistakes, not against a
+compromised process. A domain that needs real isolation becomes a separate agent service, with
+its own process, IdP client and gateway audience, under its own ADR. No A2A in this POC.
 
 ## Stack
 
@@ -73,6 +79,7 @@ Tooling: pnpm workspaces for Node packages, uv for Python, a root `Makefile`.
 **Models** (env vars, never hard-coded):
 - `BOT_MODEL=anthropic:claude-sonnet-5-5`: orchestrator.
 - `GUARD_MODEL=anthropic:claude-haiku-5-5`: classifiers and judges.
+- `PAYMENTS_AGENT_MODEL` (empty = the orchestrator's chain): the payments subagent.
 
 **Embeddings:** Anthropic has no embeddings API. Default to a local multilingual model via
 `fastembed` (pick a multilingual model it supports, such as an E5 variant). Keep the
@@ -88,16 +95,18 @@ postgres 5432, redis 6379, phoenix 6006.
 
 1. **The model never holds credentials.** The bot receives the user's access token
    (`aud=bot`) from the BFF and exchanges it at the mock IdP (`/token`, RFC 8693-shaped)
-   for `aud=mcp-gateway` scoped to the skills the run has loaded; the gateway lists and
+   for `aud=mcp-gateway` once per agent (the orchestrator and each subagent), each token
+   scoped to the skills that agent has loaded, never their union; the gateway lists and
    serves only the tools its token's scopes allow, then exchanges again for each backend's
    audience, with only the scopes it needs. No hop forwards the token it received (no passthrough). Each
    MCP server, the gateway included, rejects any token whose `aud` isn't its own, and the
    backends require the actor chain `[mcp-gateway, bot]`.
 2. **Risk tiers on every tool.** T0 public read, T1 personal read, T2 reversible write,
-   T3 money movement. Tier is declared in tool metadata and enforced by the bot's tool
-   policy, not by the prompt.
+   T3 money movement. Tier is declared in tool metadata and enforced by the tool policy
+   of the agent that calls the tool, not by the prompt. A subagent's tools stop at T2.
 3. **T3 needs human approval plus step-up.** `execute_transfer` is approval-required
-   (Pydantic AI deferred tool → AG-UI interrupt). The user confirms on a server-template
+   (Pydantic AI deferred tool → AG-UI interrupt) and held only by the orchestrator; a subagent
+   may prepare a transfer, never execute one. The user confirms on a server-template
    card. The mock IdP's `/auth/step-up` (PIN `123456`) issues a short-lived, single-use token
    whose `authorization_details` claim (RAR-shaped) contains the exact draft: `draft_id`,
    amount, currency, beneficiary id. `mcp-payments` executes only if signature, `aud`,
@@ -113,7 +122,8 @@ postgres 5432, redis 6379, phoenix 6006.
    in the catalog.
 6. **Tool output is untrusted data.** Wrap tool results so the model sees them as data,
    and never let text inside a tool result (memos, merchant names) trigger a write tool
-   without a fresh policy check.
+   without a fresh policy check. A subagent's answer reaches the orchestrator as untrusted
+   data in the same way, and its text never grounds a figure.
 7. **No PII in logs or traces.** Redact before logging; Phoenix spans carry redacted
    content only.
 8. **User identity comes from the token, never from the request body or the model.**
