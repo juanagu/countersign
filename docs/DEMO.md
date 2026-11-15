@@ -169,11 +169,11 @@ The system's shape, token chain, flows and ADR index are in [`architecture.md`](
 
 ## 6. Known limitations
 
-- Browser checks are thin. The UI has not been seen at 390 px and 1280 px in an automated run, and
-  `apps/web/e2e/resume.spec.ts` has never run (F7, F19).
 - Figures the model derives itself (a sum, a date range from "today") are replaced by the guard's fallback.
-- Frequency caps and `stop` are per BFF or bot process; a run in flight dies with its BFF process (F20).
-- A reload after the 15-minute replay window restores text only, without cards or a pending approval (F21).
+- Frequency caps, gateway rate limits and breakers live in one process each; a run in flight dies with its BFF process.
+- A reload after the 15-minute replay window restores text and the confirm/receipt cards, not model-composed
+  A2UI cards (F34).
+- The gateway token carries every banking scope once a banking skill is loaded (F42).
 - The mock IdP is stateless: logout doesn't revoke a session (F2), and step-up has a fixed PIN.
 - The daily transfer limit the KB states is not enforced by `mcp-payments` yet (F4, F12).
 - The full list of follow-ups is in [`backlog.md`](backlog.md).

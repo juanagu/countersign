@@ -150,4 +150,4 @@ Beyond the decision above, the cutover (task 6) did this:
 - `MCP_ACCOUNTS_URL` and `MCP_PAYMENTS_URL` stay in `.env.example`, relabelled as the gateway's backend URLs,
   because the gateway still reads them (compose sets them on `mcp-gateway`). The bot reads neither.
 - Not a deviation, but still open: the bot's gateway token carries every banking scope whenever the accounts or
-  payments skill is loaded (the "one deliberate widening" above). Narrowing by skill is a follow-up (F36).
+  payments skill is loaded (the "one deliberate widening" above). Narrowing by skill is a follow-up (F42).
