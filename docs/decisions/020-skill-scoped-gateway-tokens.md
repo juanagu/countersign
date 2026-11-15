@@ -1,6 +1,9 @@
 # 020 — Gateway tokens scoped by the loaded skills, enforced at the gateway
 
-**Status:** proposed, not built (backlog F42). Amends [ADR 017](017-mcp-gateway.md): its "out of scope" line "the
+**Status:** accepted and built (backlog F42), in commits eed0bef (tool scopes in `_meta`), 9a8c45f (gateway lists and
+calls by token scope), 3657ceb (blank scope refused, duplicates deduped), f889fa6 (bot requests scopes by loaded skill)
+and 57d46b2 (the bot must send a scope, `transfers:execute` alone); the docs and the amended security rules 1 and 3
+followed. Amends [ADR 017](017-mcp-gateway.md): its "out of scope" line "the
 gateway doesn't repeat skill gating" still holds, but the gateway now enforces token scopes. This is a scope check,
 not skill gating. Removes ADR 017's "one deliberate widening".
 

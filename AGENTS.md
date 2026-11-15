@@ -88,8 +88,9 @@ postgres 5432, redis 6379, phoenix 6006.
 
 1. **The model never holds credentials.** The bot receives the user's access token
    (`aud=bot`) from the BFF and exchanges it at the mock IdP (`/token`, RFC 8693-shaped)
-   for `aud=mcp-gateway`; the gateway exchanges again for each backend's audience, with
-   only the scopes it needs. No hop forwards the token it received (no passthrough). Each
+   for `aud=mcp-gateway` scoped to the skills the run has loaded; the gateway lists and
+   serves only the tools its token's scopes allow, then exchanges again for each backend's
+   audience, with only the scopes it needs. No hop forwards the token it received (no passthrough). Each
    MCP server, the gateway included, rejects any token whose `aud` isn't its own, and the
    backends require the actor chain `[mcp-gateway, bot]`.
 2. **Risk tiers on every tool.** T0 public read, T1 personal read, T2 reversible write,
@@ -100,7 +101,9 @@ postgres 5432, redis 6379, phoenix 6006.
    card. The mock IdP's `/auth/step-up` (PIN `123456`) issues a short-lived, single-use token
    whose `authorization_details` claim (RAR-shaped) contains the exact draft: `draft_id`,
    amount, currency, beneficiary id. `mcp-payments` executes only if signature, `aud`,
-   `exp`, unused `jti` and `authorization_details` all match the stored draft.
+   `exp`, unused `jti` and `authorization_details` all match the stored draft. The access
+   token's `transfers:execute` scope is requested only for the approved call, in a token
+   that carries no other scope.
 4. **Transactional UI is never model-generated.** Confirm and receipt cards are server
    templates. Their data comes from the MCP tool result through code, never from model
    text. The model only decides that a transfer is being prepared.
