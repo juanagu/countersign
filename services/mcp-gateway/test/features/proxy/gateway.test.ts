@@ -43,7 +43,9 @@ describe('gateway in front of the real mcp-accounts and mcp-payments', () => {
       beneficiary_id: 'ben-juan-ana',
     });
 
-    const result = await client.callTool({
+    // The approved call holds a token with transfers:execute alone.
+    const approved = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'));
+    const result = await approved.callTool({
       name: 'execute_transfer',
       arguments: { draft_id: draft.draft_id, step_up_token: stepUp },
     });
@@ -75,8 +77,9 @@ describe('gateway in front of the real mcp-accounts and mcp-payments', () => {
       beneficiary_id: 'ben-juan-ana',
     });
     const args = { draft_id: draft.draft_id, step_up_token: stepUp };
-    await client.callTool({ name: 'execute_transfer', arguments: args });
-    const again = await client.callTool({ name: 'execute_transfer', arguments: args });
+    const approved = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'));
+    await approved.callTool({ name: 'execute_transfer', arguments: args });
+    const again = await approved.callTool({ name: 'execute_transfer', arguments: args });
     expect(stack.transfersRepo.debits).toHaveLength(1);
     expect(again.isError ? parseText(again).error : 'ok').not.toBe(undefined);
     const executeCalls = stack.seen.filter((r) => r.host === 'payments.test' && r.body.includes('"execute_transfer"'));

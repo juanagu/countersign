@@ -27,6 +27,8 @@ export const ISSUER = 'http://idp.test';
 export const BOT_SECRET = 'test-bot-secret-0123456789';
 export const GATEWAY_SECRET = 'test-gateway-secret-0123456789';
 
+export const PRE_APPROVAL_SCOPES = 'accounts:read beneficiaries:read transfers:prepare';
+
 export const BACKENDS: Backend[] = [
   { name: 'accounts', audience: 'mcp-accounts', url: 'http://accounts.test/mcp' },
   { name: 'payments', audience: 'mcp-payments', url: 'http://payments.test/mcp' },
@@ -62,7 +64,11 @@ export async function createStack(options: StackOptions = {}) {
   const keys = createLocalJWKSet(await issuer.jwks());
   const idp = new Hono().route(
     '/',
-    tokenExchangeRoutes({ issuer, clients: { bot: BOT_SECRET, 'mcp-gateway': GATEWAY_SECRET } }),
+    tokenExchangeRoutes({
+      issuer,
+      clients: { bot: BOT_SECRET, 'mcp-gateway': GATEWAY_SECRET },
+      logger: pino({ level: 'silent' }),
+    }),
   );
   const accountsRepo = new InMemoryAccountsRepository();
   const transfersRepo = new InMemoryTransfersRepository();
@@ -120,8 +126,11 @@ export async function createStack(options: StackOptions = {}) {
     proxy,
   });
 
-  /** What the bot does: exchange a customer's `aud=bot` token at the IdP for one for the gateway. */
-  async function gatewayToken(sub: string, scope?: string): Promise<string> {
+  /**
+   * What the bot does: exchange a customer's `aud=bot` token at the IdP for one for the gateway. The default is
+   * what a run that loaded accounts and payments holds; the IdP refuses the bot a request with no scope.
+   */
+  async function gatewayToken(sub: string, scope = PRE_APPROVAL_SCOPES): Promise<string> {
     return exchangeAs('bot', BOT_SECRET, await issuer.issueBotToken({ sub, name: sub }), AUDIENCE, scope);
   }
 

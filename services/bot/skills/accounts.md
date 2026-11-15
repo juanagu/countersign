@@ -3,6 +3,7 @@ name: accounts
 description: The customer's accounts, balances, transactions and spending by category.
 tools: [list_accounts, get_balance, list_transactions, spending_summary]
 max_tier: T1
+scopes: [accounts:read]
 ---
 # Accounts
 

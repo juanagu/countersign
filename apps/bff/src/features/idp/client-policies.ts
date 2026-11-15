@@ -20,6 +20,10 @@ export interface ClientPolicy {
   targets: readonly string[];
   /** Whether issued scopes are capped by the subject token's own (true once the subject holds banking scopes). */
   inheritSubjectScopes: boolean;
+  /** Whether a request without `scope` is refused instead of getting the whole ceiling. */
+  scopeRequired: boolean;
+  /** Scopes that may only be requested alone, so a token that holds one can do nothing else. */
+  soloScopes: readonly string[];
 }
 
 export const CLIENT_POLICIES: Readonly<Record<string, ClientPolicy>> = {
@@ -29,11 +33,16 @@ export const CLIENT_POLICIES: Readonly<Record<string, ClientPolicy>> = {
     subjectActors: [],
     targets: [GATEWAY_AUDIENCE],
     inheritSubjectScopes: false,
+    // The bot names the skills' scopes, and asks for `transfers:execute` only for an approved call (rule 3).
+    scopeRequired: true,
+    soloScopes: ['transfers:execute'],
   },
   [GATEWAY_CLIENT]: {
     subjectAudience: GATEWAY_AUDIENCE,
     subjectActors: [BOT_CLIENT],
     targets: ['mcp-accounts', 'mcp-payments'],
     inheritSubjectScopes: true,
+    scopeRequired: false,
+    soloScopes: [],
   },
 };

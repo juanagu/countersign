@@ -1,6 +1,7 @@
 # 017 — MCP gateway: a thin Hono service on the MCP SDK, one more hop in the token-exchange chain
 
-**Status:** accepted and built. Tasks 1–5 (mcp-kit actor chains, IdP gateway client, the gateway service with its proxy,
+**Status:** accepted and built; amended by [ADR 020](020-skill-scoped-gateway-tokens.md), which removes the scope
+widening below and has the gateway enforce token scopes. Tasks 1–5 (mcp-kit actor chains, IdP gateway client, the gateway service with its proxy,
 rate limits, breaker and audit) landed in commits c62a544, 47b9ade and 81a9945. Task 6, the cutover, and task 7, the docs,
 followed once the user approved rewording security rule 1 (see "What was built" below). `docs/PLAN.md` listed "an MCP
 gateway as a separate service" as out of scope; the user asked for one, which overrides that line.
@@ -102,7 +103,7 @@ Checked on 2026-11-14:
   would become: the bot exchanges for `aud=mcp-gateway`, and each hop exchanges again for its downstream
   audience. No hop forwards the token it received. The intent holds: the model never holds a credential, every
   token names its one recipient, and backends see the whole delegation chain.
-- **One deliberate widening.** The bot's gateway token carries every banking scope whenever the accounts or
+- **One deliberate widening (removed by ADR 020, F42).** The bot's gateway token carries every banking scope whenever the accounts or
   payments skill is loaded. Before, a run that loaded only accounts got no payments token. Several things
   bound it:
   - the token never reaches the model and lives at most 5 minutes;
@@ -149,5 +150,5 @@ Beyond the decision above, the cutover (task 6) did this:
   from `@poc/mcp-kit`. `allowedActors` stays, for the gateway's own `[bot]`.
 - `MCP_ACCOUNTS_URL` and `MCP_PAYMENTS_URL` stay in `.env.example`, relabelled as the gateway's backend URLs,
   because the gateway still reads them (compose sets them on `mcp-gateway`). The bot reads neither.
-- Not a deviation, but still open: the bot's gateway token carries every banking scope whenever the accounts or
-  payments skill is loaded (the "one deliberate widening" above). Narrowing by skill is a follow-up (F42).
+- Not a deviation, and since closed: the bot's gateway token carried every banking scope whenever the accounts or
+  payments skill was loaded (the "one deliberate widening" above). ADR 020 narrowed it by skill (F42).

@@ -157,7 +157,7 @@ describe('no retries', () => {
         return forward().then(() => Response.json({}, { status: 500 }));
       },
     });
-    const client = await stack.connect(await stack.gatewayToken('juan'));
+    const client = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'));
     const result = await client.callTool({
       name: 'execute_transfer',
       arguments: { draft_id: 'drf_1', step_up_token: 'x' },
@@ -208,9 +208,8 @@ describe('audit (rule 7)', () => {
     const { lines, logger } = captureLogs();
     const stack = await createStack({ logger });
     const incoming = await stack.gatewayToken('juan');
-    const client = await stack.connect(incoming, {
-      traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
-    });
+    const headers = { traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01' };
+    const client = await stack.connect(incoming, headers);
     const args = {
       source_account_id: 'acc-juan-ars',
       beneficiary_id: 'ben-juan-ana',
@@ -219,7 +218,8 @@ describe('audit (rule 7)', () => {
     };
     await client.callTool({ name: 'prepare_transfer', arguments: args });
     await client.callTool({ name: 'get_balance', arguments: { account_id: 'acc-secret-nobody' } });
-    await client.callTool({
+    const approved = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'), headers);
+    await approved.callTool({
       name: 'execute_transfer',
       arguments: { draft_id: 'drf_x', step_up_token: 'step-up-secret' },
     });

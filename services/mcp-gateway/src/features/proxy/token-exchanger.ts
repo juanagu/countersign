@@ -1,4 +1,5 @@
 import type { Principal } from '@poc/mcp-kit';
+import type { Logger } from 'pino';
 import { z } from 'zod';
 
 const GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
@@ -9,7 +10,38 @@ const EXPIRY_SKEW_MS = 10 * SECOND_MS;
 const EXCHANGE_TIMEOUT_MS = 5 * SECOND_MS;
 const MAX_CACHED_TOKENS = 5000;
 
-export class TokenExchangeError extends Error {}
+/** The error codes of RFC 6749 §5.2: the only IdP text that is ever kept, since it is a fixed vocabulary. */
+const OAUTH_ERROR_CODES = [
+  'invalid_request',
+  'invalid_client',
+  'invalid_grant',
+  'unauthorized_client',
+  'unsupported_grant_type',
+  'invalid_scope',
+] as const;
+export type OAuthErrorCode = (typeof OAUTH_ERROR_CODES)[number];
+
+export class TokenExchangeError extends Error {
+  constructor(
+    message: string,
+    readonly code?: OAuthErrorCode,
+  ) {
+    super(message);
+  }
+}
+
+/** Logs a refused or failed exchange: which backend and the RFC 6749 code when the IdP sent one, never a body. */
+export function logExchangeFailure(logger: Logger, backend: string, error: unknown): void {
+  if (!(error instanceof TokenExchangeError)) return;
+  // invalid_scope is the expected answer for a token that holds nothing this backend serves.
+  const level = error.code === 'invalid_scope' ? 'info' : 'warn';
+  logger[level]({ backend, oauth_error: error.code }, 'token exchange failed');
+}
+
+function oauthErrorCode(body: unknown): OAuthErrorCode | undefined {
+  const value = (body as { error?: unknown } | null | undefined)?.error;
+  return OAUTH_ERROR_CODES.find((code) => code === value);
+}
 
 export interface TokenExchangerOptions {
   tokenUrl: string;
@@ -63,8 +95,11 @@ export function createTokenExchanger({
     }).catch(() => {
       throw new TokenExchangeError('token endpoint unreachable');
     });
-    // The body is never read into the message: an IdP error can echo what it was sent.
-    if (!response.ok) throw new TokenExchangeError(`token endpoint answered ${response.status}`);
+    // The body never goes into the message: an IdP error can echo what it was sent. Only a known code is kept.
+    if (!response.ok) {
+      const code = oauthErrorCode(await response.json().catch(() => undefined));
+      throw new TokenExchangeError(`token endpoint answered ${response.status}`, code);
+    }
     const parsed = responseSchema.safeParse(await response.json().catch(() => undefined));
     if (!parsed.success) throw new TokenExchangeError('token endpoint answered an unexpected body');
     return { token: parsed.data.access_token, ttlMs: parsed.data.expires_in * SECOND_MS };

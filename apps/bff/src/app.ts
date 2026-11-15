@@ -28,7 +28,7 @@ export function createApp(deps: AppDeps): Hono {
   app.use('/auth/*', requireJsonPost);
   app.use(`${COPILOT_BASE_PATH}/*`, requireJsonPost);
   app.route('/', idpRoutes({ issuer, cookieSecure }));
-  app.route('/', tokenExchangeRoutes({ issuer, clients }));
+  app.route('/', tokenExchangeRoutes({ issuer, clients, logger }));
   app.route('/', stepUpRoutes({ issuer, pin: stepUpPin }));
   app.route('/', chatRoutes({ issuer, botAgentUrl, threadLog, logger }));
   return app;

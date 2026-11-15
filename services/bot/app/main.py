@@ -48,7 +48,7 @@ def _default_agent(
         client_id=settings.bot_client_id,
         client_secret=settings.bot_client_secret,
     )
-    tools = banking_toolset(exchanger, gateway_url=settings.mcp_gateway_url)
+    tools = banking_toolset(exchanger, gateway_url=settings.mcp_gateway_url, scopes_by_skill=skills.scopes_by_skill())
     knowledge = knowledge_toolset(embedder, PgKnowledgeStore(pool))
     return build_agent(
         model,

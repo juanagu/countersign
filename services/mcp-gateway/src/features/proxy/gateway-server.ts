@@ -13,7 +13,7 @@ export function buildGatewayServer(caller: CallerContext, catalog: Catalog, prox
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     await catalog.refresh(caller);
-    return { tools: catalog.tools };
+    return { tools: catalog.toolsFor(caller.principal.scopes) };
   });
 
   server.setRequestHandler(CallToolRequestSchema, (request) =>

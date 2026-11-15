@@ -10,6 +10,8 @@ The single gate in front of every domain tool (security rules 2 and 6).
 - `FrequencyCaps`: per-conversation (user + AG-UI `threadId`) sliding-window caps, 5 T2 and 3 T3 calls per
   10 minutes, in memory. `THIRD_PARTY_TEXT_TOOLS`: `list_transactions`, `search_knowledge`.
 - `RiskTier`, `RISK_TIER_META_KEY` (`bank/riskTier` in the MCP tool `_meta`).
+- `tool_scopes`: `SCOPE_META_KEY` (`bank/scope`, needed to call), `read_scope`, `SCOPE_PATTERN` (`^[a-z]+:[a-z]+$`) and
+  `APPROVAL_ONLY_SCOPES` (`transfers:execute`), which no skill may request. Used by `banking` and `skills`.
 
 ## Rules
 

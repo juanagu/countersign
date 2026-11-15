@@ -29,7 +29,7 @@ export interface GatewayHealth {
 export function createProxy({ backends, exchanger, logger, client, limiter, breaker }: ProxyOptions) {
   const breakers = new Map(backends.map((backend) => [backend.name, new CircuitBreaker(breaker)]));
   const backendClient = client ?? createBackendClient();
-  const catalog = new Catalog({ backends, breakers, client: backendClient, exchanger });
+  const catalog = new Catalog({ backends, breakers, client: backendClient, exchanger, logger });
   const proxy = new ToolCallProxy({
     catalog,
     breakers,
@@ -37,6 +37,7 @@ export function createProxy({ backends, exchanger, logger, client, limiter, brea
     exchanger,
     client: backendClient,
     audit: createAuditLog(logger),
+    logger,
   });
 
   return {

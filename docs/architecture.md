@@ -95,11 +95,11 @@ sequenceDiagram
   I-->>B: HttpOnly cookie, JWT aud=bff, 30 min
   B->>I: chat run (cookie)
   I->>T: AG-UI run, Bearer JWT aud=bot, 5 min
-  T->>I: POST /token as client bot, subject aud=bot, audience=mcp-gateway
-  I-->>T: JWT aud=mcp-gateway, 5 min, never past the subject exp
-  T->>G: MCP call with that token
+  T->>I: POST /token as client bot, subject aud=bot, audience=mcp-gateway, scope = the loaded skills' scopes
+  I-->>T: JWT aud=mcp-gateway with exactly that scope, 5 min, never past the subject exp
+  T->>G: MCP call with that token, listed and served only by its scopes
   G->>I: POST /token as client mcp-gateway, subject = the bot's token, audience = the backend
-  I-->>G: JWT aud=backend, act = mcp-gateway nested over bot, scopes capped by the subject
+  I-->>G: JWT aud=backend, act = mcp-gateway nested over bot, scopes = backend ceiling within the subject's
   G->>S: same tool name and arguments, plus traceparent
   S->>S: verify signature, aud, scope and act chain exactly mcp-gateway then bot
 ```
@@ -108,6 +108,19 @@ What each side refuses (each has a negative test, section 12):
 
 - The IdP refuses client `bot` any audience except `mcp-gateway`, refuses a session token (`aud=bff`) as a subject,
   and refuses to chain a second hop from a backend token.
+- **Scopes ([ADR 020](decisions/020-skill-scoped-gateway-tokens.md)).** The bot always sends `scope`: the union of the
+  `scopes` in the frontmatter of the skills the run has loaded. A request with no `scope` or a blank one gets
+  `invalid_request`; one outside the audience's ceiling gets `invalid_scope` (refused, never trimmed to what is
+  allowed); duplicates are issued once. `transfers:execute` may only be requested alone (`soloScopes` in
+  `client-policies.ts`), so the one token that can execute a transfer can do nothing else. The gateway hop sends no
+  `scope`: the issued set is `ceiling(backend)` within the gateway token's, and each backend's ceiling is the set its
+  own tools check.
+- **The gateway lists and calls by scope.** Each tool declares `bank/scope` (needed to call) and, on an approval-gated
+  tool, `bank/listScope` (needed to list) in its `_meta`. `tools/list` returns the tools whose list scope the token
+  holds, filtered per request over one shared catalog. A `tools/call` whose scope the token lacks answers
+  `insufficient_scope` before the rate limiter, the breaker, the IdP or the backend are touched, so a refusal is
+  neither counted nor forwarded. `execute_transfer` lists under `transfers:prepare`, so the model sees it before
+  approval and can raise the interrupt, but can't call it.
 - The gateway accepts only a token whose actor chain is exactly `[bot]`; each backend accepts only `[mcp-gateway, bot]`
   (`packages/mcp-kit/src/jwt-verifier.ts`). A token the bot got directly for a backend is useless.
 - Users are identified by the token's `sub`, never by a request body or the model (rule 8).
@@ -120,7 +133,8 @@ it ([ADR 013](decisions/013-transfer-approval-and-step-up.md)). The model never 
 the logged run input.
 
 Token lifetimes are in `apps/bff/src/features/idp/token-issuer.ts`. Decisions: [ADR 008](decisions/008-token-exchange-and-mcp-audiences.md)
-(exchange shape; partly superseded), [ADR 017](decisions/017-mcp-gateway.md) (the gateway hop and actor chains).
+(exchange shape; partly superseded), [ADR 017](decisions/017-mcp-gateway.md) (the gateway hop and actor chains),
+[ADR 020](decisions/020-skill-scoped-gateway-tokens.md) (scopes by loaded skill, enforced at the gateway).
 
 ## 4. A chat turn
 
@@ -170,7 +184,10 @@ Notes:
 - **Risk tiers** (T0 public read, T1 personal read, T2 reversible write, T3 money movement) are declared in the tool's
   MCP `_meta` (`bank/riskTier`) and enforced by `PolicyToolset`, not by the prompt. A tool with no tier is denied
   ([policy readme](../services/bot/app/policy/feature_readme.md)).
-- **Banking tools connect lazily.** A run that loads no banking skill makes no token exchange and opens no MCP session
+- **Banking tools connect lazily, with the scopes of the loaded skills.** A run that loads no banking skill makes no
+  token exchange and opens no MCP session. Loading `accounts` exchanges for `accounts:read` and opens a session on that
+  token; loading `payments` as well closes it and exchanges for the union, so a run holds one session at a time. A
+  tool with no valid `bank/scope` is hidden from the model
   ([banking readme](../services/bot/app/banking/feature_readme.md)).
 - **Where state lives.** Events: Redis, owned by the BFF, a 15-minute replay window. Conversation history: Postgres
   `chat` schema, owned by the bot, scoped to the user. The two are independent, which is what makes a reload past
@@ -198,7 +215,9 @@ sequenceDiagram
   W->>I: POST /auth/step-up with PIN and the card's draft values
   I-->>W: step-up token, aud=mcp-payments, 2 min, authorization_details
   W->>T: resume: approved, editedArgs draft_id + step_up_token
-  T->>G: execute_transfer(draft_id, step_up_token)
+  T->>I: POST /token, scope=transfers:execute alone (this call only)
+  I-->>T: JWT aud=mcp-gateway, scope transfers:execute
+  T->>G: execute_transfer(draft_id, step_up_token) on that token
   G->>G: verify aud, scope, jti unused, grant equals stored draft, draft pending
   G-->>T: receipt
   T-->>W: transfer-receipt card, built in code from the receipt
@@ -219,6 +238,13 @@ sequenceDiagram
   scope `transfers:execute`; the step-up token is verified (signature, issuer, `aud`, `exp`, `token_use`, scope);
   its `sub` must be the caller; its `jti` is claimed first (single use); the grant must equal the stored draft; the
   draft must be pending and unexpired. Execution is one transaction under the draft's row lock, idempotent per draft.
+- **The approved exchange.** No session token ever holds `transfers:execute`. `SkillGatedMCPToolset` asks the IdP for
+  exactly that scope only when `PolicyToolset` has let an approved T3 call through, makes the one call on a
+  session of its own and closes it; the token is never reused. A T3 call that gets past the policy unapproved goes
+  out on the session token, and the gateway answers `insufficient_scope`. If the exchange fails, the call fails
+  as `service_unavailable` before reaching the gateway, so the step-up `jti` stays unspent and the customer asks
+  again. One thing still rests on bot code: requesting `transfers:execute` only for an approved call, because the IdP
+  grants it to `bot` whenever it is asked for alone. The money lock is still the step-up token.
 - **Failed resume.** If the resume run fails, the card says so and the customer asks again; the bot raises a new
   interrupt for the same draft and `mcp-payments` never debits a draft twice.
 - Three wrong PINs lock step-up for five minutes (`apps/bff/src/features/idp/step-up.ts`).
@@ -404,9 +430,9 @@ Rule text: [`AGENTS.md`](../AGENTS.md).
 
 | # | Rule | Enforced in | Negative tests |
 | --- | --- | --- | --- |
-| 1 | No credentials in the model; exchange, no passthrough | `apps/bff/src/features/idp/client-policies.ts`, `packages/mcp-kit/src/jwt-verifier.ts`, `services/bot/app/banking/token_exchange.py` | `apps/bff/test/features/idp/gateway-exchange.test.ts`, `packages/mcp-kit/test/jwt-verifier.test.ts`, `services/mcp-gateway/test/features/proxy/token-chain.test.ts`, `services/bot/tests/banking/test_mcp_end_to_end.py` |
+| 1 | No credentials in the model; exchange, no passthrough | `apps/bff/src/features/idp/client-policies.ts` (`scopeRequired`, `soloScopes`), `token-exchange.ts`, `packages/mcp-kit/src/jwt-verifier.ts`, `tool-meta.ts`, `services/mcp-gateway/src/features/proxy/catalog.ts`, `tool-call-proxy.ts`, `services/bot/app/banking/token_exchange.py`, `mcp_toolsets.py` | `apps/bff/test/features/idp/token-exchange.test.ts`, `gateway-exchange.test.ts`, `packages/mcp-kit/test/jwt-verifier.test.ts`, `services/mcp-gateway/test/features/proxy/token-chain.test.ts`, `scopes.test.ts`, `skill-scopes.test.ts`, `services/bot/tests/banking/test_token_exchange.py`, `test_mcp_end_to_end.py` |
 | 2 | Risk tiers enforced by policy | `services/bot/app/policy/tool_policy.py`, `policy_toolset.py`, `packages/mcp-kit/src/risk-tier.ts` | `services/bot/tests/policy/test_tool_policy.py`, `test_guarded_policy.py` |
-| 3 | T3 needs approval and step-up | `services/bot/app/policy/policy_toolset.py`, `apps/bff/src/features/idp/step-up.ts`, `services/mcp-payments/src/features/transfers/execute-transfer.ts`, `step-up-verifier.ts` | `services/bot/tests/policy/test_approval_flow.py`, `apps/bff/test/features/idp/step-up.test.ts`, `services/mcp-payments/test/features/transfers/execute-transfer.test.ts` |
+| 3 | T3 needs approval and step-up | `services/bot/app/policy/policy_toolset.py`, `services/bot/app/banking/mcp_toolsets.py` (approved exchange), `apps/bff/src/features/idp/step-up.ts`, `client-policies.ts` (`soloScopes`), `services/mcp-payments/src/features/transfers/execute-transfer.ts`, `step-up-verifier.ts` | `services/bot/tests/policy/test_approval_flow.py`, `services/bot/tests/banking/test_mcp_end_to_end.py`, `apps/bff/test/features/idp/step-up.test.ts`, `token-exchange.test.ts`, `services/mcp-gateway/test/features/proxy/scopes.test.ts`, `services/mcp-payments/test/features/transfers/execute-transfer.test.ts` |
 | 4 | Transactional UI is never model-generated | `services/bot/app/genui/templates.py` | `services/bot/tests/genui/test_templates.py` |
 | 5 | A2UI validated before it leaves the bot | `services/bot/app/genui/render_ui.py`, `a2ui.py`, `guardrails/output_guard.py`, `packages/contracts/schemas/a2ui-catalog.json` | `services/bot/tests/genui/test_render_ui.py`, `services/bot/tests/guardrails/test_output_guard.py` |
 | 6 | Tool output is untrusted data | `services/bot/app/policy/policy_toolset.py`, `guardrails/write_intent.py` | `services/bot/tests/policy/test_guarded_policy.py` |
@@ -431,8 +457,6 @@ Pérez; everything is synthetic. Both MCP servers share the `bank` schema on pur
 
 The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 
-- **Scope widening (F42).** The bot's `aud=mcp-gateway` token carries the full banking scope ceiling whatever skill is
-  loaded, and the gateway asks each backend for its ceiling. Narrowing by loaded skill is the next step.
 - **Gateway rough edges (F43 to F45).** Uncached `tools/list` exchanges, rate-limit counting of refused calls, a
   backend that was down at first refresh staying unknown to `tools/call`.
 - **Per-process state.** Frequency caps, gateway limits, breakers and the BFF's `stop` are per process; a run dies with
@@ -468,3 +492,4 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 | [017](decisions/017-mcp-gateway.md) | MCP gateway | One more hop in the exchange chain, actor chains, limits, breaker, audit. |
 | [018](decisions/018-llm-model-failover.md) | LLM failover | In-process chain per role, first-event deadline, circuit breaker. |
 | [019](decisions/019-copilotkit-advisory-overrides.md) | Dependency advisories | pnpm overrides for undici and graphql-scalars; zod 3's advisory accepted until A2UI moves to zod 4. |
+| [020](decisions/020-skill-scoped-gateway-tokens.md) | Skill-scoped gateway tokens | The gateway token carries only the loaded skills' scopes, `transfers:execute` only for an approved call; the gateway lists and calls by token scope. Amends 017. |

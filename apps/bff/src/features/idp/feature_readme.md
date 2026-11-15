@@ -19,3 +19,13 @@ subject token and may ask for fixed audiences; `bot` → `mcp-gateway` only (it 
 `mcp-gateway` → the two backends with scopes capped by its subject, and the `act` claim nests, so a
 backend token from the gateway reads `act: {sub: mcp-gateway, act: {sub: bot}}`) and `POST /auth/step-up` (PIN → a 2-minute, single-use token
 bound to one transfer draft via `authorization_details`, ADR 013) live here too.
+
+Scopes (ADR 020): `scope` is split on spaces and deduplicated, a scope outside the allowed set (the audience's
+ceiling, within the subject's for `mcp-gateway`) is `invalid_scope` and never trimmed, and a blank one is
+`invalid_request`, as is a `scope` parameter sent twice (RFC 6749 §3.1). `ClientPolicy` adds two fields, set for `bot` only: `scopeRequired` (no `scope` is
+`invalid_request`, so the bot never falls back to the whole ceiling) and `soloScopes` (`transfers:execute` with any
+other scope is `invalid_scope`, so the token that can execute a transfer can do nothing else). The IdP does not check
+that `transfers:execute` is asked for only after approval; that rests on the bot, and the step-up token is the money
+lock.
+A token that carries a solo scope also writes one `solo_scope_token_issued` log line (client, `sub`, audience, scope,
+`jti`, `exp`; never the token).

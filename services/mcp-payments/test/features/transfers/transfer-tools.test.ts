@@ -1,4 +1,4 @@
-import { createJwtVerifier } from '@poc/mcp-kit';
+import { createJwtVerifier, readListScope, readScope } from '@poc/mcp-kit';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AUDIENCE, createApp } from '../../../src/app.js';
@@ -41,6 +41,27 @@ describe('mcp-payments tools', () => {
     const { tools } = await (await clientFor('juan')).listTools();
     const tiers = Object.fromEntries(tools.map((t) => [t.name, t._meta?.['bank/riskTier']]));
     expect(tiers).toEqual({ list_beneficiaries: 'T1', prepare_transfer: 'T2', execute_transfer: 'T3' });
+  });
+
+  it('declares each tool its call scope, and execute_transfer a narrower list scope', async () => {
+    const { tools } = await (await clientFor('juan')).listTools();
+    const scopes = Object.fromEntries(tools.map((t) => [t.name, [readScope(t._meta), readListScope(t._meta)]]));
+    expect(scopes).toEqual({
+      list_beneficiaries: ['beneficiaries:read', 'beneficiaries:read'],
+      prepare_transfer: ['transfers:prepare', 'transfers:prepare'],
+      execute_transfer: ['transfers:execute', 'transfers:prepare'],
+    });
+  });
+
+  it.each([
+    ['list_beneficiaries', {}, 'beneficiaries:read'],
+    ['prepare_transfer', juanToAna, 'transfers:prepare'],
+    ['execute_transfer', { draft_id: 'd', step_up_token: 't' }, 'transfers:execute'],
+  ])('%s refuses a principal holding every scope except its own', async (name, args, own) => {
+    const others = SCOPE.split(' ').filter((s) => s !== own);
+    const result = await (await clientFor('juan', others.join(' '))).callTool({ name, arguments: args });
+    expect(parseText(result).error).toBe('insufficient_scope');
+    expect(repo.drafts).toEqual([]);
   });
 
   it("lists only the caller's beneficiaries, masked", async () => {
