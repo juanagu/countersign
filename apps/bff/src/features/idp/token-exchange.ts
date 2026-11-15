@@ -69,8 +69,8 @@ function grantedScopes(
   // A downstream token never widens the subject's scopes.
   const allowed = policy.inheritSubjectScopes ? ceiling.filter((scope) => subject.scopes.includes(scope)) : ceiling;
   if (allowed.length === 0) return undefined;
-  if (!requested) return [...allowed];
-  const scopes = requested.split(' ').filter(Boolean);
+  if (requested === undefined) return [...allowed];
+  const scopes = [...new Set(requested.split(' ').filter(Boolean))];
   return scopes.every((scope) => allowed.includes(scope)) ? scopes : undefined;
 }
 
@@ -107,9 +107,13 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
       return oauthError(c, 'invalid_target');
     }
 
+    // Present but blank is a malformed request, never a fallback to the whole ceiling.
+    const requestedScope = field('scope');
+    if (requestedScope !== undefined && requestedScope.trim() === '') return oauthError(c, 'invalid_request');
+
     const subject = await issuer.verifyExchangeSubject(subjectToken, policy.subjectAudience).catch(() => undefined);
     if (!subject || !sameChain(subject, policy.subjectActors)) return oauthError(c, 'invalid_grant');
-    const scopes = grantedScopes(audience, field('scope'), subject, policy);
+    const scopes = grantedScopes(audience, requestedScope, subject, policy);
     if (!scopes) return oauthError(c, 'invalid_scope');
 
     const exchanged = await issuer.issueExchanged({

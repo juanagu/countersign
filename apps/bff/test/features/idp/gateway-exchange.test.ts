@@ -19,7 +19,7 @@ async function post(env: Env, authorization: string, subject_token: string, audi
       subject_token,
       subject_token_type: ACCESS,
       audience,
-      ...(scope && { scope }),
+      ...(scope !== undefined && { scope }),
     }),
   });
   return { res, body: (await res.json()) as Record<string, string> };
@@ -85,6 +85,13 @@ describe('MCP gateway hop of the token exchange (ADR 017)', () => {
     const subject = await gatewayToken(env, 'beneficiaries:read');
     const { body } = await post(env, GATEWAY, subject, 'mcp-payments', 'beneficiaries:read transfers:execute');
     expect(body).toEqual({ error: 'invalid_scope' });
+  });
+
+  it('refuses a blank scope from the gateway instead of widening to the subject', async () => {
+    const env = await buildTestApp();
+    const { res, body } = await post(env, GATEWAY, await gatewayToken(env, 'accounts:read'), 'mcp-accounts', '');
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ error: 'invalid_request' });
   });
 
   it('never outlives the subject token', async () => {

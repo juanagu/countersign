@@ -48,7 +48,14 @@ describe('POST /token (token exchange)', () => {
     expect(((await res.json()) as { scope: string }).scope).toBe('beneficiaries:read');
   });
 
+  it('issues a repeated scope once', async () => {
+    const { res } = await exchange({ scope: 'accounts:read accounts:read  beneficiaries:read accounts:read' });
+    expect(((await res.json()) as { scope: string }).scope).toBe('accounts:read beneficiaries:read');
+  });
+
   it.each([
+    ['a blank scope, which must not fall back to the whole ceiling', { scope: '' }, 'invalid_request'],
+    ['a scope of only spaces', { scope: '   ' }, 'invalid_request'],
     ['a scope the audience does not allow', { scope: 'accounts:read accounts:write' }, 'invalid_scope'],
     ['an unknown audience', { audience: 'mcp-evil' }, 'invalid_target'],
     ['mcp-accounts, which only the gateway may ask for (rule 1)', { audience: 'mcp-accounts' }, 'invalid_target'],
