@@ -5,3 +5,5 @@ pnpm-lock.yaml
 services/bot
 packages/contracts/src/generated
 *.md
+apps/web/test-results
+apps/web/playwright-report
