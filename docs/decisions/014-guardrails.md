@@ -41,7 +41,11 @@ tool may run, and no text may reach the client, before its verdict.
   and the interrupt would never be raised. The customer's approval of the server-rendered card plus step-up is
   that call's fresh evaluation, and the draft it names came from `prepare_transfer` (T2), which is re-evaluated.
 - **Output:** text deltas are released a sentence at a time (terminal punctuation followed by whitespace, or a
-  line break; a dot inside `1.254.300,50` is never followed by whitespace). Each sentence passes a PII-leak check
+  line break; a dot inside `1.254.300,50` is never followed by whitespace). Each sentence first loses its images:
+  a markdown image becomes its alt text, a lone `![` becomes `[` (an alt text with a sentence break splits the
+  image across checks, and what is left is at most a link, which needs a click) and an HTML `<img>` is dropped.
+  The bot never sends an image, and a remote one loads with no click, so its URL could carry the conversation
+  off-site if text in a tool result talked the model into writing one. Then it passes a PII-leak check
   (masked in place) and a grounding check: every amount (with a currency or unit, or ≥ 1000, or with decimals),
   percentage, date and account number must appear in this run's domain-tool results, recorded by
   `PolicyToolset` before the model sees them, or in the tool results of earlier turns in the history (not
@@ -58,8 +62,13 @@ tool may run, and no text may reach the client, before its verdict.
   `execute_transfer` call there. A `RUN_ERROR`'s message is `str(exc)`, which can quote an IdP URL, an HTTP
   body or model output: the client gets a fixed Spanish message (and the event's `code`, if any), and the
   original is logged redacted. Each change is logged with a metric: `guardrail.input.blocked`,
-  `guardrail.output.ungrounded`, `guardrail.output.pii_redacted`, `guardrail.output.surface_dropped`,
+  `guardrail.output.ungrounded`, `guardrail.output.pii_redacted`, `guardrail.output.image_removed`,
+  `guardrail.output.surface_dropped`,
   `guardrail.output.run_error`, `guardrail.policy.write_not_requested`.
+- **Images in the browser too:** the web app's assistant markdown (Streamdown, whose defaults let any http(s)
+  image through) gets an `img` component that renders only same-origin images, and nginx sends a
+  Content-Security-Policy whose `img-src` is `'self' data: blob:`, so an image the guard missed still isn't
+  fetched from another origin.
 - **Logs and traces:** a `logging.Filter` redacts the formatted message, every `extra=` field and exception text.
   Pydantic AI instrumentation runs with `include_content=False`: agent spans keep their structure (model, tool
   names, tokens, timings) but no prompts, completions, tool arguments or results. Customer, beneficiary and

@@ -16,7 +16,7 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 - `PendingApprovals` (`Guardrails.pending_approvals`): `record()` / `consume()` the approval interrupts raised per
   user and thread; `recording_interrupts(events, pending, key)` records those a run ends with. Only a resume that
   consumes them skips the classifier.
-- `OutputGuard(evidence)`: sentence buffering, `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
+- `OutputGuard(evidence)`: sentence buffering, `image_check` (`images.strip_images`), `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
   grounding, and a safe `RUN_ERROR` message.
 - `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`,
   `tools_returned_in()`, `tool_results_in()`, `customer_spoke_since_last_response()`.
@@ -36,7 +36,7 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 Request → adapter masks PII in customer turns → `Guardrails.start_run` (classifier on `GUARD_MODEL`, in the
 background) → agent run in its own task. `PolicyToolset` awaits the verdict above T0, records each domain-tool
 result as evidence, and re-evaluates writes after third-party text with the write-intent check. The stream
-forwards `RUN_STARTED`, holds the rest until the verdict, then releases text a sentence at a time after the PII
+forwards `RUN_STARTED`, holds the rest until the verdict, then releases text a sentence at a time after the image, PII
 and grounding checks. Logs pass `RedactingFilter`; agent spans carry no content (`include_content=False`, ADR 014) and every
 span passes `RedactingSpanExporter` before Phoenix.
 

@@ -1,4 +1,4 @@
-"""Streaming output guard: text is released a sentence at a time, after grounding and PII-leak checks.
+"""Streaming output guard: text is released a sentence at a time, after image, PII-leak and grounding checks.
 
 It also withholds what the client must not see: reasoning and the raw render_ui tool call.
 """
@@ -24,6 +24,7 @@ from ag_ui.core import (
 
 from app.guardrails.figures import bullet_masks
 from app.guardrails.grounding import SURFACE_PLUMBING_KEYS, Evidence, ungrounded, ungrounded_in_surface
+from app.guardrails.images import strip_images
 from app.guardrails.pii import redact, redact_with_kinds
 from app.guardrails.verdict import ALLOW, Action, Verdict, block
 
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 UNGROUNDED_METRIC = "guardrail.output.ungrounded"
 PII_METRIC = "guardrail.output.pii_redacted"
+IMAGE_METRIC = "guardrail.output.image_removed"
 SURFACE_DROPPED_METRIC = "guardrail.output.surface_dropped"
 RUN_ERROR_METRIC = "guardrail.output.run_error"
 A2UI_ACTIVITY = "a2ui-surface"  # Model-built; `bank-template` cards are built from tool results in code.
@@ -50,6 +52,14 @@ SENTENCE_END = re.compile(r"[.!?…]+[\"')\]*_]*\s+|\n+")
 SentenceCheck = Callable[[str, Evidence], Verdict]
 
 
+IMAGE_CATEGORY = "image"
+
+
+def image_check(sentence: str, _: Evidence) -> Verdict:
+    stripped = strip_images(sentence)
+    return Verdict(Action.REDACT, "image", IMAGE_CATEGORY, stripped) if stripped != sentence else ALLOW
+
+
 def pii_leak_check(sentence: str, _: Evidence) -> Verdict:
     redacted, kinds = redact_with_kinds(sentence)
     return Verdict(Action.REDACT, "personal data", ",".join(kinds), redacted) if kinds else ALLOW
@@ -63,7 +73,8 @@ def grounding_check(sentence: str, evidence: Evidence) -> Verdict:
     return block(f"{len(missing)} figure(s) not in this run's tool results", text=UNGROUNDED_FALLBACK + trailing)
 
 
-DEFAULT_CHECKS: tuple[SentenceCheck, ...] = (pii_leak_check, grounding_check)
+# Images go first, so an image URL never reaches the other checks or the client.
+DEFAULT_CHECKS: tuple[SentenceCheck, ...] = (image_check, pii_leak_check, grounding_check)
 
 
 def checked_sentence(
@@ -87,6 +98,12 @@ def released_text(text: str, evidence: Evidence) -> str:
     """A whole answer as the guard released it, sentence by sentence; for a reload, so nothing is logged."""
     sentences, rest = split_sentences(text)
     return "".join(checked_sentence(sentence, evidence)[0] for sentence in [*sentences, rest] if sentence)
+
+
+def _metric(verdict: Verdict) -> str:
+    if verdict.blocked:
+        return UNGROUNDED_METRIC
+    return IMAGE_METRIC if verdict.category == IMAGE_CATEGORY else PII_METRIC
 
 
 def split_sentences(buffer: str) -> tuple[list[str], str]:
@@ -149,7 +166,7 @@ class OutputGuard:
     def check_sentence(self, sentence: str) -> str:
         sentence, changes = checked_sentence(sentence, self._evidence, self._checks)
         for verdict in changes:
-            metric = UNGROUNDED_METRIC if verdict.blocked else PII_METRIC
+            metric = _metric(verdict)
             logger.warning("output sentence changed", extra={"metric": metric, "reason": verdict.reason})
         return sentence
 

