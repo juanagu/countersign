@@ -1,6 +1,6 @@
 # 018 — LLM failover in process: a `FallbackModel` chain per role, a first-event deadline and a circuit breaker
 
-**Status:** accepted; tasks 1–4 built (commits 608d160, f32459c). Task 5 ran live on 2026-11-14 (results below).
+**Status:** accepted; tasks 1–4 built (commits a648c5b, 6b313d5). Task 5 ran live on 2026-11-14 (results below).
 
 As built: the fault spec is `target:fault`, where target is `orchestrator`, `guard`, `primary` (both roles' primaries) or
 `all` (every model in both chains), and 429/529/503/500 are accepted as fault aliases. The guard deadline is
