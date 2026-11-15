@@ -1,0 +1,31 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.page-center {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.muted {
+  color: var(--color-text-muted);
+}

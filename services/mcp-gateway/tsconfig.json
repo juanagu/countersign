@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The integration test mounts the real IdP routes (apps/bff) and the real mcp-accounts and mcp-payments apps.
+    "rootDir": "../..",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test"]
+}

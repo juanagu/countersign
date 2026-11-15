@@ -1,0 +1,20 @@
+/* One card for A2UI (.gen-card) and the server templates (.bank-card). */
+.gen-card,
+.bank-card {
+  display: grid;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: var(--card-max);
+  padding: var(--space-4);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+@media (min-width: 768px) {
+  .gen-card,
+  .bank-card {
+    padding: var(--space-5);
+  }
+}

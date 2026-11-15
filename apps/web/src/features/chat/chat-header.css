@@ -1,0 +1,103 @@
+.chat-header {
+  flex: none;
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.chat-header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.chat-header__mark {
+  flex: none;
+}
+
+.chat-header__name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.chat-header__sub {
+  display: none;
+  padding-left: var(--space-2);
+  color: var(--color-text-muted);
+  border-left: 1px solid var(--color-border);
+}
+
+.chat-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* An icon-only button on a phone; icon and label from 768. */
+.chat-header__actions .chat-header__small {
+  font-size: var(--text-sm);
+}
+
+.chat-header__actions .chat-header__new {
+  width: var(--tap);
+  padding: 0;
+  color: var(--color-text-muted);
+}
+
+.chat-header__new-label {
+  display: none;
+}
+
+.chat-header__user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chat-header__avatar {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.chat-header__user-name {
+  display: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+@media (min-width: 768px) {
+  .chat-header {
+    height: 4rem;
+    padding: 0 var(--space-6);
+  }
+
+  .chat-header__sub,
+  .chat-header__user-name,
+  .chat-header__new-label {
+    display: block;
+  }
+
+  .chat-header__actions {
+    gap: var(--space-3);
+  }
+
+  .chat-header__actions .chat-header__new {
+    width: auto;
+    font-size: var(--text-sm);
+    padding: 0 var(--space-3);
+  }
+}

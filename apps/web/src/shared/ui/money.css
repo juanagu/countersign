@@ -1,0 +1,35 @@
+.money {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.money__cents {
+  color: var(--color-text-muted);
+}
+
+.money--in {
+  color: var(--color-positive);
+}
+
+.money--in .money__cents {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.money--hero {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.money--hero .money__cur,
+.money--hero .money__cents {
+  font-size: 0.6em;
+  font-weight: 500;
+  vertical-align: 0.42em;
+}
+
+.money--hero .money__cur {
+  color: var(--color-text-muted);
+}

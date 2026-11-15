@@ -1,0 +1,149 @@
+name: chatbotpoc
+
+x-node-service: &node-service
+  restart: unless-stopped
+  env_file:
+    - path: ../.env
+      required: false
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bank}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bank}
+      POSTGRES_DB: ${POSTGRES_DB:-bank}
+    ports: ['127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432']
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    ports: ['127.0.0.1:${REDIS_HOST_PORT:-6379}:6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  phoenix:
+    image: arizephoenix/phoenix:21.1.0
+    environment:
+      # Local, loopback-bound, synthetic data only (docs/decisions/005-phoenix-auth-off-locally.md).
+      PHOENIX_ENABLE_AUTH: 'false'
+    ports:
+      - '127.0.0.1:6006:6006' # UI + OTLP/HTTP (/v1/traces)
+      - '127.0.0.1:4317:4317' # OTLP/gRPC
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:6006/healthz').status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  mcp-accounts:
+    <<: *node-service
+    build: { context: .., dockerfile: services/mcp-accounts/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-bank}:${POSTGRES_PASSWORD:-bank}@postgres:5432/${POSTGRES_DB:-bank}
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: mcp-accounts
+    ports: ['127.0.0.1:${MCP_ACCOUNTS_HOST_PORT:-8101}:8101']
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  mcp-payments:
+    <<: *node-service
+    build: { context: .., dockerfile: services/mcp-payments/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-bank}:${POSTGRES_PASSWORD:-bank}@postgres:5432/${POSTGRES_DB:-bank}
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: mcp-payments
+    ports: ['127.0.0.1:${MCP_PAYMENTS_HOST_PORT:-8102}:8102']
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # ADR 017: the only way to the two servers above; the bot calls it, never them.
+  mcp-gateway:
+    <<: *node-service
+    build: { context: .., dockerfile: services/mcp-gateway/Dockerfile }
+    environment:
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      IDP_TOKEN_URL: http://bff:3000/token
+      MCP_ACCOUNTS_URL: http://mcp-accounts:8101/mcp
+      MCP_PAYMENTS_URL: http://mcp-payments:8102/mcp
+      MCP_GATEWAY_CLIENT_SECRET: ${MCP_GATEWAY_CLIENT_SECRET:-local-dev-gateway-secret-change-me}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: mcp-gateway
+    ports: ['127.0.0.1:${MCP_GATEWAY_HOST_PORT:-8100}:8100']
+    depends_on:
+      mcp-accounts: { condition: service_healthy }
+      mcp-payments: { condition: service_healthy }
+
+  bot:
+    <<: *node-service
+    build: { context: ../services/bot }
+    environment:
+      LLM_FAULT_INJECTION: ${LLM_FAULT_INJECTION:-}
+      IDP_ISSUER: http://bff:3000
+      IDP_JWKS_URL: http://bff:3000/.well-known/jwks.json
+      IDP_TOKEN_URL: http://bff:3000/token
+      MCP_GATEWAY_URL: http://mcp-gateway:8100/mcp
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bank}:${POSTGRES_PASSWORD:-bank}@postgres:5432/${POSTGRES_DB:-bank}
+      KB_DIR: /kb
+      EMBEDDING_CACHE_DIR: /models
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: bot
+    volumes:
+      - ../data/kb:/kb:ro
+      - models:/models
+    ports: ['127.0.0.1:${BOT_HOST_PORT:-8000}:8000']
+    depends_on:
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      mcp-gateway: { condition: service_healthy }
+
+  bff:
+    <<: *node-service
+    build: { context: .., dockerfile: apps/bff/Dockerfile }
+    environment:
+      IDP_ISSUER: http://bff:3000
+      BOT_AGENT_URL: http://bot:8000/agent
+      REDIS_URL: redis://redis:6379
+      MCP_GATEWAY_CLIENT_SECRET: ${MCP_GATEWAY_CLIENT_SECRET:-local-dev-gateway-secret-change-me}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_SERVICE_NAME: bff
+      # Keep CopilotKit's runtime telemetry off even without a .env (it is optional above).
+      COPILOTKIT_TELEMETRY_DISABLED: 'true'
+      DO_NOT_TRACK: '1'
+    ports: ['127.0.0.1:${BFF_HOST_PORT:-3000}:3000']
+    depends_on:
+      redis: { condition: service_healthy }
+      bot: { condition: service_healthy }
+      phoenix: { condition: service_healthy }
+
+  web:
+    build: { context: .., dockerfile: apps/web/Dockerfile }
+    restart: unless-stopped
+    ports: ['127.0.0.1:${WEB_HOST_PORT:-5173}:5173']
+    depends_on:
+      bff: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  models: # fastembed model cache, shared by ingest and query embedding

@@ -1,0 +1,39 @@
+.chip {
+  position: relative;
+  min-height: 2.5rem;
+  max-width: 100%;
+  padding: 0 var(--space-4);
+  overflow: hidden;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+/* Extends the hit area to 44px without growing the pill. */
+.chip::after {
+  content: '';
+  position: absolute;
+  inset: -2px 0;
+}
+
+.chip:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}

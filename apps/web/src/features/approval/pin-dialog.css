@@ -1,0 +1,114 @@
+/* Below 768 the PIN entry is a bottom sheet, from 768 a centred dialog. */
+.pin-dialog {
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-5) var(--space-6);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 0;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+
+.pin-dialog::backdrop {
+  background: var(--color-scrim);
+}
+
+.pin-dialog__form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.pin-dialog__handle {
+  justify-self: center;
+  width: 2.25rem;
+  height: 0.25rem;
+  margin-bottom: var(--space-2);
+  background: var(--color-border-input);
+  border-radius: var(--radius-pill);
+}
+
+.pin-dialog__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.pin-dialog__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+}
+
+.pin-dialog__summary strong {
+  color: var(--color-text);
+  font-size: var(--text-md);
+}
+
+.pin-dialog__label {
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.pin-dialog__input {
+  height: 3.5rem;
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--text-xl);
+  letter-spacing: 0.5em;
+  text-align: center;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+}
+
+.pin-dialog__input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.pin-dialog__input[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+.pin-dialog__error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.pin-dialog__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+@media (min-width: 768px) {
+  .pin-dialog {
+    inset: 0;
+    width: 24rem;
+    margin: auto;
+    padding: var(--space-6);
+    border-radius: var(--radius-xl);
+  }
+
+  .pin-dialog__handle {
+    display: none;
+  }
+}

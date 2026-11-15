@@ -1,0 +1,36 @@
+{
+  "name": "@poc/mcp-kit",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "@poc/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./telemetry": {
+      "@poc/source": "./src/telemetry.ts",
+      "default": "./dist/telemetry.js"
+    },
+    "./testing": {
+      "@poc/source": "./src/testing.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.301.1",
+    "@opentelemetry/instrumentation": "^0.301.1",
+    "@opentelemetry/instrumentation-http": "^0.301.1",
+    "@opentelemetry/instrumentation-undici": "^0.35.0",
+    "@opentelemetry/sdk-node": "^0.301.1",
+    "hono": "^4.13.18",
+    "jose": "^6.2.17",
+    "zod": "^4.6.7"
+  }
+}

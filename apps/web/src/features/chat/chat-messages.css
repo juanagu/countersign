@@ -1,0 +1,162 @@
+/* The thread: a left-aligned assistant column and right-aligned user bubbles, 42rem wide at most. */
+.chat-main [data-testid='copilot-scroll-content'] {
+  padding-top: var(--space-6);
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+}
+
+.chat-main [data-testid='copilot-message-list'] {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-main [data-testid='copilot-user-message'] {
+  align-items: flex-end;
+  margin-top: var(--space-8);
+  padding-top: 0;
+}
+
+.chat-main [data-testid='copilot-user-message'] > div:first-child {
+  max-width: 85%;
+  padding: 0.625rem 0.875rem;
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  border-radius: 1.125rem 1.125rem 0.375rem 1.125rem;
+  overflow-wrap: anywhere;
+}
+
+/* A message that has not produced text yet (a tool call, a surface) takes no space of its own. */
+.chat-main [data-testid='copilot-assistant-message'] {
+  max-width: 65ch;
+}
+
+.chat-main [data-testid='copilot-assistant-message']:has(.space-y-4:not(:empty)) {
+  margin-top: var(--space-5);
+}
+
+/* CopilotKit's `prose` gives each block its own margins; blocks are spaced 12px apart here instead. */
+.chat-main [data-testid='copilot-assistant-message'] .space-y-4 > * {
+  margin: 0;
+}
+
+.chat-main [data-testid='copilot-assistant-message'] .space-y-4 > * + * {
+  margin-top: var(--space-3);
+}
+
+/* CopilotKit pads and spaces its surface container; the thread's own rhythm replaces that. */
+.chat-main [data-testid='copilot-message-list'] div:has(> div > .a2ui-surface) {
+  padding-block: 0;
+  gap: var(--space-3);
+}
+
+.chat-main [data-testid='copilot-message-list'] div:has(> .a2ui-surface) {
+  gap: var(--space-3);
+}
+
+/* Cards, the approval step and the typing dots are not messages: they sit 12px under what precedes them. */
+.chat-main [data-testid='copilot-message-list'] > :not([data-testid]) {
+  margin-top: var(--space-3);
+}
+
+.chat-main [data-testid='copilot-message-list'] > :first-child {
+  margin-top: 0;
+}
+
+.chat-main [data-testid='copilot-user-toolbar'],
+.chat-main [data-testid='copilot-assistant-toolbar'] {
+  display: none;
+}
+
+.chat-main .typing {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 1.5rem;
+  margin: var(--space-2) 0 0;
+}
+
+.chat-main .typing span {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  animation: typing-blink 1.2s infinite both;
+}
+
+.chat-main .typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.chat-main .typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-main .typing span {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+@media (min-width: 768px) {
+  .chat-main [data-testid='copilot-scroll-content'] > div {
+    padding-inline: var(--space-2);
+  }
+
+  .chat-main [data-testid='copilot-scroll-content'] {
+    padding-top: var(--space-8);
+  }
+
+  .chat-main [data-testid='copilot-user-message'] > div:first-child {
+    max-width: 75%;
+  }
+}
+
+/* Status lines that sit in the thread: a running tool, and a failed run. */
+.chat-main .tool-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.chat-main .tool-line .icon {
+  flex: none;
+  color: var(--color-primary);
+}
+
+.chat-main [data-testid='copilot-message-list'] > .run-notice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: var(--card-max);
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.run-notice > .icon {
+  color: var(--color-danger);
+}
+
+.run-notice > p {
+  margin: 0;
+}

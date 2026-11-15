@@ -1,0 +1,24 @@
+.login-card {
+  width: 100%;
+  max-width: 24rem;
+  padding: var(--space-6);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.login-card__title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xl);
+}
+
+.login-card__users {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.login-card__error {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-sm);
+}

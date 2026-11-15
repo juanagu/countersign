@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bank-templates.json",
+  "title": "BankTemplate",
+  "description": "Server-rendered transactional cards. Their data comes from MCP tool results through code, never from model text (security rule 4).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TransferConfirmTemplate"
+    },
+    {
+      "$ref": "#/$defs/TransferReceiptTemplate"
+    }
+  ],
+  "$defs": {
+    "TransferConfirmTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template", "version", "surfaceId", "nonce", "data"],
+      "properties": {
+        "template": {
+          "const": "transfer-confirm"
+        },
+        "version": {
+          "const": 1
+        },
+        "surfaceId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "nonce": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "data": {
+          "$ref": "#/$defs/TransferConfirmData"
+        }
+      }
+    },
+    "TransferReceiptTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template", "version", "surfaceId", "nonce", "data"],
+      "properties": {
+        "template": {
+          "const": "transfer-receipt"
+        },
+        "version": {
+          "const": 1
+        },
+        "surfaceId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "nonce": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "data": {
+          "$ref": "#/$defs/TransferReceiptData"
+        }
+      }
+    },
+    "TransferConfirmData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftId",
+        "amount",
+        "fee",
+        "total",
+        "currency",
+        "sourceAccount",
+        "beneficiaryId",
+        "beneficiary",
+        "expiresAt"
+      ],
+      "properties": {
+        "draftId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "amount": {
+          "type": "string",
+          "maxLength": 24,
+          "pattern": "^-?[0-9]+\\.[0-9]{2}$"
+        },
+        "fee": {
+          "type": "string",
+          "maxLength": 24,
+          "pattern": "^-?[0-9]+\\.[0-9]{2}$"
+        },
+        "total": {
+          "type": "string",
+          "maxLength": 24,
+          "pattern": "^-?[0-9]+\\.[0-9]{2}$"
+        },
+        "currency": {
+          "enum": ["ARS", "USD"]
+        },
+        "sourceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["alias", "number"],
+          "properties": {
+            "alias": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "number": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        },
+        "beneficiary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "account"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "bank": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "account": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "maxLength": 40,
+          "format": "date-time"
+        },
+        "beneficiaryId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Bound into the step-up token's authorization_details."
+        }
+      }
+    },
+    "TransferReceiptData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transferId",
+        "draftId",
+        "reference",
+        "executedAt",
+        "amount",
+        "fee",
+        "currency",
+        "sourceAccount",
+        "beneficiary"
+      ],
+      "properties": {
+        "transferId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "draftId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "executedAt": {
+          "type": "string",
+          "maxLength": 40,
+          "format": "date-time"
+        },
+        "amount": {
+          "type": "string",
+          "maxLength": 24,
+          "pattern": "^-?[0-9]+\\.[0-9]{2}$"
+        },
+        "fee": {
+          "type": "string",
+          "maxLength": 24,
+          "pattern": "^-?[0-9]+\\.[0-9]{2}$"
+        },
+        "currency": {
+          "enum": ["ARS", "USD"]
+        },
+        "sourceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["alias", "number"],
+          "properties": {
+            "alias": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "number": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        },
+        "beneficiary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "account"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "bank": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "account": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        }
+      }
+    }
+  }
+}

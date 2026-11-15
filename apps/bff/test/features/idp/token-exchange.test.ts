@@ -1,0 +1,176 @@
+import { createLocalJWKSet, jwtVerify } from 'jose';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createApp } from '../../../src/app.js';
+import { TokenIssuer } from '../../../src/features/idp/token-issuer.js';
+import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER, testDeps } from '../../support/build-app.js';
+
+const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
+const ACCESS = 'urn:ietf:params:oauth:token-type:access_token';
+const basic = (id: string, secret: string) => `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
+
+async function exchange(fields: Record<string, string>, authorization = basic('bot', TEST_BOT_SECRET)) {
+  const { app, issuer } = await buildTestApp();
+  const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+  const body = new URLSearchParams({
+    grant_type: GRANT,
+    subject_token: botToken,
+    subject_token_type: ACCESS,
+    audience: 'mcp-gateway',
+    ...fields,
+  });
+  const res = await app.request('/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', authorization },
+    body,
+  });
+  return { res, app, issuer, botToken };
+}
+
+describe('POST /token (token exchange)', () => {
+  it('exchanges a bot token for a gateway-bound token with the banking scopes and an act claim', async () => {
+    const { res, app } = await exchange({});
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { access_token: string; scope: string; expires_in: number };
+    expect(body.scope).toBe('accounts:read beneficiaries:read transfers:prepare transfers:execute');
+    expect(body.expires_in).toBeLessThanOrEqual(300);
+    const jwks = createLocalJWKSet(await (await app.request('/.well-known/jwks.json')).json());
+    const { payload } = await jwtVerify(body.access_token, jwks, { issuer: TEST_ISSUER, audience: 'mcp-gateway' });
+    expect(payload).toMatchObject({ sub: 'ana', act: { sub: 'bot' } });
+  });
+
+  it('grants the gateway the execute scope, which execute_transfer also requires', async () => {
+    const { res } = await exchange({});
+    expect(((await res.json()) as { scope: string }).scope).toContain('transfers:execute');
+  });
+
+  it('narrows to a requested subset', async () => {
+    const { res } = await exchange({ scope: 'beneficiaries:read' });
+    expect(((await res.json()) as { scope: string }).scope).toBe('beneficiaries:read');
+  });
+
+  it.each([
+    ['a scope the audience does not allow', { scope: 'accounts:read accounts:write' }, 'invalid_scope'],
+    ['an unknown audience', { audience: 'mcp-evil' }, 'invalid_target'],
+    ['mcp-accounts, which only the gateway may ask for (rule 1)', { audience: 'mcp-accounts' }, 'invalid_target'],
+    ['mcp-payments, which only the gateway may ask for (rule 1)', { audience: 'mcp-payments' }, 'invalid_target'],
+    ['the bot itself as audience', { audience: 'bot' }, 'invalid_target'],
+    ['an Object.prototype key as audience', { audience: 'constructor' }, 'invalid_target'],
+    ['another prototype key as audience', { audience: '__proto__' }, 'invalid_target'],
+    ['a wrong grant type', { grant_type: 'client_credentials' }, 'unsupported_grant_type'],
+    ['a garbage subject token', { subject_token: 'not-a-jwt' }, 'invalid_grant'],
+  ])('rejects %s', async (_, fields, error) => {
+    const { res } = await exchange(fields);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error });
+  });
+
+  describe('a subject token close to expiry', () => {
+    afterEach(() => vi.useRealTimers());
+
+    // The bot token lives 300 s; jump to `remaining` seconds before its exp, then exchange it.
+    async function exchangeWithRemaining(remaining: number) {
+      const { app, issuer } = await buildTestApp();
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const issuedAt = Math.floor(Date.now() / 1000);
+      vi.setSystemTime(issuedAt * 1000);
+      const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+      vi.setSystemTime((issuedAt + 300 - remaining) * 1000);
+      return app.request('/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
+        body: new URLSearchParams({
+          grant_type: GRANT,
+          subject_token: botToken,
+          subject_token_type: ACCESS,
+          audience: 'mcp-gateway',
+        }),
+      });
+    }
+
+    it.each([1, 4])('answers invalid_grant with %i s left, instead of a token dead on arrival', async (remaining) => {
+      const res = await exchangeWithRemaining(remaining);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid_grant' });
+    });
+
+    it('issues a token capped at the subject token expiry with 5 s left', async () => {
+      const res = await exchangeWithRemaining(5);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { expires_in: number }).expires_in).toBe(5);
+    });
+  });
+
+  it('rejects a session token (aud=bff) as subject: only the bot token can be exchanged', async () => {
+    const { app, issuer } = await buildTestApp();
+    const session = await issuer.issueSession({ id: 'ana', name: 'Ana Gómez' });
+    const res = await app.request('/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
+      body: new URLSearchParams({
+        grant_type: GRANT,
+        subject_token: session,
+        subject_token_type: ACCESS,
+        audience: 'mcp-gateway',
+      }),
+    });
+    expect(await res.json()).toEqual({ error: 'invalid_grant' });
+  });
+
+  it.each([
+    ['no client credentials', ''],
+    ['a wrong secret', basic('bot', 'nope')],
+    ['an unknown client', basic('mallory', TEST_BOT_SECRET)],
+    ['an Object.prototype key as client id', basic('constructor', 'x')],
+  ])('rejects %s with 401', async (_, authorization) => {
+    const { res } = await exchange({}, authorization);
+    expect(res.status).toBe(401);
+  });
+
+  describe('client secrets with reserved characters (RFC 6749 §2.3.1)', () => {
+    const SECRET = 'colon:plus+space pct%-0123456789';
+
+    async function exchangeAs(authorization: string) {
+      const issuer = await TokenIssuer.create(TEST_ISSUER);
+      const app = createApp(testDeps(issuer, { clients: { bot: SECRET } }));
+      const res = await app.request('/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization },
+        body: new URLSearchParams({
+          grant_type: GRANT,
+          subject_token: await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' }),
+          subject_token_type: ACCESS,
+          audience: 'mcp-gateway',
+        }),
+      });
+      return res.status;
+    }
+    const formEncode = (value: string) => new URLSearchParams({ v: value }).toString().slice('v='.length);
+
+    it('accepts a form-encoded secret, splitting only on the first colon', async () => {
+      expect(await exchangeAs(basic('bot', formEncode(SECRET)))).toBe(200);
+    });
+
+    it('accepts a raw colon in the secret', async () => {
+      expect(await exchangeAs(basic('bot', formEncode(SECRET).replaceAll('%3A', ':')))).toBe(200);
+    });
+
+    it.each([
+      ['the secret cut at its first colon', basic('bot', 'colon')],
+      ['the secret not form-encoded', basic('bot', SECRET)],
+      ['a malformed escape', basic('bot', '%zz')],
+      ['no colon at all', `Basic ${Buffer.from('bot').toString('base64')}`],
+    ])('rejects %s with 401', async (_, authorization) => {
+      expect(await exchangeAs(authorization)).toBe(401);
+    });
+  });
+
+  it('rejects a JSON body', async () => {
+    const { app } = await buildTestApp();
+    const res = await app.request('/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: basic('bot', TEST_BOT_SECRET) },
+      body: '{}',
+    });
+    expect(res.status).toBe(400);
+  });
+});
