@@ -6,10 +6,10 @@ from pydantic_ai import ApprovalRequired, RunContext, ToolReturn
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from app.chat.deps import BotDeps
-from app.guardrails.messages import tool_returns_in
+from app.policy.drafts import open_draft
 from app.policy.frequency_caps import FrequencyCaps
 from app.policy.risk_tier import RISK_TIER_META_KEY, RiskTier
-from app.policy.tool_policy import DRAFT_BOUND_TOOLS, ToolPolicy, drafts_prepared_in
+from app.policy.tool_policy import DRAFT_BOUND_TOOLS, ToolPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +45,13 @@ class PolicyToolset(WrapperToolset[BotDeps]):
     """Shows only the tools loaded skills grant, re-checks every call, and marks results as untrusted data.
 
     Above T0 a call waits for the run's input verdict. A write in a conversation that holds third-party text is
-    re-evaluated against the customer's own words, and writes are capped per conversation.
+    re-evaluated against the customer's own words, and writes are capped per conversation. `delegates` names the
+    agent's delegate tools, whose returns carry a subagent's results.
     """
 
     policy: ToolPolicy
     caps: FrequencyCaps = field(default_factory=FrequencyCaps)
+    delegates: frozenset[str] = frozenset()
 
     async def get_tools(self, ctx: RunContext[BotDeps]) -> dict[str, ToolsetTool[BotDeps]]:
         tools = await self.wrapped.get_tools(ctx)
@@ -61,9 +63,9 @@ class PolicyToolset(WrapperToolset[BotDeps]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[BotDeps], tool: ToolsetTool[BotDeps]
     ) -> Any:
         tier = tool_tier(tool)
-        # The run's messages: the stored history, and this run's results, a subagent's evidence record included.
-        drafts = drafts_prepared_in(tool_returns_in(ctx.messages)) if name in DRAFT_BOUND_TOOLS else set()
-        decision = self.policy.check_call(name, tier, tool_args, ctx.deps.loaded_skills, drafts)
+        # The run's messages: the stored history and this run's results, so a resume checks the same draft.
+        draft = open_draft(ctx.messages, delegates=self.delegates) if name in DRAFT_BOUND_TOOLS else None
+        decision = self.policy.check_call(name, tier, tool_args, ctx.deps.loaded_skills, draft)
         if not decision.allowed or tier is None:
             return _denied(name, decision.reason)
         if reason := await self._guard_denial(name, tier, tool_args, ctx, needs_approval=decision.needs_approval):

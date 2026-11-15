@@ -9,14 +9,18 @@ gateway token. Subagents stop at T2: the orchestrator owns every T3 tool.
 - `SubagentRegistry.from_dir(directory, skills=...)`: parses `services/bot/subagents/*.md`, which have a skill's
   frontmatter and validators (`parse_skill`). A spec above T2 (`SUBAGENT_MAX_TIER`), one named like a skill, or
   a duplicate name fails to load; an approval-only scope fails like it does for a skill. `.get`, `.specs()`,
-  `.names()`, `.scopes_by_skill()` (`{name: scopes}`, for that subagent's own banking toolset) and `.index()`
-  (the agent list for the orchestrator's instructions, or `None`).
-- `delegate_tool_name(name)`: `ask_<name>`, the orchestrator's tool for that subagent.
+  `.names()`, `.delegate_tools()` (the orchestrator's delegate tool names, which `main.create_app` hands to the chat
+  and conversations routers), `.scopes_by_skill()` (`{name: scopes}`, for that subagent's own banking toolset) and
+  `.index()` (the agent list for the orchestrator's instructions, or `None`).
+- `delegate_tool_name(name)` and `DELEGATE_PREFIX`: `ask_<name>`, the orchestrator's tool for that subagent. Only
+  naming and the evals use the prefix; the guardrails and the replay get the registry's names.
 - `build_subagent(spec, model, domain_tools, caps, clock)` (`build.py`): an `Agent[BotDeps, str]` named after the spec,
   with `genui_toolset()` and `PolicyToolset(TemplateToolset(banking))` over a registry holding only its own skill. Its
   output has no `DeferredToolRequests`, so a deferred call fails its run with `UserError`.
 - `delegate_toolset([Subagent(spec, agent)])` (`delegate.py`): one `ask_<name>(request)` tool per subagent, plus
-  `subagent_prompt`, `forwarded_events`, `last_prepared_draft`, `DRAFT_SKILL` (`transfers`) and `DRAFT_NEXT_STEP`.
+  `subagent_prompt`, `previous_reply`, `forwarded_events`, `last_prepared_draft`, `DRAFT_SKILL` (`transfers`) and
+  `DRAFT_NEXT_STEP`.
+- `ToolProgressRelay` and `SubagentToolProgress` (`progress.py`): the subagent's tool calls, relayed by name.
 - Shipped: `services/bot/subagents/payments.md` (T2: beneficiaries, accounts, `prepare_transfer`), on
   `PAYMENTS_AGENT_MODEL` (empty = the orchestrator's models). `main.build_agent_tree` wires it.
 
@@ -24,15 +28,20 @@ gateway token. Subagents stop at T2: the orchestrator owns every T3 tool.
 
 `ask_payments(request)` awaits the input verdict (blocked: no subagent run), then runs the subagent with
 `dataclasses.replace(deps, loaded_skills={name}, unavailable_servers=set())`, so identity, token, thread and the same
-`RunGuard` carry over, and `usage=ctx.usage`. The prompt holds the customer's last three redacted messages and the
-request, labelled as the orchestrator's; there is no history. The return is
+`RunGuard` carry over, and `usage=ctx.usage`. The prompt holds the subagent's own previous reply in the thread (the
+last `ask_<name>` return's `reply`, read by code, so "la segunda" resolves its own question), the customer's last three
+redacted messages and the request, labelled as the orchestrator's, each escaped so no text can close its tag. There is
+no other history. The return is
 `{"untrusted_data": {"agent", "status", "reply", "draft_id"}, "note"}`: `status` (`ok`, `unavailable`, `failed`) and
 `draft_id` (from the last successful `prepare_transfer` result) are set by code. When `draft_id` is set, the delegate
 also adds `transfers` to the orchestrator's `loaded_skills`, so its next step lists `execute_transfer` without a
 `load_skill` call, puts the fixed `DRAFT_NEXT_STEP` (call `execute_transfer` with exactly that `draft_id`) beside the
 wrapper as `next_step`, and records the load as a `skill_load_record` metadata item, which a resume's replay reads
-(`skills_loaded_in`). Without a draft it loads nothing. Its `metadata` carries the
+(`skills_loaded_in`, only on a delegate tool's return). Without a draft it loads nothing. Its `metadata` carries the
 `bank-template` events of template tools and the `a2ui-surface` events of `render_ui` (the output guard checks them
-like the orchestrator's), plus one evidence record of the subagent's tool results for later turns. The call's events
-are withheld from the client (`is_server_only`). Each run logs one `subagent.run` line: agent, status, duration,
+like the orchestrator's), plus one evidence record of the subagent's tool results for later turns. The call's own
+events are withheld from the client (`is_server_only` with the registry's delegate names). The subagent runs
+unstreamed through `agent.iter`; each of its tool calls reaches the client as `TOOL_CALL_START`, `TOOL_CALL_END` and an
+empty `TOOL_CALL_RESULT` with the tool name only (`ToolProgressRelay`), so the web's progress labels show; arguments and
+results never leave. Each run logs one `subagent.run` line: agent, status, duration,
 requests, tool names, trace id, never text or arguments.

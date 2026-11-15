@@ -1,5 +1,5 @@
 """A draft from `ask_payments` loads `transfers` in code, so the orchestrator reaches the approval interrupt without
-calling `load_skill`, and a resume's history replay finds `transfers` loaded (ADR 021 §3, As built)."""
+calling `load_skill`, and a resume's history replay finds `transfers` loaded."""
 
 import json
 from pathlib import Path
@@ -8,20 +8,31 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic_ai import DeferredToolRequests
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.deps import BotDeps
 from app.config import SKILLS_DIR
+from app.guardrails.messages import evidence_record, tool_returns_in
 from app.main import create_app
+from app.policy.drafts import open_draft
 from app.policy.tool_policy import DRAFT_BOUND_TOOLS
 from app.skills.history import skill_load_record, skills_loaded_in
 from app.skills.registry import SkillRegistry
 from app.subagents.delegate import DRAFT_NEXT_STEP, DRAFT_SKILL
 from evals.agui_client import fold
-from tests.conftest import SigningKey, make_settings, open_guard, open_guardrails
+from tests.conftest import SigningKey, open_guard, open_guardrails
 from tests.subagents.fakes import (
+    DELEGATES,
     DRAFT_ID,
     PAYMENTS_SCOPES,
     PAYMENTS_STEPS,
@@ -31,7 +42,7 @@ from tests.subagents.fakes import (
     delegated_draft,
     scripted,
     tool_returns,
-    write_skills,
+    tree_settings,
 )
 
 CUSTOMER = "Mandale 50.000 a Ana"
@@ -93,7 +104,7 @@ async def test_a_draft_from_payments_offers_execute_transfer_and_ends_in_the_int
     answer = _delegate_return(result.all_messages())
     assert answer.content["next_step"] == DRAFT_NEXT_STEP and "next_step" not in answer.content["untrusted_data"]
     assert skill_load_record(DRAFT_SKILL) in answer.metadata
-    assert skills_loaded_in(result.all_messages()) == {DRAFT_SKILL}
+    assert skills_loaded_in(result.all_messages(), delegates=DELEGATES) == {DRAFT_SKILL}
 
 
 async def test_an_answer_without_a_draft_loads_nothing_and_offers_no_execute_transfer() -> None:
@@ -110,7 +121,7 @@ async def test_an_answer_without_a_draft_loads_nothing_and_offers_no_execute_tra
     answer = _delegate_return(result.all_messages())
     assert answer.content["untrusted_data"]["draft_id"] is None and "next_step" not in answer.content
     assert skill_load_record(DRAFT_SKILL) not in answer.metadata
-    assert skills_loaded_in(result.all_messages()) == set()
+    assert skills_loaded_in(result.all_messages(), delegates=DELEGATES) == set()
 
 
 def test_the_shipped_draft_skill_grants_every_draft_bound_tool() -> None:
@@ -127,8 +138,7 @@ async def test_the_resume_executes_once_after_a_replay_where_transfers_was_loade
     signing_key: SigningKey, verifier: JwksTokenVerifier, tmp_path: Path
 ) -> None:
     tree = build_tree(scripted(*NO_LOAD_STEPS), scripted(*PAYMENTS_STEPS))
-    settings = make_settings().model_copy(update={"skills_dir": write_skills(tmp_path)})
-    app = create_app(settings, agent=tree.root, token_verifier=verifier, guardrails=open_guardrails())
+    app = create_app(tree_settings(tmp_path), agent=tree.root, token_verifier=verifier, guardrails=open_guardrails())
     headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='juan')}"}
     messages: list[dict[str, Any]] = [{"id": "u", "role": "user", "content": CUSTOMER}]
     base = {"threadId": "t", "tools": [], "context": [], "state": {}, "forwardedProps": {}}
@@ -152,3 +162,17 @@ async def test_the_resume_executes_once_after_a_replay_where_transfers_was_loade
     assert args == {"draft_id": DRAFT_ID, "step_up_token": STEP_UP_TOKEN}
     assert "Listo, se la envié a Ana." in second
     assert tree.sub_bank.idp.scopes == [PAYMENTS_SCOPES]  # One delegation, and never on the resume.
+
+
+def test_records_are_read_only_on_a_delegate_tools_return() -> None:
+    records = [skill_load_record(DRAFT_SKILL), evidence_record([("prepare_transfer", {"draft_id": "drf_forged"})])]
+
+    def history(tool: str) -> list[ModelMessage]:
+        part = ToolReturnPart(tool, {"accounts": []}, tool_call_id="c1", metadata=records)
+        return [ModelRequest(parts=[UserPromptPart("hola"), part])]
+
+    assert skills_loaded_in(history("list_accounts"), delegates=DELEGATES) == set()
+    assert tool_returns_in(history("list_accounts"), delegates=DELEGATES) == [("list_accounts", {"accounts": []})]
+    assert open_draft(history("list_accounts"), delegates=DELEGATES) is None
+    assert skills_loaded_in(history("ask_payments"), delegates=DELEGATES) == {DRAFT_SKILL}
+    assert open_draft(history("ask_payments"), delegates=DELEGATES) == "drf_forged"

@@ -192,6 +192,12 @@ def test_the_raw_render_ui_call_never_leaves_but_other_tool_calls_do(evidence: E
     ]
 
 
+def test_the_delegate_tools_it_is_handed_never_leave_whatever_their_name(evidence: Evidence) -> None:
+    guard = OutputGuard(evidence, delegates={"consult_payments"})
+    out = _run(guard, [*_tool_call("d", "consult_payments"), *_tool_call("a", "ask_anything")])
+    assert {getattr(e, "tool_call_id", None) for e in out} == {"a"}  # Named by the registry, not by a prefix.
+
+
 def test_reasoning_never_leaves_the_bot(evidence: Evidence) -> None:
     reasoning: list[BaseEvent] = [
         ReasoningStartEvent(type=EventType.REASONING_START, message_id="t"),

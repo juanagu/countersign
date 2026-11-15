@@ -10,22 +10,26 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
   customer_messages, third_party_text_seen) -> RunGuard` starts the input classifier in the background.
 - `RunGuard` (in `BotDeps.guard`): `input_verdict()` (the gate), `record_tool_result()`, `evidence`,
   `third_party_text_seen`, `write_intent`, `customer_messages`. `RunGuard.unchecked()` is the blocked default.
-- `guarded_stream(events, guard, thread_id, run_id, cancel_run)`: holds AG-UI events until the verdict, then
+- `guarded_stream(events, guard, thread_id, run_id, cancel_run, delegates)`: holds AG-UI events until the verdict, then
   runs them through `OutputGuard`; on block cancels the run and sends the safe reply. `refusal_shown(guard)`
   awaits the verdict and returns that reply, or `None` when the answer goes out (the run's save uses it).
 - `PendingApprovals` (`Guardrails.pending_approvals`): `record()` / `consume()` the approval interrupts raised per
   user and thread; `recording_interrupts(events, pending, key)` records those a run ends with. Only a resume that
   consumes them skips the classifier.
-- `OutputGuard(evidence)`: sentence buffering, `image_check` (`images.strip_images`), `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
+- `OutputGuard(evidence, delegates=)`: sentence buffering, `image_check` (`images.strip_images`), `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
   grounding, and a safe `RUN_ERROR` message.
 - `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`,
-  `tool_returns_in()` (each tool result, a delegate's `evidence_record()` entries included), `tools_returned_in()`,
-  `tool_results_in()`, `customer_spoke_since_last_response()`.
-- `output_guard.is_server_only(tool)`: `render_ui` and every delegate tool (`ask_<name>`); their `TOOL_CALL_*` events are
+  `tool_returns_in(messages, delegates=)` (each tool result, the `evidence_record()` entries of a delegate tool's
+  return included; no other tool's record is read), `tools_returned_in()`, `tool_results_in()`,
+  `customer_spoke_since_last_response()`. `delegates` is always the registry's delegate tool names, passed in by the
+  caller, never a name pattern.
+- `output_guard.is_server_only(tool, delegates)`: `render_ui` and each delegate tool; their `TOOL_CALL_*` events are
   withheld.
-- `history_guard.py`, the output guard over stored history: `grounds_no_figure(tool)` (`load_skill`, `render_ui` and
-  every `ask_<name>`: their results ground no figure; a subagent's tool results ground through the delegate return's
-  evidence record), and `StoredAnswers(clock)`, which walks a stored history (`read(message)`) and
+- `write_intent.RECENT_MESSAGES` (3): how many of the customer's latest messages a write is judged on; a subagent's
+  prompt shows as many.
+- `history_guard.py`, the output guard over stored history: `grounds_no_figure(tool, delegates)` (`load_skill`,
+  `render_ui` and each delegate tool: their results ground no figure; a subagent's tool results ground through the
+  delegate return's evidence record), and `StoredAnswers(clock, delegates=)`, which walks a stored history (`read(message)`) and
   returns each answer as the guard's deterministic checks released it (`released(text, answer)`): PII masking
   and grounding against the tool results before it, the customer's latest message and the bank's day in
   `clock`'s zone. For the reload transcript.

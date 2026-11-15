@@ -1,6 +1,6 @@
-"""The eval hook for subagent domains (ADR 021 §6). A subagent's tool calls never reach the client, so a case reads
-them from its run's Phoenix spans by trace id: the handoff (the `ask_<name>` span) and the tool spans under it. Spans
-carry no arguments (rule 7), so the arguments are read from the server cards the calls produced."""
+"""The eval hook for subagent domains. Only a subagent's tool names reach the client, so a case reads its calls from
+the run's Phoenix spans by trace id: the handoff (the delegate tool's span) and the tool spans under it. Spans carry
+no arguments (rule 7), so the arguments are read from the server cards the calls produced."""
 
 import asyncio
 from collections.abc import Sequence
@@ -8,11 +8,11 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from app.guardrails.stream_timing import THREAD_ATTRIBUTE
+from app.subagents.registry import DELEGATE_PREFIX
 from evals.metrics import Span, spans
 
-THREAD_ATTRIBUTE = "bot.thread_id"  # On the `bot.stream` span, which shares the run's trace (stream_timing.py).
 TOOL_NAME = "gen_ai.tool.name"
-DELEGATE_PREFIX = "ask_"
 EXPORT_WAIT_SECONDS = 30.0  # The bot's BatchSpanProcessor exports every few seconds.
 POLL_SECONDS = 2.0
 

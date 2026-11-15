@@ -5,7 +5,7 @@ import pytest
 
 from app.core.clock import BankClock
 from app.policy.risk_tier import RiskTier
-from app.policy.tool_policy import Decision, ToolPolicy, drafts_prepared_in
+from app.policy.tool_policy import Decision, ToolPolicy
 from app.skills.registry import SkillRegistry
 from tests.conftest import TEST_SKILLS_DIR
 
@@ -32,30 +32,23 @@ def test_denies_a_tool_without_a_declared_tier() -> None:
 
 
 def test_money_movement_is_allowed_only_through_approval() -> None:
-    decision = POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"payments"}, {"d"})
+    decision = POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"payments"}, "d")
     assert decision.allowed
     assert decision.needs_approval
-    assert not POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"accounts"}, {"d"}).allowed
+    assert not POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"accounts"}, "d").allowed
 
 
-@pytest.mark.parametrize("args", [{"draft_id": "other"}, {"draft_id": None}, {}])
-def test_money_movement_needs_a_draft_this_conversation_prepared(args: dict[str, object]) -> None:
-    # ADR 021: the draft id is the one value crossing from a subagent's answer into a T3 call, so code checks it.
-    decision = POLICY.check_call("execute_transfer", T3, args, {"payments"}, {"d"})
+# The draft id is the one value crossing from a subagent's answer into a T3 call, so code checks it; a value that is
+# not a string is a denial, never an error.
+@pytest.mark.parametrize(
+    "args",
+    [{"draft_id": "other"}, {"draft_id": None}, {}, {"draft_id": ["d"]}, {"draft_id": {"d": 1}}, {"draft_id": 7}],
+)
+def test_money_movement_needs_the_conversations_open_draft(args: dict[str, object]) -> None:
+    decision = POLICY.check_call("execute_transfer", T3, args, {"payments"}, "d")
     assert not decision.allowed and not decision.needs_approval
-    assert decision.reason == "the draft was not prepared in this conversation"
+    assert decision.reason == "the draft is not this conversation's open draft"
     assert not POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"payments"}).allowed
-
-
-def test_reads_prepared_drafts_from_raw_and_wrapped_results_but_never_from_errors() -> None:
-    returns = [
-        ("prepare_transfer", {"untrusted_data": {"draft_id": "wrapped"}, "note": "n"}),
-        ("prepare_transfer", {"draft_id": "raw"}),
-        ("prepare_transfer", {"error": "insufficient_funds", "draft_id": "failed"}),
-        ("list_beneficiaries", {"draft_id": "not-a-draft"}),
-        ("ask_payments", {"untrusted_data": {"draft_id": "from-model-text"}}),
-    ]
-    assert drafts_prepared_in(returns) == {"wrapped", "raw"}
 
 
 def test_allows_a_granted_call_within_bounds() -> None:

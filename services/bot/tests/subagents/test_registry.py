@@ -1,4 +1,4 @@
-"""Subagent specs (ADR 021): a skill's frontmatter, a T2 ceiling, and no name shared with a skill (rule 2)."""
+"""Subagent specs: a skill's frontmatter, a T2 ceiling, and no name shared with a skill (rule 2)."""
 
 from pathlib import Path
 
@@ -94,3 +94,20 @@ def test_the_app_builds_its_agents_from_the_shipped_skills_and_subagents() -> No
     assert settings.subagent_models("payments") == ("test",)  # Empty: the orchestrator's models.
     own = settings.model_copy(update={"payments_agent_model": "test", "payments_agent_model_fallbacks": "a, b"})
     assert own.subagent_models("payments") == ("test", "a", "b")
+
+
+def test_a_subagent_without_model_settings_of_its_own_fails_at_startup(tmp_path: Path) -> None:
+    from app.main import create_app
+    from tests.conftest import make_settings
+
+    skills, subagents = tmp_path / "skills", tmp_path / "subagents"
+    skills.mkdir()
+    subagents.mkdir()
+    spec = "---\nname: loans\ndescription: Loans.\ntools: [list_accounts]\nmax_tier: T1\n---\nloans body"
+    (subagents / "loans.md").write_text(spec, encoding="utf-8")
+    settings = make_settings().model_copy(update={"skills_dir": skills, "subagents_dir": subagents})
+
+    with pytest.raises(ValueError, match="loans_agent_model"):
+        create_app(settings)
+    with pytest.raises(ValueError, match="loans_agent_model"):
+        settings.subagent_models("loans")

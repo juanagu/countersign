@@ -22,7 +22,7 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import BotAgent, build_agent
-from app.config import Settings
+from app.config import SKILLS_DIR, SUBAGENTS_DIR, Settings
 from app.conversations.history import new_turn
 from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 from app.main import create_app
@@ -167,65 +167,88 @@ async def test_the_thread_transcript_belongs_to_its_owner(signing_key: SigningKe
     assert anonymous.status_code == 401
 
 
+async def _payments_skill_stream(messages: list[ModelMessage], _: AgentInfo):  # type: ignore[no-untyped-def]
+    """The orchestrator before payments became a subagent: load `payments`, prepare, then execute."""
+    returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+    if not returns:
+        yield {0: DeltaToolCall(name="load_skill", json_args=json.dumps({"name": "payments"}))}
+    elif len(returns) == 1:
+        yield {0: DeltaToolCall(name="prepare_transfer", json_args=json.dumps(PREPARE_ARGS))}
+    elif len(returns) == 2:
+        yield {0: DeltaToolCall(name="execute_transfer", json_args=json.dumps({"draft_id": DRAFT_ID}))}
+    else:
+        yield "Listo, la transferencia salió."
+
+
+async def _pause_then_resume(
+    first_app: Any, second_app: Any, store: InMemoryConversationStore, signing_key: SigningKey
+) -> list[dict[str, Any]]:
+    """Pauses on the approval interrupt in `first_app`, then resumes it in `second_app` on the same store."""
+    auth = {**HEADERS, "authorization": f"Bearer {signing_key.token(sub='juan')}"}
+    async with AsyncClient(transport=ASGITransport(app=first_app), base_url="http://test") as http:
+        body = _body("t", [{"id": "u", "role": "user", "content": "Mandale 50.000 a Ana"}])
+        first = _events((await http.post("/agent", json=body, headers=auth)).text)
+    [interrupt] = first[-1]["outcome"]["interrupts"]
+    stored = await store.load("juan:t", scope="juan")
+    assert stored is not None
+    # The client echoes what it saw; only the approval is new. The skill comes back from stored history.
+    seen = [m.model_dump(by_alias=True, exclude_none=True) for m in AGUIAdapter.dump_messages(stored.messages)]
+    answer = {
+        "interruptId": interrupt["id"],
+        "status": "resolved",
+        "payload": {"approved": True, "editedArgs": {"draft_id": DRAFT_ID, "step_up_token": "su-token"}},
+    }
+    async with AsyncClient(transport=ASGITransport(app=second_app), base_url="http://test") as http:
+        resumed = await http.post("/agent", json=_body("t", seen, resume=[answer], runSuffix="2"), headers=auth)
+    return _events(resumed.text)
+
+
+def _app(agent: BotAgent, verifier: JwksTokenVerifier, store: InMemoryConversationStore, **settings: Any) -> Any:
+    return create_app(
+        make_settings().model_copy(update=settings),
+        agent=agent,
+        token_verifier=verifier,
+        guardrails=open_guardrails(),
+        conversation_store=store,
+    )
+
+
 @pytest.mark.filterwarnings("ignore::UserWarning")
 async def test_an_approval_resumes_from_the_stored_conversation(
     signing_key: SigningKey, verifier: JwksTokenVerifier
 ) -> None:
-    async def stream(messages: list[ModelMessage], _: AgentInfo):  # type: ignore[no-untyped-def]
-        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
-        if not returns:
-            yield {0: DeltaToolCall(name="load_skill", json_args=json.dumps({"name": "payments"}))}
-        elif len(returns) == 1:
-            yield {0: DeltaToolCall(name="prepare_transfer", json_args=json.dumps(PREPARE_ARGS))}
-        elif len(returns) == 2:
-            yield {0: DeltaToolCall(name="execute_transfer", json_args=json.dumps({"draft_id": DRAFT_ID}))}
-        else:
-            yield "Listo, la transferencia salió."
-
-    fake = FakePayments()
+    fake, store = FakePayments(), InMemoryConversationStore()
     agent = build_agent(
-        FunctionModel(stream_function=stream),
+        FunctionModel(stream_function=_payments_skill_stream),
         skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
         domain_tools=[fake.toolset],
     )
-    store = InMemoryConversationStore()
-    app = create_app(
-        make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails(), conversation_store=store
-    )
-    auth = {**HEADERS, "authorization": f"Bearer {signing_key.token(sub='juan')}"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
-        first = _events(
-            (
-                await http.post(
-                    "/agent",
-                    json=_body("t", [{"id": "u", "role": "user", "content": "Mandale 50.000 a Ana"}]),
-                    headers=auth,
-                )
-            ).text
-        )
-        [interrupt] = first[-1]["outcome"]["interrupts"]
-        stored = await store.load("juan:t", scope="juan")
-        assert stored is not None
-        # The client echoes what it saw; only the approval is new. The skill comes back from stored history.
-        seen = [m.model_dump(by_alias=True, exclude_none=True) for m in AGUIAdapter.dump_messages(stored.messages)]
-        answer = {
-            "interruptId": interrupt["id"],
-            "status": "resolved",
-            "payload": {"approved": True, "editedArgs": {"draft_id": DRAFT_ID, "step_up_token": "su-token"}},
-        }
-        second = _events(
-            (await http.post("/agent", json=_body("t", seen, resume=[answer], runSuffix="2"), headers=auth)).text
-        )
+    app = _app(agent, verifier, store)
+    second = await _pause_then_resume(app, app, store, signing_key)
 
     assert second[-1]["type"] == "RUN_FINISHED"
     assert fake.executed == [{"draft_id": DRAFT_ID, "step_up_token": "su-token"}]
-    calls = [
-        p
-        for m in (await store.load("juan:t", scope="juan") or stored).messages
-        for p in getattr(m, "parts", [])
-        if isinstance(p, ToolCallPart)
-    ]
+    stored = await store.load("juan:t", scope="juan")
+    calls = [p for m in (stored.messages if stored else []) for p in m.parts if isinstance(p, ToolCallPart)]
     assert [c.tool_name for c in calls] == ["load_skill", "prepare_transfer", "execute_transfer"]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_conversation_paused_before_payments_became_a_subagent_still_executes_after_the_deploy(
+    signing_key: SigningKey, verifier: JwksTokenVerifier
+) -> None:
+    fake, store = FakePayments(), InMemoryConversationStore()
+    model = FunctionModel(stream_function=_payments_skill_stream)
+    before = build_agent(model, skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[fake.toolset])
+    # The shipped skills: `payments` is gone, and `transfers` grants `execute_transfer`.
+    after = build_agent(model, skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset])
+    shipped = {"skills_dir": SKILLS_DIR, "subagents_dir": SUBAGENTS_DIR}
+    second = await _pause_then_resume(
+        _app(before, verifier, store), _app(after, verifier, store, **shipped), store, signing_key
+    )
+
+    assert second[-1]["type"] == "RUN_FINISHED"
+    assert fake.executed == [{"draft_id": DRAFT_ID, "step_up_token": "su-token"}]
 
 
 async def test_the_reload_grounds_dates_on_the_configured_bank_timezone(

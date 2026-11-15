@@ -1,5 +1,5 @@
 """A two-agent tree on fakes: the orchestrator and the payments subagent, each with its own gateway toolset and IdP
-recorder over one fake gateway that lists and serves by scope like the real one (ADR 020)."""
+recorder over one fake gateway that lists and serves by scope like the real one."""
 
 import json
 from collections.abc import Callable, Mapping, Sequence
@@ -7,13 +7,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
 
 from app.banking.mcp_toolsets import SkillGatedMCPToolset
 from app.chat.agent import BotAgent
 from app.chat.deps import BotDeps
+from app.config import Settings
 from app.core.clock import BankClock
 from app.main import build_agent_tree
 from app.policy.frequency_caps import FrequencyCaps
@@ -22,6 +31,7 @@ from app.skills.registry import SkillRegistry, parse_skill
 from app.subagents.build import SubagentAgent
 from app.subagents.delegate import Subagent
 from app.subagents.registry import SubagentRegistry, parse_subagent
+from tests.conftest import make_settings
 
 DRAFT_ID = "drf_7c1d2e3f-0a1b-4c2d-8e3f-4a5b6c7d8e9f"
 PAYMENTS_SCOPES = frozenset({"accounts:read", "beneficiaries:read", "transfers:prepare"})
@@ -73,16 +83,26 @@ def write_skills(directory: Path) -> Path:
     return directory
 
 
-PAYMENTS = parse_subagent(
-    _SPEC.format(
-        name="payments",
-        tools="list_beneficiaries, prepare_transfer, list_accounts",
-        tier="T2",
-        scopes="scopes: [accounts:read, beneficiaries:read, transfers:prepare]\n",
-    )
+PAYMENTS_FILE = _SPEC.format(
+    name="payments",
+    tools="list_beneficiaries, prepare_transfer, list_accounts",
+    tier="T2",
+    scopes="scopes: [accounts:read, beneficiaries:read, transfers:prepare]\n",
 )
+PAYMENTS = parse_subagent(PAYMENTS_FILE)
 SKILLS = SkillRegistry([ACCOUNTS, TRANSFERS])
 SUBAGENTS = SubagentRegistry([PAYMENTS], skills=SKILLS)
+DELEGATES = SUBAGENTS.delegate_tools()
+
+
+def tree_settings(directory: Path) -> Settings:
+    """Settings whose skills and subagents dirs hold the fakes' files, so the route knows the tree's delegate tools
+    as production does from the shipped files."""
+    skills, subagents = directory / "skills", directory / "subagents"
+    skills.mkdir()
+    subagents.mkdir()
+    (subagents / "payments.md").write_text(PAYMENTS_FILE, encoding="utf-8")
+    return make_settings().model_copy(update={"skills_dir": write_skills(skills), "subagents_dir": subagents})
 
 
 def _meta(tier: str, scope: str, list_scope: str | None = None) -> dict[str, Any]:
@@ -197,7 +217,12 @@ def tool_returns(messages: Sequence[ModelMessage]) -> list[ToolReturnPart]:
     return [p for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)]
 
 
-def scripted(*steps: Step, seen: list[AgentInfo] | None = None, saw: list[list[ModelMessage]] | None = None) -> Any:
+def scripted(
+    *steps: Step,
+    seen: list[AgentInfo] | None = None,
+    saw: list[list[ModelMessage]] | None = None,
+    count: Callable[[list[ModelMessage]], int] | None = None,
+) -> Any:
     """A model taking step n after n tool results: a text answer, or one tool call (args, or args from messages)."""
 
     def step(messages: list[ModelMessage], info: AgentInfo) -> Step:
@@ -205,7 +230,7 @@ def scripted(*steps: Step, seen: list[AgentInfo] | None = None, saw: list[list[M
             seen.append(info)
         if saw is not None:
             saw.append(list(messages))
-        position = len(tool_returns(messages))
+        position = count(messages) if count else len(tool_returns(messages))
         return steps[min(position, len(steps) - 1)]
 
     def call(messages: list[ModelMessage], spec: Step) -> tuple[str, dict[str, Any]]:
@@ -229,6 +254,21 @@ def scripted(*steps: Step, seen: list[AgentInfo] | None = None, saw: list[list[M
         yield {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
 
     return FunctionModel(respond, stream_function=stream)
+
+
+def per_turn(*steps: Step) -> Any:
+    """Like `scripted`, counting only this turn's tool results (those after the customer's last message), for a run
+    on a stored history."""
+
+    def this_turns_returns(messages: list[ModelMessage]) -> int:
+        since = max((i for i, m in enumerate(messages) if _from_customer(m)), default=0)
+        return len(tool_returns(messages[since:]))
+
+    return scripted(*steps, count=this_turns_returns)
+
+
+def _from_customer(message: ModelMessage) -> bool:
+    return isinstance(message, ModelRequest) and any(isinstance(p, UserPromptPart) for p in message.parts)
 
 
 def delegated_draft(messages: list[ModelMessage]) -> dict[str, Any]:

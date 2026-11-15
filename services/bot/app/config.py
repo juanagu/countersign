@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     # Failover chains (ADR 018): comma-separated pydantic-ai model strings tried in order; empty means none.
     bot_model_fallbacks: str = "anthropic:claude-haiku-5-5"
     guard_model_fallbacks: str = "anthropic:claude-sonnet-5-5"
-    # One chain per subagent (ADR 021), `<NAME>_AGENT_MODEL` then its fallbacks; an empty model means the
-    # orchestrator's models, on a chain of the subagent's own.
+    # One chain per subagent, `<NAME>_AGENT_MODEL` then its fallbacks; an empty model means the orchestrator's
+    # models, on a chain of the subagent's own. A subagent without these two fields fails at startup.
     payments_agent_model: str = ""
     payments_agent_model_fallbacks: str = ""
     llm_first_event_timeout_seconds: float = Field(default=10.0, gt=0)  # Orchestrator, per model tried.
@@ -56,11 +56,18 @@ class Settings(BaseSettings):
     otel_service_name: str = "bot"
 
     def subagent_models(self, name: str) -> tuple[str, ...]:
-        """The subagent's model chain: its own `<NAME>_AGENT_MODEL` and fallbacks, or else the orchestrator's."""
-        model = str(getattr(self, f"{name}_agent_model", "")).strip()
+        """The subagent's model chain: its own `<NAME>_AGENT_MODEL` and fallbacks, or else the orchestrator's.
+
+        Raises ValueError for a subagent with no such fields, so a new subagent file cannot run on a model nobody
+        chose for it.
+        """
+        model_field, fallbacks_field = f"{name}_agent_model", f"{name}_agent_model_fallbacks"
+        if not {model_field, fallbacks_field} <= type(self).model_fields.keys():
+            raise ValueError(f"subagent {name!r} has no {model_field} and {fallbacks_field} settings")
+        model = str(getattr(self, model_field)).strip()
         if not model:
             return (self.bot_model, *parse_model_list(self.bot_model_fallbacks))
-        return (model, *parse_model_list(str(getattr(self, f"{name}_agent_model_fallbacks", ""))))
+        return (model, *parse_model_list(str(getattr(self, fallbacks_field))))
 
     @field_validator("llm_fault_injection")
     @classmethod

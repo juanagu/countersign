@@ -69,16 +69,19 @@ async def stored_messages(store: ConversationStore, user_id: str, thread_id: str
     return (await load_thread(store, user_id, thread_id)).messages
 
 
-def transcript(messages: Sequence[ModelMessage], *, clock: BankClock) -> list[dict[str, Any]]:
+def transcript(
+    messages: Sequence[ModelMessage], *, clock: BankClock, delegates: Collection[str] = frozenset()
+) -> list[dict[str, Any]]:
     """What a reload past the replay window shows: the user's and the assistant's text, plus the server-template
     cards (confirm, receipt), in the order they happened. No tool traffic.
 
     Tool calls are left out so the client never sees a call it might think is still waiting on it. The stored
     copy is the one before the output guard: answers go through its deterministic checks again (PII, grounding
-    on the bank's day by `clock`), and A2UI surfaces stay out, since the guard may have withheld them.
+    on the bank's day by `clock`), and A2UI surfaces stay out, since the guard may have withheld them. `delegates`
+    names the delegate tools, whose replies ground nothing and whose evidence records do.
     """
     shown: list[dict[str, Any]] = []
-    answers = StoredAnswers(clock)
+    answers = StoredAnswers(clock, delegates=delegates)
     for message in messages:
         shown.extend(_template_cards(message))
         shown.extend(_texts(message, answers))

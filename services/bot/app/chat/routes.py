@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from functools import cached_property, partial
 from http import HTTPStatus
 
@@ -29,7 +30,7 @@ from app.guardrails.pipeline import Guardrails
 from app.guardrails.run_guard import RunGuard
 from app.guardrails.stream import guarded_stream, refusal_shown
 from app.policy.policy_toolset import THIRD_PARTY_TEXT_TOOLS
-from app.skills.history import skills_loaded_in
+from app.skills.history import replayed_skills
 from app.skills.registry import SkillRegistry
 
 
@@ -52,18 +53,35 @@ def _invalid_body(error: ValidationError) -> Response:
 
 
 def _start_guard(
-    guardrails: Guardrails, user_id: str, history: list[ModelMessage], *, genuine_resume: bool
+    guardrails: Guardrails,
+    user_id: str,
+    history: list[ModelMessage],
+    *,
+    genuine_resume: bool,
+    delegates: Collection[str],
 ) -> RunGuard:
+    returned = tools_returned_in(history, delegates=delegates)
     return guardrails.start_run(
         user_id=user_id,
         customer_messages=customer_texts(history),
-        third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
-        earlier_tool_results=tool_results_in(history, excluding=grounds_no_figure),
+        third_party_text_seen=bool(returned & THIRD_PARTY_TEXT_TOOLS),
+        earlier_tool_results=tool_results_in(
+            history, excluding=partial(grounds_no_figure, delegates=delegates), delegates=delegates
+        ),
         resume_only=genuine_resume and not customer_spoke_since_last_response(history),
     )
 
 
-def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, store: ConversationStore) -> APIRouter:
+def chat_router(
+    agent: BotAgent,
+    skills: SkillRegistry,
+    guardrails: Guardrails,
+    store: ConversationStore,
+    *,
+    delegates: Collection[str] = frozenset(),
+) -> APIRouter:
+    """`delegates` names the agent's delegate tools: only their returns' records replay, and their calls stay in
+    the bot."""
     router = APIRouter()
 
     @router.post("/agent")
@@ -83,11 +101,11 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, 
         resumed = resumed_calls(adapter)
         genuine_resume = bool(resumed) and guardrails.pending_approvals.consume(conversation, resumed)
         start_run_record()  # Before the guard and the run start their tasks, so both report to it (ADR 018).
-        guard = _start_guard(guardrails, principal.user_id, history, genuine_resume=genuine_resume)
+        guard = _start_guard(guardrails, principal.user_id, history, genuine_resume=genuine_resume, delegates=delegates)
         deps = BotDeps(
             user_id=principal.user_id,
             access_token=principal.token,
-            loaded_skills={name for name in skills_loaded_in(history) if skills.get(name)},
+            loaded_skills=replayed_skills(history, skills, delegates=delegates),
             session_id=run.thread_id,
             guard=guard,
         )
@@ -103,7 +121,9 @@ def chat_router(agent: BotAgent, skills: SkillRegistry, guardrails: Guardrails, 
         except BaseException:
             guard.cancel()
             raise
-        guarded = guarded_stream(events, guard, thread_id=run.thread_id, run_id=run.run_id, cancel_run=token.cancel)
+        guarded = guarded_stream(
+            events, guard, thread_id=run.thread_id, run_id=run.run_id, cancel_run=token.cancel, delegates=delegates
+        )
         return adapter.streaming_response(recording_interrupts(guarded, guardrails.pending_approvals, conversation))
 
     return router

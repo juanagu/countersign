@@ -10,6 +10,8 @@ Generative UI from the bot: model-built A2UI surfaces and code-built server temp
 - `TemplateToolset(wrapped)`: attaches a `bank-template` activity (`transfer-confirm` today) to the result
   of the tools that have a template, built from the MCP result, never from model text.
 - `CATALOG_ID` (`bank-catalog-v1`), shared with the web catalog.
+- The activity types, for code that forwards or reads these events: `a2ui.ACTIVITY_TYPE` (`a2ui-surface`) and
+  `templates.ACTIVITY_TYPE` (`bank-template`), plus `templates.DEFAULT_TEMPLATES` (which tools have a card).
 
 ## Data flow
 

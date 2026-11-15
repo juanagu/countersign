@@ -5,7 +5,7 @@ It also withholds what the client must not see: reasoning, the raw render_ui too
 
 import logging
 import re
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
@@ -27,7 +27,6 @@ from app.guardrails.grounding import SURFACE_PLUMBING_KEYS, Evidence, ungrounded
 from app.guardrails.images import strip_images
 from app.guardrails.pii import redact, redact_with_kinds
 from app.guardrails.verdict import ALLOW, Action, Verdict, block
-from app.subagents.registry import DELEGATE_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +42,9 @@ SERVER_ONLY_TOOLS = frozenset({"render_ui"})
 REASONING_EVENTS = frozenset(kind for kind in EventType if kind.name.startswith("REASONING_"))
 
 
-def is_server_only(tool_name: str) -> bool:
-    """`render_ui`, and every delegate tool (`ask_<name>`): its request and reply are model text (ADR 021)."""
-    return tool_name in SERVER_ONLY_TOOLS or tool_name.startswith(DELEGATE_PREFIX)
+def is_server_only(tool_name: str, delegates: Collection[str] = frozenset()) -> bool:
+    """`render_ui`, and each of `delegates`, the delegate tools: their request and reply are model text."""
+    return tool_name in SERVER_ONLY_TOOLS or tool_name in delegates
 
 
 UNGROUNDED_FALLBACK = "(No puedo confirmar ese dato en este momento, así que no lo muestro.)"
@@ -126,9 +125,16 @@ def split_sentences(buffer: str) -> tuple[list[str], str]:
 class OutputGuard:
     """One per run. Transforms AG-UI events; message start and end events are kept paired."""
 
-    def __init__(self, evidence: Evidence, checks: Sequence[SentenceCheck] = DEFAULT_CHECKS) -> None:
+    def __init__(
+        self,
+        evidence: Evidence,
+        checks: Sequence[SentenceCheck] = DEFAULT_CHECKS,
+        *,
+        delegates: Collection[str] = frozenset(),
+    ) -> None:
         self._evidence = evidence
         self._checks = checks
+        self._delegates = frozenset(delegates)
         self._buffers: dict[str, str] = {}
         self._withheld_calls: set[str] = set()
         # Model-built cards wait for the end of the next text message (or of the run), so the customer reads the
@@ -166,8 +172,11 @@ class OutputGuard:
         """Reasoning, and every event of a server-only tool call (start, args, end, result)."""
         if event.type in REASONING_EVENTS:
             return True
-        if isinstance(event, ToolCallStartEvent | ToolCallChunkEvent) and is_server_only(event.tool_call_name or ""):
-            self._withheld_calls.add(str(event.tool_call_id))
+        server_only = isinstance(event, ToolCallStartEvent | ToolCallChunkEvent) and is_server_only(
+            event.tool_call_name or "", self._delegates
+        )
+        if server_only:
+            self._withheld_calls.add(str(getattr(event, "tool_call_id", "")))
         return getattr(event, "tool_call_id", None) in self._withheld_calls
 
     def check_sentence(self, sentence: str) -> str:

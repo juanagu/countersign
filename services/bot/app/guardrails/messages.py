@@ -1,6 +1,6 @@
 """Reads and redacts the customer's turns in a Pydantic AI message history."""
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -43,8 +43,8 @@ def customer_texts(messages: Sequence[ModelMessage]) -> list[str]:
     return texts
 
 
-# A `ToolReturnPart.metadata` item holding the tool results another agent's policy recorded (ADR 021): the root
-# history never holds a subagent's own tool returns, only its delegate tool's return.
+# A `ToolReturnPart.metadata` item holding the tool results another agent's policy recorded: the root history never
+# holds a subagent's own tool returns, only its delegate tool's return.
 EVIDENCE_RECORD = "bot-evidence"
 
 
@@ -53,7 +53,10 @@ def evidence_record(results: Sequence[tuple[str, Any]]) -> dict[str, Any]:
     return {"kind": EVIDENCE_RECORD, "results": [{"tool": tool, "content": content} for tool, content in results]}
 
 
-def _recorded(metadata: Any) -> Iterator[tuple[str, Any]]:
+def _recorded(part: ToolReturnPart, delegates: Collection[str]) -> Iterator[tuple[str, Any]]:
+    """The evidence record's results, read only on a delegate tool's return: any other tool's metadata could be
+    filled by a backend."""
+    metadata = part.metadata if part.tool_name in delegates else None
     for item in metadata if isinstance(metadata, list) else ():
         if not isinstance(item, Mapping) or item.get("kind") != EVIDENCE_RECORD:
             continue
@@ -62,28 +65,33 @@ def _recorded(metadata: Any) -> Iterator[tuple[str, Any]]:
                 yield result["tool"], result.get("content")
 
 
-def tool_returns_in(messages: Sequence[ModelMessage]) -> list[tuple[str, Any]]:
-    """(tool name, content) for each tool result the history holds, oldest first, a subagent's recorded ones
-    included right after the delegate tool's own return."""
+def tool_returns_in(
+    messages: Sequence[ModelMessage], *, delegates: Collection[str] = frozenset()
+) -> list[tuple[str, Any]]:
+    """(tool name, content) for each tool result the history holds, oldest first. `delegates` names the delegate
+    tools: the results their evidence record holds follow right after their own return."""
     returns: list[tuple[str, Any]] = []
     for message in messages:
         for part in message.parts if isinstance(message, ModelRequest) else ():
             if isinstance(part, ToolReturnPart):
                 returns.append((part.tool_name, part.content))
-                returns.extend(_recorded(part.metadata))
+                returns.extend(_recorded(part, delegates))
     return returns
 
 
-def tools_returned_in(messages: Sequence[ModelMessage]) -> set[str]:
+def tools_returned_in(messages: Sequence[ModelMessage], *, delegates: Collection[str] = frozenset()) -> set[str]:
     """Names of the tools whose results the history already holds."""
-    return {name for name, _ in tool_returns_in(messages)}
+    return {name for name, _ in tool_returns_in(messages, delegates=delegates)}
 
 
 def tool_results_in(
-    messages: Sequence[ModelMessage], *, excluding: Callable[[str], bool] = lambda _: False
+    messages: Sequence[ModelMessage],
+    *,
+    excluding: Callable[[str], bool] = lambda _: False,
+    delegates: Collection[str] = frozenset(),
 ) -> list[Any]:
     """The content of each tool result the history holds, oldest first, except those of the excluded tools."""
-    return [content for name, content in tool_returns_in(messages) if not excluding(name)]
+    return [content for name, content in tool_returns_in(messages, delegates=delegates) if not excluding(name)]
 
 
 def customer_spoke_since_last_response(messages: Sequence[ModelMessage]) -> bool:

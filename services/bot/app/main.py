@@ -53,7 +53,7 @@ def build_agent_tree(
     clock: BankClock,
     root_tools: Sequence[AbstractToolset[BotDeps]] = (),
 ) -> BotAgent:
-    """The orchestrator and its subagents (ADR 021): a banking toolset per agent, never their union, and one
+    """The orchestrator and its subagents: a banking toolset per agent, never their union, and one
     `FrequencyCaps`, so a subagent's writes count against the conversation's caps."""
     caps = FrequencyCaps()
     delegates = [
@@ -75,7 +75,7 @@ def build_agent_tree(
         domain_tools=[banking(skills.scopes_by_skill()), *root_tools],
         clock=clock,
         caps=caps,
-        delegates=[delegate_toolset(delegates)] if delegates else [],
+        delegates=delegate_toolset(delegates) if delegates else None,
         agent_index=subagents.index(),
     )
 
@@ -153,12 +153,15 @@ def create_app(
 
     skills = SkillRegistry.from_dir(settings.skills_dir)
     subagents = SubagentRegistry.from_dir(settings.subagents_dir, skills=skills)  # Refuses a spec above T2.
+    for name in subagents.names():
+        settings.subagent_models(name)  # Fails at startup on a subagent with no model settings of its own.
     clock = BankClock(ZoneInfo(settings.bank_timezone))  # One calendar for the prompt, the policy and grounding.
     # Built only when needed: injected test doubles need no provider key. The eval judges keep the bare GUARD_MODEL.
     chains = cache(lambda: ModelChains.from_settings(settings, subagents=subagents.names()))
     guardrails = guardrails or Guardrails.on_model(chains().guard, clock=clock)
     run_agent = agent or _default_agent(settings, chains(), http, pool, embedder, skills, subagents, clock)
-    app.include_router(chat_router(run_agent, skills, guardrails, store))
-    app.include_router(conversations_router(store, clock))
+    delegates = subagents.delegate_tools()
+    app.include_router(chat_router(run_agent, skills, guardrails, store, delegates=delegates))
+    app.include_router(conversations_router(store, clock, delegates=delegates))
     setup_telemetry(app, settings, wrap_exporter=RedactingSpanExporter)
     return app

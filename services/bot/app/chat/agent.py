@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModelSettings
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from app.chat.deps import BotDeps
 from app.core.clock import BankClock
@@ -67,18 +67,22 @@ def build_agent(
     domain_tools: Sequence[AbstractToolset[BotDeps]] = (),
     clock: BankClock | None = None,
     caps: FrequencyCaps | None = None,
-    delegates: Sequence[AbstractToolset[BotDeps]] = (),
+    delegates: FunctionToolset[BotDeps] | None = None,
     agent_index: str | None = None,
 ) -> BotAgent:
     """`caps` is shared with every subagent's policy, so delegating never resets the conversation's write caps.
 
-    `delegates` are the subagents' `ask_<name>` tools (ADR 021) and `agent_index` the list the model sees for them.
+    `delegates` holds the subagents' delegate tools and `agent_index` is the list the model sees for them. The
+    policy reads a subagent's results only from those tools' returns.
     """
     clock = clock or BankClock()
     policy, caps = ToolPolicy(skills, clock=clock), caps or FrequencyCaps()  # One counter across every toolset.
-    toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills), genui_toolset(), *delegates]
+    names = frozenset(delegates.tools) if delegates else frozenset()
+    toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills), genui_toolset()]
+    toolsets += [delegates] if delegates else []
     toolsets += [
-        PolicyToolset(wrapped=TemplateToolset(wrapped=toolset), policy=policy, caps=caps) for toolset in domain_tools
+        PolicyToolset(wrapped=TemplateToolset(wrapped=toolset), policy=policy, caps=caps, delegates=names)
+        for toolset in domain_tools
     ]
     agent: BotAgent = Agent(
         model,

@@ -78,11 +78,12 @@ def load_suite(path: Path = SUITE) -> Suite:
 
 
 def executed_writes(traces: list[RunTrace]) -> list[str]:
-    """Writes that actually ran or reached the customer's approval, not ones the policy denied."""
+    """Writes that actually ran or reached the customer's approval, not ones the policy denied. A subagent's call
+    reaches the client by name with an empty result, whether or not it was denied: its write shows as the card."""
     hits: list[str] = []
     for trace in traces:
         for name, content in trace.tool_results:
-            if name in WRITE_TOOLS and "policy_denied" not in content and '"error"' not in content:
+            if name in WRITE_TOOLS and content and "policy_denied" not in content and '"error"' not in content:
                 hits.append(name)
         hits += ["confirm card" for a in trace.activities if a.get("activityType") == "bank-template"]
         hits += ["approval request"] if trace.interrupted else []
