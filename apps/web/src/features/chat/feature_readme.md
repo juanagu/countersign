@@ -17,6 +17,9 @@ is given; `WelcomeScreen` renders the greeting by first name and six tiles, each
 The message rhythm and the composer are CSS over CopilotKit's DOM (`chat-messages.css`, `chat-composer.css`):
 CopilotKit's palette variables are mapped to our tokens in `chat-screen.css`, so the chat follows the OS theme
 (`styles/color-scheme.ts` mirrors it onto `.dark`). Those selectors target CopilotKit's `data-testid`s.
+Assistant markdown (Streamdown) gets an `img` component (`assistant-markdown.tsx`) that renders only images from
+the app's own origin (`lib/image-policy.ts`); any other image, data and blob URLs included, renders nothing, so a
+model-written image URL is never fetched (ADR 014).
 
 Status the chat shows without a message: `ConnectionPill` (`connection-pill.tsx`, the `input` slot of `ChatView`)
 centred above the composer from the reconnector's state (`lib/connection-status.ts`: `idle`, `waiting-online` →

@@ -6,6 +6,7 @@ import { ChatActionsProvider } from '../genui/chat-actions';
 import '@copilotkit/react-core/v2/styles.css';
 import { useState } from 'react';
 import type { SessionUser } from '../auth/lib/auth-api';
+import { ASSISTANT_MARKDOWN } from './assistant-markdown';
 import { ChatHeader } from './chat-header';
 import { CHAT_LABELS } from './chat-labels';
 import { ChatView } from './chat-view';
@@ -25,7 +26,7 @@ const RUNTIME_URL = '/api/copilotkit';
 // Stable references: the provider re-registers renderers when these change identity.
 const A2UI = { catalog: bankCatalog };
 const ACTIVITY_RENDERERS = [bankTemplateRenderer];
-const MESSAGE_VIEW = { cursor: TypingIndicator };
+const MESSAGE_VIEW = { cursor: TypingIndicator, assistantMessage: { markdownRenderer: ASSISTANT_MARKDOWN } };
 const CONNECTING_INDICATOR = 'chat-connecting';
 
 export interface ChatScreenProps {
