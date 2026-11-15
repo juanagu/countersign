@@ -112,7 +112,7 @@ async def guarded_stream(
     pump = asyncio.create_task(_pump(events, queue))
     announcer = asyncio.create_task(_announce_verdict(guard, queue))
     run = _HeldRun(guard, thread_id=thread_id, run_id=run_id)
-    timer = StreamTimer()
+    timer = StreamTimer(thread_id=thread_id)
     ended = decided = False
     try:
         while not ((ended and decided) or run.blocked):

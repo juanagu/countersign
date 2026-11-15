@@ -64,3 +64,33 @@ def test_two_subagents_with_one_name_fail_to_load() -> None:
     spec = parse_subagent(_SPEC.format(name="payments", tier="T2", extra=""))
     with pytest.raises(ValueError, match="defined twice"):
         SubagentRegistry([spec, spec], skills=_SKILLS)
+
+
+def test_the_shipped_payments_subagent_prepares_and_the_transfers_skill_alone_executes() -> None:
+    from app.config import SKILLS_DIR, SUBAGENTS_DIR
+
+    skills = SkillRegistry.from_dir(SKILLS_DIR)
+    registry = SubagentRegistry.from_dir(SUBAGENTS_DIR, skills=skills)
+    payments, transfers = registry.get("payments"), skills.get("transfers")
+    assert registry.names() == ["payments"] and payments is not None and transfers is not None
+    assert payments.max_tier is RiskTier.T2 and "execute_transfer" not in payments.tools
+    assert payments.scopes == frozenset({"accounts:read", "beneficiaries:read", "transfers:prepare"})
+    assert transfers.tools == frozenset({"execute_transfer"}) and transfers.max_tier is RiskTier.T3
+    assert transfers.scopes == frozenset({"transfers:prepare"})  # The list scope execute_transfer needs.
+
+
+def test_the_app_builds_its_agents_from_the_shipped_skills_and_subagents() -> None:
+    from app.config import Settings
+    from app.core.llm.model_chain import ModelChains
+    from app.main import create_app
+    from tests.conftest import TEST_CLIENT_SECRET
+
+    secret = TEST_CLIENT_SECRET
+    no_fallbacks = {"bot_model_fallbacks": "", "guard_model_fallbacks": ""}
+    settings = Settings(bot_model="test", guard_model="test", bot_client_secret=secret, **no_fallbacks)
+    create_app(settings)  # A name clash or a spec above T2 would fail here, at startup.
+    chains = ModelChains.from_settings(settings, subagents=["payments"])
+    assert chains.subagents["payments"].role == "payments"
+    assert settings.subagent_models("payments") == ("test",)  # Empty: the orchestrator's models.
+    own = settings.model_copy(update={"payments_agent_model": "test", "payments_agent_model_fallbacks": "a, b"})
+    assert own.subagent_models("payments") == ("test", "a", "b")

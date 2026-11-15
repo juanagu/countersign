@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from functools import cache
 from zoneinfo import ZoneInfo
@@ -9,11 +9,13 @@ from fastapi import FastAPI
 from psycopg_pool import AsyncConnectionPool
 from pydantic_ai.conversation_store import ConversationStore, InMemoryConversationStore
 from pydantic_ai.models import Model
+from pydantic_ai.toolsets import AbstractToolset
 
 from app.auth.token_verifier import BOT_AUDIENCE, JwksTokenVerifier, TokenVerifier, http_jwks_fetcher
 from app.banking.mcp_toolsets import banking_toolset
 from app.banking.token_exchange import TokenExchanger
 from app.chat.agent import BotAgent, build_agent
+from app.chat.deps import BotDeps
 from app.chat.routes import chat_router
 from app.config import Settings
 from app.conversations.pg_store import PgConversationStore
@@ -28,18 +30,64 @@ from app.guardrails.span_redaction import RedactingSpanExporter
 from app.knowledge.embedder import FastEmbedEmbedder, LazyEmbedder
 from app.knowledge.search_tool import knowledge_toolset
 from app.knowledge.store import PgKnowledgeStore
+from app.policy.frequency_caps import FrequencyCaps
 from app.skills.registry import SkillRegistry
+from app.subagents.build import build_subagent
+from app.subagents.delegate import Subagent, delegate_toolset
+from app.subagents.registry import SubagentRegistry
 
 SERVICE_NAME = "bot"
 
 
+BankingFactory = Callable[[Mapping[str, frozenset[str]]], AbstractToolset[BotDeps]]
+"""Builds one agent's gateway toolset from its own skills' scopes, so each agent exchanges for its own token."""
+
+
+def build_agent_tree(
+    orchestrator_model: Model | str,
+    subagent_model: Callable[[str], Model | str],
+    *,
+    skills: SkillRegistry,
+    subagents: SubagentRegistry,
+    banking: BankingFactory,
+    clock: BankClock,
+    root_tools: Sequence[AbstractToolset[BotDeps]] = (),
+) -> BotAgent:
+    """The orchestrator and its subagents (ADR 021): a banking toolset per agent, never their union, and one
+    `FrequencyCaps`, so a subagent's writes count against the conversation's caps."""
+    caps = FrequencyCaps()
+    delegates = [
+        Subagent(
+            spec,
+            build_subagent(
+                spec,
+                subagent_model(spec.name),
+                domain_tools=[banking({spec.name: spec.scopes})],
+                caps=caps,
+                clock=clock,
+            ),
+        )
+        for spec in subagents.specs()
+    ]
+    return build_agent(
+        orchestrator_model,
+        skills=skills,
+        domain_tools=[banking(skills.scopes_by_skill()), *root_tools],
+        clock=clock,
+        caps=caps,
+        delegates=[delegate_toolset(delegates)] if delegates else [],
+        agent_index=subagents.index(),
+    )
+
+
 def _default_agent(
     settings: Settings,
-    model: Model,
+    chains: ModelChains,
     http: httpx.AsyncClient,
     pool: AsyncConnectionPool,
     embedder: LazyEmbedder,
     skills: SkillRegistry,
+    subagents: SubagentRegistry,
     clock: BankClock,
 ) -> BotAgent:
     exchanger = TokenExchanger(
@@ -48,13 +96,18 @@ def _default_agent(
         client_id=settings.bot_client_id,
         client_secret=settings.bot_client_secret,
     )
-    tools = banking_toolset(exchanger, gateway_url=settings.mcp_gateway_url, scopes_by_skill=skills.scopes_by_skill())
-    knowledge = knowledge_toolset(embedder, PgKnowledgeStore(pool))
-    return build_agent(
-        model,
+
+    def banking(scopes_by_skill: Mapping[str, frozenset[str]]) -> AbstractToolset[BotDeps]:
+        return banking_toolset(exchanger, gateway_url=settings.mcp_gateway_url, scopes_by_skill=scopes_by_skill)
+
+    return build_agent_tree(
+        chains.orchestrator,
+        lambda name: chains.subagents[name],
         skills=skills,
-        domain_tools=[tools, knowledge],
+        subagents=subagents,
+        banking=banking,
         clock=clock,
+        root_tools=[knowledge_toolset(embedder, PgKnowledgeStore(pool))],
     )
 
 
@@ -99,11 +152,12 @@ def create_app(
         return {"status": "ok", "service": SERVICE_NAME}
 
     skills = SkillRegistry.from_dir(settings.skills_dir)
+    subagents = SubagentRegistry.from_dir(settings.subagents_dir, skills=skills)  # Refuses a spec above T2.
     clock = BankClock(ZoneInfo(settings.bank_timezone))  # One calendar for the prompt, the policy and grounding.
     # Built only when needed: injected test doubles need no provider key. The eval judges keep the bare GUARD_MODEL.
-    chains = cache(lambda: ModelChains.from_settings(settings))
+    chains = cache(lambda: ModelChains.from_settings(settings, subagents=subagents.names()))
     guardrails = guardrails or Guardrails.on_model(chains().guard, clock=clock)
-    run_agent = agent or _default_agent(settings, chains().orchestrator, http, pool, embedder, skills, clock)
+    run_agent = agent or _default_agent(settings, chains(), http, pool, embedder, skills, subagents, clock)
     app.include_router(chat_router(run_agent, skills, guardrails, store))
     app.include_router(conversations_router(store, clock))
     setup_telemetry(app, settings, wrap_exporter=RedactingSpanExporter)

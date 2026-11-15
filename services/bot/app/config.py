@@ -8,8 +8,14 @@ from app.core.clock import DEFAULT_BANK_TIMEZONE
 from app.core.llm.fault_injection import parse_faults
 
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+SUBAGENTS_DIR = Path(__file__).resolve().parent.parent / "subagents"
 # The repo checkout layout; containers set KB_DIR instead (the path need not exist there).
 KB_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "kb"
+
+
+def parse_model_list(value: str) -> tuple[str, ...]:
+    """A comma-separated env value; empty means no failover."""
+    return tuple(name for name in (part.strip() for part in value.split(",")) if name)
 
 
 class Settings(BaseSettings):
@@ -23,6 +29,10 @@ class Settings(BaseSettings):
     # Failover chains (ADR 018): comma-separated pydantic-ai model strings tried in order; empty means none.
     bot_model_fallbacks: str = "anthropic:claude-haiku-5-5"
     guard_model_fallbacks: str = "anthropic:claude-sonnet-5-5"
+    # One chain per subagent (ADR 021), `<NAME>_AGENT_MODEL` then its fallbacks; an empty model means the
+    # orchestrator's models, on a chain of the subagent's own.
+    payments_agent_model: str = ""
+    payments_agent_model_fallbacks: str = ""
     llm_first_event_timeout_seconds: float = Field(default=10.0, gt=0)  # Orchestrator, per model tried.
     llm_request_timeout_seconds: float = Field(default=90.0, gt=0)
     # Per guard attempt: two fit inside the guards' 15 s fail-closed budget (ADR 014).
@@ -36,6 +46,7 @@ class Settings(BaseSettings):
     bot_client_secret: str = Field(min_length=16, repr=False)
     mcp_gateway_url: str = "http://localhost:8100/mcp"
     skills_dir: Path = SKILLS_DIR
+    subagents_dir: Path = SUBAGENTS_DIR
     kb_dir: Path = KB_DIR
     database_url: str = "postgresql://bank:bank@localhost:5432/bank"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
@@ -43,6 +54,13 @@ class Settings(BaseSettings):
     bank_timezone: str = DEFAULT_BANK_TIMEZONE  # The bank's day for "today" and open-ended periods.
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "bot"
+
+    def subagent_models(self, name: str) -> tuple[str, ...]:
+        """The subagent's model chain: its own `<NAME>_AGENT_MODEL` and fallbacks, or else the orchestrator's."""
+        model = str(getattr(self, f"{name}_agent_model", "")).strip()
+        if not model:
+            return (self.bot_model, *parse_model_list(self.bot_model_fallbacks))
+        return (model, *parse_model_list(str(getattr(self, f"{name}_agent_model_fallbacks", ""))))
 
     @field_validator("llm_fault_injection")
     @classmethod

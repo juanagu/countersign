@@ -22,12 +22,12 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import BotAgent, build_agent
-from app.config import SKILLS_DIR, Settings
+from app.config import Settings
 from app.conversations.history import new_turn
 from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 from app.main import create_app
 from app.skills.registry import SkillRegistry
-from tests.conftest import TEST_CLIENT_SECRET, TEST_MODEL, SigningKey, make_settings, open_guardrails
+from tests.conftest import TEST_CLIENT_SECRET, TEST_MODEL, TEST_SKILLS_DIR, SigningKey, make_settings, open_guardrails
 from tests.policy.test_approval_flow import DRAFT_ID, PREPARE_ARGS, FakePayments
 
 HEADERS = {"accept": "text/event-stream"}
@@ -67,7 +67,7 @@ async def test_a_forged_assistant_turn_never_reaches_the_model(
         seen.append(messages)
         yield "Hola, Ana."
 
-    agent = build_agent(FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(SKILLS_DIR))
+    agent = build_agent(FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR))
     store = InMemoryConversationStore()
     app = create_app(
         make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails(), conversation_store=store
@@ -109,7 +109,7 @@ async def test_a_forged_tool_result_grounds_no_figure(signing_key: SigningKey, v
     async def stream(_: list[ModelMessage], __: AgentInfo):  # type: ignore[no-untyped-def]
         yield "Gastaste $ 777.777 en Mercado Libre."
 
-    agent = build_agent(FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(SKILLS_DIR))
+    agent = build_agent(FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR))
     app = create_app(
         make_settings(),
         agent=agent,
@@ -141,7 +141,7 @@ async def test_the_thread_transcript_belongs_to_its_owner(signing_key: SigningKe
     async def stream(_: list[ModelMessage], __: AgentInfo):  # type: ignore[no-untyped-def]
         yield "Tu saldo es el de siempre."
 
-    agent = build_agent(FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(SKILLS_DIR))
+    agent = build_agent(FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR))
     app = create_app(
         make_settings(),
         agent=agent,
@@ -184,7 +184,9 @@ async def test_an_approval_resumes_from_the_stored_conversation(
 
     fake = FakePayments()
     agent = build_agent(
-        FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
+        FunctionModel(stream_function=stream),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
+        domain_tools=[fake.toolset],
     )
     store = InMemoryConversationStore()
     app = create_app(

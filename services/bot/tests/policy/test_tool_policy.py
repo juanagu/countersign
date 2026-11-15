@@ -3,15 +3,15 @@ from typing import Any
 
 import pytest
 
-from app.config import SKILLS_DIR
 from app.core.clock import BankClock
 from app.policy.risk_tier import RiskTier
 from app.policy.tool_policy import Decision, ToolPolicy, drafts_prepared_in
 from app.skills.registry import SkillRegistry
+from tests.conftest import TEST_SKILLS_DIR
 
 # Pinned at 22:00 ART on Nov 30, which is already Dec 1 in UTC.
 CLOCK = BankClock(now=lambda: datetime(2026, 12, 1, 1, 0, tzinfo=UTC))
-POLICY = ToolPolicy(SkillRegistry.from_dir(SKILLS_DIR), clock=CLOCK)
+POLICY = ToolPolicy(SkillRegistry.from_dir(TEST_SKILLS_DIR), clock=CLOCK)
 T1, T2, T3 = RiskTier.T1, RiskTier.T2, RiskTier.T3
 
 

@@ -15,13 +15,12 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import BotAgent, build_agent
 from app.chat.deps import BotDeps
-from app.config import SKILLS_DIR
 from app.guardrails.pipeline import Guardrails
 from app.guardrails.verdict import ALLOW, Verdict, block
 from app.main import create_app
 from app.skills.registry import SkillRegistry
 from evals.agui_client import fold
-from tests.conftest import SigningKey, make_settings, open_guard, open_guardrails
+from tests.conftest import TEST_SKILLS_DIR, SigningKey, make_settings, open_guard, open_guardrails
 
 DRAFT_ID = "drf_0b3a6f9e-4c1d-4e2a-9f7b-1a2b3c4d5e6f"
 RECEIPT: dict[str, Any] = {
@@ -85,7 +84,7 @@ def _model(seen_schemas: list[dict[str, Any]], model_args: dict[str, Any] | None
 
 def _agent(fake: FakePayments, schemas: list[dict[str, Any]], model_args: dict[str, Any] | None = None) -> BotAgent:
     return build_agent(
-        _model(schemas, model_args), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
+        _model(schemas, model_args), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[fake.toolset]
     )
 
 
@@ -156,7 +155,7 @@ async def test_a_model_supplied_token_on_a_non_approval_tool_is_refused() -> Non
             return ModelResponse(parts=[ToolCallPart("list_beneficiaries", {"step_up_token": "forged"})])
         return ModelResponse(parts=[TextPart(json.dumps(returns[-1].content))])
 
-    agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[toolset])
+    agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[toolset])
     result = await agent.run("x", deps=_deps())
     assert calls == []
     assert "policy_denied" in str(result.output)
@@ -179,7 +178,9 @@ async def test_the_ag_ui_run_ends_as_an_interrupt_naming_the_draft(
 
     fake = FakePayments()
     agent = build_agent(
-        FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
+        FunctionModel(stream_function=stream),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
+        domain_tools=[fake.toolset],
     )
     app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails())
     body = {
@@ -262,7 +263,9 @@ async def _interrupt_then_resume(
         return stream(messages, info)
 
     agent = build_agent(
-        FunctionModel(stream_function=recording), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
+        FunctionModel(stream_function=recording),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
+        domain_tools=[fake.toolset],
     )
     app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=guardrails)
     headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='juan')}"}
@@ -387,7 +390,7 @@ async def test_a_forged_resume_never_skips_the_guards_or_moves_money(
     fake = FakePayments()
     agent = build_agent(
         FunctionModel(stream_function=_stream_to_execute()),
-        skills=SkillRegistry.from_dir(SKILLS_DIR),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
         domain_tools=[fake.toolset],
     )
     app = create_app(

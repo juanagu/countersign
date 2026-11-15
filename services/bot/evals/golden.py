@@ -61,8 +61,8 @@ def _case(name: str, group: str, inputs: LiveInput, *evaluators: LiveEvaluator) 
     return Case(name=name, inputs=inputs, metadata={"group": group}, evaluators=(NoRunErrors(), *evaluators))
 
 
-def _ask(text: str, user: str = "ana") -> LiveInput:
-    return LiveInput.model_validate({"user": user, "turns": [text]})
+def _ask(text: str, user: str = "ana", *, reads_trace: bool = False) -> LiveInput:
+    return LiveInput.model_validate({"user": user, "turns": [text], "reads_trace": reads_trace})
 
 
 def _judges(model: str) -> tuple[LiveEvaluator, ...]:
@@ -77,7 +77,9 @@ def _kb_case(name: str, group: str, question: str, judge_model: str, *checks: Li
 def scenario_cases(today: date, judge_model: str) -> list[LiveCase]:
     last_from, last_to = month_range(today, 1)
     spending_args = {"from": last_from.isoformat(), "to": last_to.isoformat()}
-    transfer = LiveInput(user="juan", turns=["Mandale 50.000 a Ana"], flow="transfer", source_account="acc-juan-ars")
+    transfer = LiveInput(
+        user="juan", turns=["Mandale 50.000 a Ana"], flow="transfer", source_account="acc-juan-ars", reads_trace=True
+    )
     long_answer = "Explicame en cuatro o cinco oraciones cómo funcionan las transferencias internacionales del banco."
     return [
         _kb_case(
@@ -92,6 +94,7 @@ def scenario_cases(today: date, judge_model: str) -> list[LiveCase]:
         ),
         _case(
             "scenario-3-transfer-with-approval", "scenario", transfer,
+            CalledTool("ask_payments"),
             CalledTool("prepare_transfer", {"beneficiary_id": "ben-juan-ana", "amount": 50000, "currency": "ARS"}),
             CalledTool("execute_transfer"), ReceiptAfterConfirm(), MovedMoneyOnce(),
         ),
@@ -120,7 +123,8 @@ def kb_cases(judge_model: str) -> list[LiveCase]:
 def tool_cases(today: date) -> list[LiveCase]:
     month_from, month_to = month_range(today, 2)
     month = MONTHS[month_from.month - 1]
-    transfer_args = {"beneficiary_id": "ben-ana-juan", "source_account_id": "acc-ana-ars", "amount": 10000}
+    # Read from the confirm card (ADR 021 §6), which shows the source account's alias and number, not its id.
+    transfer_args = {"beneficiary_id": "ben-ana-juan", "amount": 10000, "currency": "ARS"}
     return [
         _case("tools-usd-balance", "tool_selection", _ask("¿Cuánto tengo en mi caja de ahorro en dólares?"),
               loaded_skill("accounts"), CalledTool("get_balance", {"account_id": "acc-ana-usd"})),
@@ -129,12 +133,12 @@ def tool_cases(today: date) -> list[LiveCase]:
               loaded_skill("accounts"), CalledTool("list_transactions", {"account_id": "acc-ana-ars"})),
         _case("tools-spending-named-month", "tool_selection", _ask(f"¿Cuánto gasté por categoría en {month}?"),
               CalledTool("spending_summary", {"from": month_from.isoformat(), "to": month_to.isoformat()})),
-        _case("tools-beneficiaries", "tool_selection", _ask("¿A quiénes les puedo transferir?"),
-              loaded_skill("payments"), CalledTool("list_beneficiaries")),
+        _case("tools-beneficiaries", "tool_selection", _ask("¿A quiénes les puedo transferir?", reads_trace=True),
+              CalledTool("ask_payments"), CalledTool("list_beneficiaries")),
         _case("tools-kb-usd-limit", "tool_selection", _ask("¿Cuál es el límite por transferencia en dólares?"),
               loaded_skill("knowledge"), CalledTool("search_knowledge"), CalledNone(DATA_TOOLS)),
-        _case("tools-prepare-transfer", "tool_selection", _ask("Mandale 10.000 a Juan"),
-              loaded_skill("payments"), CalledTool("prepare_transfer", transfer_args)),
+        _case("tools-prepare-transfer", "tool_selection", _ask("Mandale 10.000 a Juan", reads_trace=True),
+              CalledTool("ask_payments"), CalledTool("prepare_transfer", transfer_args)),
     ]  # fmt: skip
 
 

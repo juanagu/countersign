@@ -13,7 +13,6 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.chat.deps import BotDeps
 from app.guardrails.run_guard import RunGuard
 from app.guardrails.verdict import ALLOW, Verdict, block
-from app.policy.frequency_caps import FrequencyCaps
 from app.policy.policy_toolset import UNTRUSTED_NOTE
 from app.policy.risk_tier import RiskTier
 from app.policy.tool_policy import ToolPolicy
@@ -270,10 +269,9 @@ async def test_a_blocked_message_makes_no_request_on_the_subagents_model() -> No
 
 
 async def test_the_conversations_sixth_t2_call_through_the_subagent_is_capped() -> None:
-    caps = FrequencyCaps()
-    for _ in range(5):
-        assert caps.acquire(("juan", "t"), RiskTier.T2) is None
-    tree = build_tree(scripted(ROOT_STEPS[0], "ok"), scripted(*PAYMENTS_STEPS), caps=caps)
+    tree = build_tree(scripted(ROOT_STEPS[0], "ok"), scripted(*PAYMENTS_STEPS))
+    for _ in range(5):  # The orchestrator's caps, as main.py builds them, already count five writes.
+        assert tree.caps.acquire(("juan", "t"), RiskTier.T2) is None
     result = await tree.root.run(CUSTOMER, deps=_deps())
 
     assert tree.gateway.called("prepare_transfer") == []

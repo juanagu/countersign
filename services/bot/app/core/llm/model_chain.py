@@ -1,14 +1,14 @@
 """One `FallbackModel` chain per role, built here and handed to every `Model | str` parameter (ADR 018)."""
 
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 
-from app.config import Settings
+from app.config import Settings, parse_model_list
 from app.core.llm.circuit_breaker import BreakerRegistry, CircuitBreakerModel
 from app.core.llm.failover import failover_handler
 from app.core.llm.fault_injection import Fault, FaultyModel, fault_for, parse_faults
@@ -32,11 +32,6 @@ class ModelChain(FallbackModel):
     @property
     def settings(self) -> ModelSettings | None:
         return self._role_settings
-
-
-def parse_model_list(value: str) -> tuple[str, ...]:
-    """A comma-separated env value; empty means no failover."""
-    return tuple(name for name in (part.strip() for part in value.split(",")) if name)
 
 
 def build_model_chain(
@@ -65,9 +60,12 @@ def build_model_chain(
 class ModelChains:
     orchestrator: ModelChain
     guard: ModelChain
+    subagents: Mapping[str, ModelChain] = field(default_factory=dict)  # Keyed and roled by the subagent's name.
 
     @classmethod
-    def from_settings(cls, settings: Settings, breakers: BreakerRegistry | None = None) -> "ModelChains":
+    def from_settings(
+        cls, settings: Settings, breakers: BreakerRegistry | None = None, *, subagents: Sequence[str] = ()
+    ) -> "ModelChains":
         breakers = breakers or BreakerRegistry()
         faults = parse_faults(settings.llm_fault_injection)
         if faults:
@@ -92,4 +90,15 @@ class ModelChains:
             breakers=breakers,
             faults=faults,
         )
-        return cls(orchestrator=orchestrator, guard=guard)
+        # A subagent runs with `agent.run`, not streamed, so it gets the request deadline, not the first-event one.
+        subagent_chains = {
+            name: build_model_chain(
+                name,
+                settings.subagent_models(name),
+                settings=ModelSettings(request_timeout=settings.llm_request_timeout_seconds),
+                breakers=breakers,
+                faults=faults,
+            )
+            for name in subagents
+        }
+        return cls(orchestrator=orchestrator, guard=guard, subagents=subagent_chains)

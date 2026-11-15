@@ -6,13 +6,15 @@ import { AUDIENCE_SCOPES, GATEWAY_AUDIENCE } from '../../../../../apps/bff/src/f
 import { createStack, GATEWAY_SECRET } from '../../support/stack.js';
 
 // Frontmatter `scopes` repeats what each tool's `_meta` says. A mismatch hides a tool with no error, so this
-// reads both from the real backends and the real skills (drift).
+// reads both from the real backends and the real skills and subagents (drift; ADR 021).
 const SKILLS_DIR = new URL('../../../../bot/skills/', import.meta.url);
+const SUBAGENTS_DIR = new URL('../../../../bot/subagents/', import.meta.url);
 
 interface Skill {
   name: string;
   tools: string[];
   scopes: string[];
+  maxTier: string;
 }
 interface ServedTool {
   name: string;
@@ -22,13 +24,13 @@ interface ServedTool {
   listScope: string | undefined;
 }
 
-function loadSkills(): Skill[] {
-  return readdirSync(SKILLS_DIR)
+function loadSkills(dir: URL = SKILLS_DIR): Skill[] {
+  return readdirSync(dir)
     .filter((file) => file.endsWith('.md'))
     .map((file) => {
-      const frontmatter = /^---\n([\s\S]*?)\n---/.exec(readFileSync(new URL(file, SKILLS_DIR), 'utf8'))?.[1] ?? '';
-      const meta = parse(frontmatter) as { name: string; tools?: string[]; scopes?: string[] };
-      return { name: meta.name, tools: meta.tools ?? [], scopes: meta.scopes ?? [] };
+      const frontmatter = /^---\n([\s\S]*?)\n---/.exec(readFileSync(new URL(file, dir), 'utf8'))?.[1] ?? '';
+      const meta = parse(frontmatter) as { name: string; tools?: string[]; scopes?: string[]; max_tier: string };
+      return { name: meta.name, tools: meta.tools ?? [], scopes: meta.scopes ?? [], maxTier: meta.max_tier };
     });
 }
 
@@ -56,11 +58,26 @@ async function servedTools(): Promise<ServedTool[]> {
   return served;
 }
 
-describe('skill scopes against the tools the real backends serve', () => {
-  const skills = loadSkills();
+describe('skill and subagent scopes against the tools the real backends serve', () => {
+  const subagents = loadSkills(SUBAGENTS_DIR);
+  const skills = [...loadSkills(), ...subagents];
 
-  it('reads the skills it checks', () => {
-    expect(skills.map((s) => s.name).sort()).toEqual(['accounts', 'knowledge', 'payments']);
+  it('reads the skills and subagents it checks', () => {
+    expect(skills.map((s) => s.name).sort()).toEqual(['accounts', 'knowledge', 'payments', 'transfers']);
+    expect(subagents.map((s) => s.name)).toEqual(['payments']);
+  });
+
+  it('never lets a subagent allow-list a T3 tool or request a T3 call scope (ADR 021: the orchestrator owns T3)', async () => {
+    const served = await servedTools();
+    const t3 = served.filter((t) => t.tier === 'T3');
+    expect(t3.map((t) => t.name)).toContain('execute_transfer');
+    for (const subagent of subagents) {
+      expect(['T0', 'T1', 'T2'], subagent.name).toContain(subagent.maxTier);
+      for (const tool of t3) {
+        expect(subagent.tools, `${subagent.name} allows ${tool.name}`).not.toContain(tool.name);
+        expect(subagent.scopes, `${subagent.name} requests ${tool.callScope}`).not.toContain(tool.callScope);
+      }
+    }
   });
 
   it("lists every banking tool's list scope in each skill that allow-lists it", async () => {
