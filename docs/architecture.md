@@ -467,3 +467,4 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 | [016](decisions/016-evals.md) | Evals | Live suite through the BFF, LLM judge, thresholds in config, metrics as a script. |
 | [017](decisions/017-mcp-gateway.md) | MCP gateway | One more hop in the exchange chain, actor chains, limits, breaker, audit. |
 | [018](decisions/018-llm-model-failover.md) | LLM failover | In-process chain per role, first-event deadline, circuit breaker. |
+| [019](decisions/019-copilotkit-advisory-overrides.md) | Dependency advisories | pnpm overrides for undici and graphql-scalars; zod 3's advisory accepted until A2UI moves to zod 4. |
