@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from evals.agui_client import BffSession, Event, RunTrace, bff_client
 from evals.bank_db import Ledger, read_ledger
+from evals.calls import ObservedCall, client_calls, with_delegated
 from evals.delegation import read_delegated
 
 STEP_UP_PIN = "123456"  # The mock IdP's synthetic PIN (AGENTS.md, rule 3).
@@ -29,6 +30,7 @@ class LiveInput(BaseModel):
     source_account: str | None = None  # transfer: the account whose ledger is read before and after
     # A subagent domain: its calls are read from the run's Phoenix spans, since its arguments never reach the client.
     reads_trace: bool = False
+    scenario_id: str | None = None  # A CUJ: the runner looks the scenario up by this id.
 
 
 @dataclass
@@ -47,7 +49,12 @@ class LiveOutput:
     ledger_change: Ledger | None = None
     resume: ResumeCheck | None = None
     notes: list[str] = field(default_factory=list)
-    delegated: list[tuple[str, dict[str, Any]]] = field(default_factory=list)  # From the trace, not the client.
+    delegated: list[ObservedCall] = field(default_factory=list)  # From the trace, not the client.
+    # A CUJ's extras: the ledger after the journey, each step-up request's HTTP status, the interrupted calls the
+    # customer refused.
+    ledger_after: Ledger | None = None
+    step_up_statuses: list[int] = field(default_factory=list)
+    cancelled_calls: frozenset[str] = frozenset()
 
     @property
     def text(self) -> str:
@@ -61,7 +68,16 @@ class LiveOutput:
 
     @property
     def tools(self) -> list[tuple[str, dict[str, Any]]]:
-        return [call for trace in self.traces for call in trace.tool_args] + self.delegated
+        return [call for trace in self.traces for call in trace.tool_args] + [(c.name, c.args) for c in self.delegated]
+
+    @property
+    def calls(self) -> list[ObservedCall]:
+        """Every call in order with its outcome, the subagent's included."""
+        return with_delegated(client_calls(self.traces, self.cancelled_calls), self.delegated)
+
+    @property
+    def handoffs(self) -> set[str]:
+        return {c.name for c in self.delegated if c.is_handoff}
 
     @property
     def components(self) -> list[dict[str, Any]]:

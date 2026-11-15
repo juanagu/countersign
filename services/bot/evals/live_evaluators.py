@@ -97,7 +97,7 @@ class NoWithheldCalls(Evaluator[LiveInput, LiveOutput, Meta]):
         return not {name for name, _ in ctx.output.tools} & WITHHELD_TOOLS
 
 
-def _matches(expected: Any, actual: Any) -> bool:
+def values_match(expected: Any, actual: Any) -> bool:
     if isinstance(expected, int | float) and isinstance(actual, int | float):
         return Decimal(str(expected)) == Decimal(str(actual))
     return bool(expected == actual)
@@ -115,7 +115,7 @@ class CalledTool(Evaluator[LiveInput, LiveOutput, Meta]):
 
     def evaluate(self, ctx: Ctx) -> EvaluationReason:
         calls = [args for name, args in ctx.output.tools if name == self.tool]
-        ok = any(all(_matches(v, args.get(k)) for k, v in self.args.items()) for args in calls)
+        ok = any(all(values_match(v, args.get(k)) for k, v in self.args.items()) for args in calls)
         return reason_for(ok, f"{self.tool} calls: {calls}; all calls: {[n for n, _ in ctx.output.tools]}")
 
 
