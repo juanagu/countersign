@@ -39,6 +39,9 @@ class RunGuard:
     # Set once the run (or its history) holds third-party free text: memos, merchant names, KB passages.
     third_party_text_seen: bool = False
     evidence: Evidence = field(default_factory=Evidence)
+    # Ids of the status calls code opened around a delegation (`subagents.progress`): the only delegate-named calls
+    # the output guard lets out, as they carry no arguments and an empty result.
+    status_calls: set[str] = field(default_factory=set)
     _verdict: Verdict | None = None
     _decided: asyncio.Event = field(default_factory=asyncio.Event)
     _task: asyncio.Task[None] | None = None

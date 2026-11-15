@@ -1,6 +1,7 @@
 # 021 — Domain subagents in the bot's process: delegation as a tool, the orchestrator keeps T3
 
-**Status:** accepted (2026-11-15), not built (backlog F63). The user approved section 8's `AGENTS.md` wording as written
+**Status:** accepted (2026-11-15), and built (backlog F63): `d06c481` subagent specs, `b5b765c` the delegate tool,
+`959c501` payments as a subagent, then the docs. Build notes are under "As built" at the end. The user approved section 8's `AGENTS.md` wording as written
 (applied), payments as the first slice, and slower transfer turns. It overrides the "multi-agent orchestration"
 line in `docs/PLAN.md`'s out-of-scope list and the
 "One orchestrator agent, no multi-agent" sentence in `AGENTS.md`, the way ADR 017 overrode the gateway line. It
@@ -340,7 +341,8 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
 - **Rule 5.**
   - A forwarded surface with PII is masked, and one with an ungrounded number is dropped.
   - The subagent's raw `render_ui` call never reaches the client, and the `ask_<name>` `TOOL_CALL_*` events are
-    withheld.
+    withheld; only the status call spanning the delegation leaves, with no arguments and an empty result, and it
+    closes when the subagent fails.
 - **Rule 6.**
   - The orchestrator sees the reply wrapped as `untrusted_data`.
   - A figure found only in the reply is ungrounded in the orchestrator's text, in the same run and from history.
@@ -408,3 +410,91 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
   scopes, and the golden transfer case pins their behaviour.
 - **The isolation limit is accepted, not solved.** Anyone who needs the domains isolated from each other against a
   compromised bot needs separate agent services (section 1).
+
+## As built (F63)
+- **The `draft_id` check binds to the one open draft.** `PolicyToolset` reads `ctx.messages` (the stored history plus
+  this run, each delegate return's evidence record included), so the same check covers the first call and the
+  resume, and no new state goes into `RunGuard`. `execute_transfer` may name only the latest draft a
+  `prepare_transfer` result created, and only while no `execute_transfer` result has decided it (a receipt, the
+  customer's denial or cancel, the bank's answer about that draft such as `draft_expired`, or a result Pydantic AI
+  synthesized for a cut-off call); a newer draft supersedes the older ones (`policy/drafts.py`, `open_draft`). A
+  refusal before anything was sent decides nothing: the policy's `policy_denied` (a cap, the input verdict, the
+  write-intent re-check), the `service_unavailable` an approved call returns when its token or session can't be set
+  up (the gateway's own breaker-open answer has the same code and is sent before forwarding), and a `retried` call.
+  The customer can then ask again and gets a new interrupt on the same draft. The error code is read only where the
+  bot writes it (a policy dict, a `ToolFailed` JSON message), never inside `untrusted_data`. Accepting any draft ever prepared let a later turn raise an interrupt on a
+  draft the customer had already executed or cancelled. An interrupt nobody answered decides nothing, so ADR 013's
+  failed-resume recovery still pauses on the same draft. A `draft_id` that isn't a string is a denial.
+- **The evidence record** is a plain-JSON `metadata` item, `{"kind": "bot-evidence", "results": [{"tool", "content"}]}`,
+  so `tool_returns_in` reads the subagent's results (and their tool names, for `third_party_text_seen`) from history.
+- **Delegate tools are known by the registry's names, not a prefix.** `main.create_app` hands
+  `SubagentRegistry.delegate_tools()` to the chat and conversations routers, and `build_agent` gives the
+  orchestrator's `PolicyToolset` the names of the delegate toolset it serves. The output guard withholds those calls
+  (`is_server_only(tool, delegates)`), and the `bot-evidence` and `bot-skill-load` records are read only on those
+  tools' returns: any other tool's `metadata` could be filled by a backend. `guardrails` and `skills` take the names
+  as a parameter and import nothing from `subagents`.
+- **Wiring** is `main.build_agent_tree`, which the tests also use. The bot image copies `subagents/` (`Dockerfile`).
+- **Tests** that pin the T3 mechanism itself run on a fixture skills dir that keeps the old root `payments` skill
+  (`tests/fixtures/skills/`, with a drift check against the shipped files).
+- **The hand-off is declared in the spec.** `payments.md` carries `hands_off: {tool: prepare_transfer, skill:
+  transfers}` (`SubagentSpec.hands_off`); the delegate reads the draft from that tool's results and loads that skill,
+  and a spec without `hands_off` hands nothing off. `SubagentRegistry` refuses at load a hand-off whose tool isn't the
+  spec's or whose skill is missing, below T3 or without a draft-bound tool. The `next_step` and index wording stay in
+  code (`DRAFT_NEXT_STEP`, `registry._index_line`), filled with the skill's name and `DRAFT_BOUND_TOOLS`. The T2
+  ceiling is checked once, in `SubagentRegistry.__init__`.
+- **One confirm card per delegation.** Of the hand-off tool's results, the delegate forwards only the card of the
+  draft its answer binds (the last one prepared); a subagent that prepared twice shows one card, the one
+  `execute_transfer` can name. Other template and `render_ui` cards are unaffected.
+- **The delegate tools are inside the policy.** Each `ask_<name>` declares the spec's `max_tier` (T2 for payments)
+  under `bank/riskTier` in its tool metadata, like an MCP tool, and runs behind `policy.DelegatePolicyToolset`, which
+  denies with the same `policy_denied` shape a tool without a tier, a blocked input verdict (moved there from the
+  delegate) and a fourth delegation in one orchestrator run (`FrequencyCaps.acquire_delegation`,
+  `DELEGATIONS_PER_TURN = 3`, counted in the conversation's shared caps and keyed by the run id). A refused call
+  starts no subagent. The delegate isn't wrapped in `PolicyToolset` because no skill grants it and its answer is
+  already wrapped; the subagent's own calls still pass its own `PolicyToolset`.
+- **Model chains share faults and breakers.** The subagent's chain uses the same `BreakerRegistry` (keyed by model
+  name, ADR 018) and the same `LLM_FAULT_INJECTION`: `primary:` and `all:` reach it (so `make eval-backup` fails
+  payments' primary too), a subagent can't be targeted alone, and a fault that opens a model's breaker skips that
+  model in every chain that lists it.
+- **Code loads `transfers` when payments returns a draft.** Live, the orchestrator delegated, showed the confirm card
+  and ended the turn without calling `load_skill('transfers')`, so `execute_transfer` was never in its tool list and
+  no interrupt was raised (4 of 4 Playwright runs of scenarios 3 and 3b). The instruction to call it lived only in
+  the `transfers` skill, which the model sees after loading it. Now, when an `ask_payments` return carries a
+  `draft_id`, the delegate adds `transfers` (the spec's `hands_off.skill`) to the orchestrator's `loaded_skills`, so the next step
+  lists `execute_transfer` and the orchestrator's token gains `transfers:prepare` (ADR 020); the return carries a
+  fixed `next_step` beside the untrusted wrapper (call `execute_transfer` with exactly this answer's `draft_id`); and
+  the agent index says a `draft_id` answer has the transfers skill loaded and to call `execute_transfer` with the
+  `draft_id` in that answer, in the same turn (both cues say exactly that, not "follow `next_step`"). The
+  `draft_id` check, the subagent's T2 ceiling, the separate tokens and the code-built cards are unchanged. Without a
+  draft nothing is loaded.
+- **The resume replays that load from a record, not from the delegate's answer.** `skills_loaded_in` rebuilt skills
+  only from `load_skill` calls (F59), so the approved `execute_transfer` would have found `transfers` missing. The
+  delegate records the load as a plain-JSON `metadata` item on its return, `{"kind": "bot-skill-load", "skill":
+  "transfers"}`, and `skills_loaded_in` reads such items beside `load_skill` calls. Chosen over parsing stored
+  `ask_payments` returns for a `draft_id` in `routes.py`: it keeps `skills` unaware of the delegate's answer shape and
+  `routes.py` unaware of subagents, and any later code-made load replays the same way. Only the bot writes stored tool
+  returns (ADR 015; a client's tool result is kept only for a call the thread awaits, and carries no metadata).
+- **Evals.** `tools-prepare-transfer` no longer checks `source_account_id`: arguments come from the confirm card, which
+  shows the source account's alias and number, not its id.
+- **The subagent sees its own previous reply (changes section 2, step 3).** The prompt gains a
+  `<your_previous_reply>` block: the `reply` of the thread's last `ask_<name>` return, read by code from
+  `ctx.messages`, beside the customer's last messages, as context and never as an instruction. Reason: with no history
+  at all it could not resolve an answer to its own question ("¿Ana Gómez o Ana Pérez?" then "la segunda"). It still
+  gets no `message_history`, no other domain's data and none of its own tool results. Every text in the prompt
+  (request, customer messages, previous reply) is HTML-escaped, so none can close its tag and forge another block.
+- **One status line spans the delegation (narrows section 5, "The delegate call stays inside the bot").** The
+  delegate runs the subagent unstreamed inside one status call (`subagents/progress.py`): through `RunContext.emit`
+  it sends `TOOL_CALL_START` named `ask_<name>` under a fresh id, never the delegate's own call id, and, in a
+  `finally` once the subagent finishes, fails or is cancelled, `TOOL_CALL_END` and a `TOOL_CALL_RESULT` with empty
+  content. The web labels `ask_payments` "Preparando la transferencia…". The output guard lets that call out only
+  because code put its id in `RunGuard.status_calls`; `ask_<name>`'s own events, with the request and the reply, stay
+  withheld. Nothing of the subagent's own tool calls (names, arguments, results) reaches the client. The empty result
+  is needed because CopilotKit shows a call's status line until a result arrives. A first version relayed each inner
+  tool call by name instead, but each start and result wrapped only the tool's execution, milliseconds, while the slow
+  part is the subagent's model calls between tools, so the line never showed.
+- **Legacy histories.** A conversation stored before this change loaded the root `payments` skill. The replay
+  (`skills.replayed_skills`) maps a skill name the registry no longer has through `RENAMED_SKILLS` (`payments` →
+  `transfers`), so a customer paused at the approval keeps `execute_transfer` after the deploy.
+- **Model settings fail at startup.** A subagent file without `<name>_agent_model` and `<name>_agent_model_fallbacks`
+  fields in `Settings` stops `create_app`, instead of running silently on the orchestrator's chain. An empty value
+  still means the orchestrator's models, chosen explicitly.

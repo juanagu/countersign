@@ -1,11 +1,12 @@
 """Streaming output guard: text is released a sentence at a time, after image, PII-leak and grounding checks.
 
-It also withholds what the client must not see: reasoning and the raw render_ui tool call.
+It also withholds what the client must not see: reasoning, the raw render_ui tool call and the delegate calls.
 """
 
 import logging
 import re
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from typing import Any
 from uuid import uuid4
 
@@ -40,6 +41,12 @@ A2UI_ACTIVITY = "a2ui-surface"  # Model-built; `bank-template` cards are built f
 SERVER_ONLY_TOOLS = frozenset({"render_ui"})
 # The model's reasoning is not an answer: it skips the output checks, so it never leaves the bot.
 REASONING_EVENTS = frozenset(kind for kind in EventType if kind.name.startswith("REASONING_"))
+
+
+def is_server_only(tool_name: str, delegates: Collection[str] = frozenset()) -> bool:
+    """`render_ui`, and each of `delegates`, the delegate tools: their request and reply are model text."""
+    return tool_name in SERVER_ONLY_TOOLS or tool_name in delegates
+
 
 UNGROUNDED_FALLBACK = "(No puedo confirmar ese dato en este momento, así que no lo muestro.)"
 SURFACE_FALLBACK = "No pude mostrar ese detalle porque no pude verificar sus cifras."
@@ -119,9 +126,19 @@ def split_sentences(buffer: str) -> tuple[list[str], str]:
 class OutputGuard:
     """One per run. Transforms AG-UI events; message start and end events are kept paired."""
 
-    def __init__(self, evidence: Evidence, checks: Sequence[SentenceCheck] = DEFAULT_CHECKS) -> None:
+    def __init__(
+        self,
+        evidence: Evidence,
+        checks: Sequence[SentenceCheck] = DEFAULT_CHECKS,
+        *,
+        delegates: Collection[str] = frozenset(),
+        status_calls: AbstractSet[str] = frozenset(),
+    ) -> None:
+        """`status_calls` is read live: code adds a delegation's status call id before emitting it."""
         self._evidence = evidence
         self._checks = checks
+        self._delegates = frozenset(delegates)
+        self._status_calls = status_calls
         self._buffers: dict[str, str] = {}
         self._withheld_calls: set[str] = set()
         # Model-built cards wait for the end of the next text message (or of the run), so the customer reads the
@@ -156,11 +173,17 @@ class OutputGuard:
         yield from held
 
     def _withheld(self, event: BaseEvent) -> bool:
-        """Reasoning, and every event of a server-only tool call (start, args, end, result)."""
+        """Reasoning, and every event of a server-only tool call (start, args, end, result), except a delegation's
+        status call."""
         if event.type in REASONING_EVENTS:
             return True
-        if isinstance(event, ToolCallStartEvent | ToolCallChunkEvent) and event.tool_call_name in SERVER_ONLY_TOOLS:
-            self._withheld_calls.add(str(event.tool_call_id))
+        server_only = (
+            isinstance(event, ToolCallStartEvent | ToolCallChunkEvent)
+            and is_server_only(event.tool_call_name or "", self._delegates)
+            and event.tool_call_id not in self._status_calls
+        )
+        if server_only:
+            self._withheld_calls.add(str(getattr(event, "tool_call_id", "")))
         return getattr(event, "tool_call_id", None) in self._withheld_calls
 
     def check_sentence(self, sentence: str) -> str:

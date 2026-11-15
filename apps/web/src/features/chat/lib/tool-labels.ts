@@ -11,8 +11,8 @@ const LABELS: Readonly<Record<string, string>> = {
   list_transactions: 'Consultando tus movimientos…',
   spending_summary: 'Sumando tus gastos…',
   search_knowledge: 'Buscando en la información del banco…',
-  list_beneficiaries: PREPARING_TRANSFER,
-  prepare_transfer: PREPARING_TRANSFER,
+  // One line for the whole payments delegation: the bot sends a single status call around the subagent's run.
+  ask_payments: PREPARING_TRANSFER,
 };
 
 export function toolStatusLabel(toolName: string): string | undefined {

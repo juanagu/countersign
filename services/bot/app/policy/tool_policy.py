@@ -13,6 +13,12 @@ MAX_PERIOD_DAYS = 400
 TRANSFER_CAPS = {"ARS": 2_000_000, "USD": 10_000}
 _ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
+NO_TIER = "the tool declares no risk tier"
+PREPARE_TRANSFER = "prepare_transfer"
+# Tools whose `draft_id` must name the conversation's open draft: the one value that crosses from a subagent's answer
+# into a T3 call is checked in code, not trusted.
+DRAFT_BOUND_TOOLS = frozenset({"execute_transfer"})
+
 ArgCheck = Callable[[Mapping[str, Any], date], str | None]
 """Given the arguments and the bank's today, returns a denial reason, or None when they are within bounds."""
 
@@ -70,6 +76,21 @@ def _transfer_bounds(args: Mapping[str, Any], _today: date) -> str | None:
     return f"transfers are capped at {cap} {currency}" if amount > cap else None
 
 
+def prepared_draft_id(content: Any) -> str | None:
+    """The draft id in a `prepare_transfer` result, raw or as the policy wrapped it; None for an error."""
+    if isinstance(content, Mapping) and "untrusted_data" in content:
+        content = content["untrusted_data"]
+    if not isinstance(content, Mapping) or "error" in content:
+        return None
+    draft_id = content.get("draft_id")
+    return draft_id if isinstance(draft_id, str) and draft_id else None
+
+
+def _names_open_draft(args: Mapping[str, Any], open_draft: str | None) -> bool:
+    draft = args.get("draft_id")
+    return isinstance(draft, str) and open_draft is not None and draft == open_draft
+
+
 DEFAULT_ARG_CHECKS: Mapping[str, ArgCheck] = {
     "list_transactions": _transactions_bounds,
     "spending_summary": _summary_bounds,
@@ -93,11 +114,21 @@ class ToolPolicy:
     def visible(self, tool: str, tier: RiskTier | None, loaded: set[str]) -> bool:
         return tier is not None and self._granted(tool, tier, loaded)
 
-    def check_call(self, tool: str, tier: RiskTier | None, args: Mapping[str, Any], loaded: set[str]) -> Decision:
+    def check_call(
+        self,
+        tool: str,
+        tier: RiskTier | None,
+        args: Mapping[str, Any],
+        loaded: set[str],
+        open_draft: str | None = None,
+    ) -> Decision:
+        """`open_draft` is the conversation's one draft that no `execute_transfer` result decided yet."""
         if tier is None:
-            return Decision(False, "the tool declares no risk tier")
+            return Decision(False, NO_TIER)
         if not self._granted(tool, tier, loaded):
             return Decision(False, "no loaded skill grants this tool")
+        if tool in DRAFT_BOUND_TOOLS and not _names_open_draft(args, open_draft):
+            return Decision(False, "the draft is not this conversation's open draft")
         check = self._arg_checks.get(tool)
         reason = check(args, self._clock.today()) if check else None
         if not reason and tier is RiskTier.T3:

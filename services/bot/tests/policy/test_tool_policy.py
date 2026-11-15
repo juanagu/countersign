@@ -3,15 +3,15 @@ from typing import Any
 
 import pytest
 
-from app.config import SKILLS_DIR
 from app.core.clock import BankClock
 from app.policy.risk_tier import RiskTier
 from app.policy.tool_policy import Decision, ToolPolicy
 from app.skills.registry import SkillRegistry
+from tests.conftest import TEST_SKILLS_DIR
 
 # Pinned at 22:00 ART on Nov 30, which is already Dec 1 in UTC.
 CLOCK = BankClock(now=lambda: datetime(2026, 12, 1, 1, 0, tzinfo=UTC))
-POLICY = ToolPolicy(SkillRegistry.from_dir(SKILLS_DIR), clock=CLOCK)
+POLICY = ToolPolicy(SkillRegistry.from_dir(TEST_SKILLS_DIR), clock=CLOCK)
 T1, T2, T3 = RiskTier.T1, RiskTier.T2, RiskTier.T3
 
 
@@ -32,10 +32,23 @@ def test_denies_a_tool_without_a_declared_tier() -> None:
 
 
 def test_money_movement_is_allowed_only_through_approval() -> None:
-    decision = POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"payments"})
+    decision = POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"payments"}, "d")
     assert decision.allowed
     assert decision.needs_approval
-    assert not POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"accounts"}).allowed
+    assert not POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"accounts"}, "d").allowed
+
+
+# The draft id is the one value crossing from a subagent's answer into a T3 call, so code checks it; a value that is
+# not a string is a denial, never an error.
+@pytest.mark.parametrize(
+    "args",
+    [{"draft_id": "other"}, {"draft_id": None}, {}, {"draft_id": ["d"]}, {"draft_id": {"d": 1}}, {"draft_id": 7}],
+)
+def test_money_movement_needs_the_conversations_open_draft(args: dict[str, object]) -> None:
+    decision = POLICY.check_call("execute_transfer", T3, args, {"payments"}, "d")
+    assert not decision.allowed and not decision.needs_approval
+    assert decision.reason == "the draft is not this conversation's open draft"
+    assert not POLICY.check_call("execute_transfer", T3, {"draft_id": "d"}, {"payments"}).allowed
 
 
 def test_allows_a_granted_call_within_bounds() -> None:

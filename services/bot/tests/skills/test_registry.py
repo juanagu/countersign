@@ -10,7 +10,7 @@ _SKILL = "---\nname: x\ndescription: d\ntools: [a]\nmax_tier: T1\n{extra}---\nbo
 
 def test_loads_the_shipped_skills() -> None:
     registry = SkillRegistry.from_dir(SKILLS_DIR)
-    assert registry.names() == ["accounts", "knowledge", "payments"]
+    assert registry.names() == ["accounts", "knowledge", "transfers"]
     accounts = registry.get("accounts")
     assert accounts is not None
     assert accounts.max_tier is RiskTier.T1
@@ -21,8 +21,8 @@ def test_loads_the_shipped_skills() -> None:
 def test_maps_each_shipped_skill_to_the_gateway_scopes_it_requests() -> None:
     assert SkillRegistry.from_dir(SKILLS_DIR).scopes_by_skill() == {
         "accounts": frozenset({"accounts:read"}),
-        # Payments also reads accounts, and never asks for transfers:execute: only an approved call gets that.
-        "payments": frozenset({"accounts:read", "beneficiaries:read", "transfers:prepare"}),
+        # The list scope execute_transfer needs to be seen, never transfers:execute: only an approved call gets that.
+        "transfers": frozenset({"transfers:prepare"}),
         "knowledge": frozenset(),  # search_knowledge is bot-local.
     }
 
@@ -62,3 +62,11 @@ def test_rejects_an_unknown_tier() -> None:
 def test_rejects_a_file_without_frontmatter() -> None:
     with pytest.raises(ValueError, match="frontmatter"):
         parse_skill("# no frontmatter")
+
+
+def test_the_test_skill_fixtures_copy_the_shipped_skills_they_share() -> None:
+    from tests.conftest import TEST_SKILLS_DIR
+
+    for name in ("accounts", "knowledge"):
+        shipped = (SKILLS_DIR / f"{name}.md").read_text(encoding="utf-8")
+        assert (TEST_SKILLS_DIR / f"{name}.md").read_text(encoding="utf-8") == shipped, name

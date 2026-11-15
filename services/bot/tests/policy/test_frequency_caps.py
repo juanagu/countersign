@@ -1,4 +1,4 @@
-from app.policy.frequency_caps import Cap, FrequencyCaps
+from app.policy.frequency_caps import TURN_COUNT_TTL_SECONDS, Cap, FrequencyCaps
 from app.policy.risk_tier import RiskTier
 
 
@@ -28,3 +28,20 @@ def test_caps_writes_per_session_in_a_sliding_window() -> None:
 def test_uncapped_tiers_are_not_counted() -> None:
     caps = FrequencyCaps({RiskTier.T3: Cap(calls=1, window_seconds=60)})
     assert all(caps.acquire(("ana", "t"), RiskTier.T1) is None for _ in range(100))
+
+
+def test_delegations_are_capped_per_turn_and_a_new_turn_counts_afresh() -> None:
+    clock = Clock()
+    caps = FrequencyCaps(clock=clock, delegations_per_turn=2)
+    session = ("ana", "t")
+
+    assert caps.acquire_delegation(session, "run-1") is None
+    assert caps.acquire_delegation(session, "run-1") is None
+    assert caps.acquire_delegation(session, "run-1") == "at most 2 delegations per turn"
+    assert caps.acquire_delegation(("ana", "t2"), "run-1") is None  # Another conversation has its own count.
+    assert caps.acquire_delegation(session, "run-2") is None
+    assert caps.acquire(session, RiskTier.T2) is None  # Delegations are not T2 writes.
+
+    caps.acquire_delegation(session, "run-2")
+    clock.now = TURN_COUNT_TTL_SECONDS
+    assert caps.acquire_delegation(session, "run-2") is None  # A forgotten turn starts again.

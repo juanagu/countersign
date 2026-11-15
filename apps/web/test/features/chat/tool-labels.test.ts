@@ -8,13 +8,20 @@ describe('toolStatusLabel', () => {
     ['list_transactions', 'Consultando tus movimientos…'],
     ['spending_summary', 'Sumando tus gastos…'],
     ['search_knowledge', 'Buscando en la información del banco…'],
-    ['list_beneficiaries', 'Preparando la transferencia…'],
-    ['prepare_transfer', 'Preparando la transferencia…'],
+    ['ask_payments', 'Preparando la transferencia…'],
   ])('labels %s', (tool, label) => {
     expect(toolStatusLabel(tool)).toBe(label);
   });
 
-  it.each(['load_skill', 'render_ui', 'execute_transfer', 'toString', '__proto__'])('says nothing for %s', (tool) => {
+  it.each([
+    'load_skill',
+    'render_ui',
+    'execute_transfer',
+    'list_beneficiaries',
+    'prepare_transfer',
+    'toString',
+    '__proto__',
+  ])('says nothing for %s', (tool) => {
     expect(toolStatusLabel(tool)).toBeUndefined();
   });
 });

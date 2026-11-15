@@ -268,7 +268,8 @@ redact / block + reason):
 
 - ~~An MCP gateway as a separate service~~ (the user asked for one after the plan: ADR 017, built
   in Phase 8).
-- A2A and partner agents; multi-agent orchestration.
+- A2A and partner agents; multi-agent orchestration beyond in-process domain subagents (those are in scope since
+  ADR 021).
 - MCP Apps, voice, the WebSocket channel.
 - Real IdP, DPoP, device attestation, FAPI 2.0 compliance.
 - Durable execution engine (Temporal); production deployment, autoscaling, WAF.

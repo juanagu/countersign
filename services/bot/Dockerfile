@@ -6,6 +6,7 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 COPY app ./app
 COPY skills ./skills
+COPY subagents ./subagents
 RUN useradd --create-home bot && mkdir /models && chown bot /models
 USER bot
 EXPOSE 8000

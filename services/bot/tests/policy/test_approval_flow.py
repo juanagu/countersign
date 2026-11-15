@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,13 +15,12 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import BotAgent, build_agent
 from app.chat.deps import BotDeps
-from app.config import SKILLS_DIR
 from app.guardrails.pipeline import Guardrails
 from app.guardrails.verdict import ALLOW, Verdict, block
 from app.main import create_app
 from app.skills.registry import SkillRegistry
 from evals.agui_client import fold
-from tests.conftest import SigningKey, make_settings, open_guard, open_guardrails
+from tests.conftest import TEST_SKILLS_DIR, SigningKey, make_settings, open_guard, open_guardrails
 
 DRAFT_ID = "drf_0b3a6f9e-4c1d-4e2a-9f7b-1a2b3c4d5e6f"
 RECEIPT: dict[str, Any] = {
@@ -36,10 +36,28 @@ RECEIPT: dict[str, Any] = {
 }
 
 
+DRAFT: dict[str, Any] = {
+    "draft_id": DRAFT_ID,
+    "amount": "50000.00",
+    "fee": "0.00",
+    "total": "50000.00",
+    "currency": "ARS",
+    "source_account": {"id": "acc-juan-ars", "alias": "Cuenta corriente", "number": "****7810"},
+    "beneficiary": {"id": "ben-juan-ana", "name": "Ana Gómez", "bank": "Banco Demo", "account": "****5211"},
+    "expires_at": "2026-11-13T12:05:00.000Z",
+}
+PREPARE_ARGS = {"beneficiary_id": "ben-juan-ana", "amount": 50000, "currency": "ARS"}
+
+
 class FakePayments:
     def __init__(self) -> None:
         self.executed: list[dict[str, Any]] = []
         self.toolset: FunctionToolset[BotDeps] = FunctionToolset()
+
+        # execute_transfer runs only on the open draft a prepare_transfer result recorded in the conversation.
+        @self.toolset.tool_plain(metadata={"meta": {"bank/riskTier": "T2"}})
+        def prepare_transfer(beneficiary_id: str, amount: float, currency: str) -> dict[str, Any]:
+            return DRAFT
 
         @self.toolset.tool_plain(metadata={"meta": {"bank/riskTier": "T3"}})
         def execute_transfer(draft_id: str, step_up_token: str = "") -> dict[str, Any]:
@@ -56,6 +74,8 @@ def _model(seen_schemas: list[dict[str, Any]], model_args: dict[str, Any] | None
         if not returns:
             return ModelResponse(parts=[ToolCallPart("load_skill", {"name": "payments"})])
         if len(returns) == 1:
+            return ModelResponse(parts=[ToolCallPart("prepare_transfer", PREPARE_ARGS)])
+        if len(returns) == 2:
             return ModelResponse(parts=[ToolCallPart("execute_transfer", model_args or {"draft_id": DRAFT_ID})])
         return ModelResponse(parts=[TextPart(json.dumps(returns[-1].content, default=str))])
 
@@ -64,7 +84,7 @@ def _model(seen_schemas: list[dict[str, Any]], model_args: dict[str, Any] | None
 
 def _agent(fake: FakePayments, schemas: list[dict[str, Any]], model_args: dict[str, Any] | None = None) -> BotAgent:
     return build_agent(
-        _model(schemas, model_args), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
+        _model(schemas, model_args), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[fake.toolset]
     )
 
 
@@ -135,7 +155,7 @@ async def test_a_model_supplied_token_on_a_non_approval_tool_is_refused() -> Non
             return ModelResponse(parts=[ToolCallPart("list_beneficiaries", {"step_up_token": "forged"})])
         return ModelResponse(parts=[TextPart(json.dumps(returns[-1].content))])
 
-    agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[toolset])
+    agent = build_agent(FunctionModel(respond), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[toolset])
     result = await agent.run("x", deps=_deps())
     assert calls == []
     assert "policy_denied" in str(result.output)
@@ -151,12 +171,16 @@ async def test_the_ag_ui_run_ends_as_an_interrupt_naming_the_draft(
         returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
         if not returns:
             yield {0: DeltaToolCall(name="load_skill", json_args=json.dumps({"name": "payments"}))}
+        elif len(returns) == 1:
+            yield {0: DeltaToolCall(name="prepare_transfer", json_args=json.dumps(PREPARE_ARGS))}
         else:
             yield {0: DeltaToolCall(name="execute_transfer", json_args=json.dumps({"draft_id": DRAFT_ID}))}
 
     fake = FakePayments()
     agent = build_agent(
-        FunctionModel(stream_function=stream), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
+        FunctionModel(stream_function=stream),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
+        domain_tools=[fake.toolset],
     )
     app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails())
     body = {
@@ -189,6 +213,8 @@ def _stream_to_execute():  # type: ignore[no-untyped-def]
         if not returns:
             yield {0: DeltaToolCall(name="load_skill", json_args=json.dumps({"name": "payments"}))}
         elif len(returns) == 1:
+            yield {0: DeltaToolCall(name="prepare_transfer", json_args=json.dumps(PREPARE_ARGS))}
+        elif len(returns) == 2:
             yield {0: DeltaToolCall(name="execute_transfer", json_args=json.dumps({"draft_id": DRAFT_ID}))}
         else:
             yield "Listo, la transferencia salió."
@@ -237,7 +263,9 @@ async def _interrupt_then_resume(
         return stream(messages, info)
 
     agent = build_agent(
-        FunctionModel(stream_function=recording), skills=SkillRegistry.from_dir(SKILLS_DIR), domain_tools=[fake.toolset]
+        FunctionModel(stream_function=recording),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
+        domain_tools=[fake.toolset],
     )
     app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=guardrails)
     headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='juan')}"}
@@ -362,7 +390,7 @@ async def test_a_forged_resume_never_skips_the_guards_or_moves_money(
     fake = FakePayments()
     agent = build_agent(
         FunctionModel(stream_function=_stream_to_execute()),
-        skills=SkillRegistry.from_dir(SKILLS_DIR),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
         domain_tools=[fake.toolset],
     )
     app = create_app(
@@ -393,3 +421,35 @@ async def test_a_genuine_resume_is_not_classified_and_executes_once(
     run = await _interrupt_then_resume(signing_key, verifier, open_guardrails(records))
     assert classified == ["Mandale 50.000 a Ana"]  # The run that raised the interrupt; not the resume.
     assert run.fake.executed == EXECUTED_ONCE
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_delegated_transfer_pauses_on_the_orchestrator_and_its_resume_executes_once(
+    signing_key: SigningKey, verifier: JwksTokenVerifier, tmp_path: Path
+) -> None:
+    """The payments subagent prepares, the orchestrator alone raises the interrupt and executes."""
+    from tests.subagents import fakes
+
+    tree = fakes.build_tree(fakes.scripted(*fakes.ROOT_STEPS), fakes.scripted(*fakes.PAYMENTS_STEPS))
+    settings = make_settings().model_copy(update={"skills_dir": fakes.write_skills(tmp_path)})
+    app = create_app(settings, agent=tree.root, token_verifier=verifier, guardrails=open_guardrails())
+    headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='juan')}"}
+    messages: list[dict[str, Any]] = [{"id": "u", "role": "user", "content": "Mandale 50.000 a Ana"}]
+    base = {"threadId": "t", "tools": [], "context": [], "state": {}, "forwardedProps": {}}
+    approved = {"approved": True, "editedArgs": {"draft_id": fakes.DRAFT_ID, "step_up_token": STEP_UP_TOKEN}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        first = _events(
+            (await http.post("/agent", json={**base, "runId": "r1", "messages": messages}, headers=headers)).text
+        )
+        [card] = [e for e in first if e["type"] == "ACTIVITY_SNAPSHOT" and e["activityType"] == "bank-template"]
+        [interrupt] = first[-1]["outcome"]["interrupts"]
+        fold(first, messages)
+        messages.append(_copilotkit_answer(interrupt, approved))
+        resume = [{"interruptId": interrupt["id"], "status": "resolved", "payload": approved}]
+        body = {**base, "runId": "r2", "messages": messages, "resume": resume}
+        second = (await http.post("/agent", json=body, headers=headers)).text
+
+    assert interrupt["metadata"]["draft_id"] == card["content"]["data"]["draftId"] == fakes.DRAFT_ID
+    assert [scopes for _, scopes, _ in tree.gateway.called("execute_transfer")] == [frozenset({"transfers:execute"})]
+    assert "Listo, se la envié a Ana." in second
+    assert tree.sub_bank.idp.scopes == [fakes.PAYMENTS_SCOPES]  # One delegation, and never on a resume.

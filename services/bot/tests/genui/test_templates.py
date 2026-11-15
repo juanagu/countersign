@@ -12,11 +12,10 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
-from app.config import SKILLS_DIR
 from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 from app.main import create_app
 from app.skills.registry import SkillRegistry
-from tests.conftest import SigningKey, make_settings, open_guardrails
+from tests.conftest import TEST_SKILLS_DIR, SigningKey, make_settings, open_guardrails
 
 DRAFT: dict[str, Any] = {
     "draft_id": "drf_123",
@@ -68,7 +67,7 @@ async def test_confirm_card_comes_from_the_draft_not_the_model_text(
 ) -> None:
     agent = build_agent(
         FunctionModel(stream_function=_lying_model),
-        skills=SkillRegistry.from_dir(SKILLS_DIR),
+        skills=SkillRegistry.from_dir(TEST_SKILLS_DIR),
         domain_tools=[_fake_payments()],
     )
     app = create_app(make_settings(), agent=agent, token_verifier=verifier, guardrails=open_guardrails())

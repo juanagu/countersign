@@ -29,9 +29,8 @@ from app.banking.mcp_toolsets import banking_toolset
 from app.banking.token_exchange import TokenExchanger
 from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
-from app.config import SKILLS_DIR
 from app.skills.registry import SkillRegistry
-from tests.conftest import open_guard
+from tests.conftest import TEST_SKILLS_DIR, open_guard
 
 INCOMING_TOKEN = "incoming-aud-bot-token"
 DRAFT_ID = "drf_0b3a6f9e-4c1d-4e2a-9f7b-1a2b3c4d5e6f"
@@ -39,7 +38,7 @@ STEP_UP = "step-up-from-the-app"
 EXECUTE = frozenset({"transfers:execute"})
 ACCOUNTS = frozenset({"accounts:read"})
 PAYMENTS = frozenset({"accounts:read", "beneficiaries:read", "transfers:prepare"})
-SKILLS = SkillRegistry.from_dir(SKILLS_DIR)
+SKILLS = SkillRegistry.from_dir(TEST_SKILLS_DIR)
 
 
 def _deps(*skills: str) -> BotDeps:
@@ -132,8 +131,8 @@ def _fake_gateway(executed: list[dict[str, str]]) -> FastMCP:
         return {"beneficiaries": []}
 
     @mcp.tool(meta=_meta("T2", "transfers:prepare"))
-    def prepare_transfer(beneficiary_id: str, amount: str) -> dict[str, Any]:
-        return {"draft_id": DRAFT_ID, "beneficiary_id": beneficiary_id, "amount": amount}
+    def prepare_transfer(beneficiary_id: str, amount: float, currency: str) -> dict[str, Any]:
+        return {"draft_id": DRAFT_ID, "beneficiary_id": beneficiary_id, "amount": amount, "currency": currency}
 
     @mcp.tool(meta=_meta("T3", "transfers:execute", **{"bank/listScope": "transfers:prepare"}))
     def execute_transfer(draft_id: str, step_up_token: str = "") -> dict[str, Any]:
@@ -236,7 +235,7 @@ def _distinct(sessions: list[MCPToolset[BotDeps]]) -> list[MCPToolset[BotDeps]]:
 
 LOAD_ACCOUNTS = ToolCallPart("load_skill", {"name": "accounts"})
 LOAD_PAYMENTS = ToolCallPart("load_skill", {"name": "payments"})
-PREPARE = ToolCallPart("prepare_transfer", {"beneficiary_id": "ben-ana", "amount": "50000"})
+PREPARE = ToolCallPart("prepare_transfer", {"beneficiary_id": "ben-ana", "amount": 50000, "currency": "ARS"})
 EXECUTE_CALL = ToolCallPart("execute_transfer", {"draft_id": DRAFT_ID})
 
 

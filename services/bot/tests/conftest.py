@@ -2,6 +2,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import jwt
@@ -26,6 +27,10 @@ KID = "test-key"
 STREAMED_CHUNKS = ["Hola. ", "¿En qué ", "te ayudo?"]
 TEST_MODEL = "test"
 TEST_CLIENT_SECRET = "test-bot-client-secret"
+# The shipped accounts and knowledge skills, plus a root payments skill that prepares and executes in one T3 skill: the
+# approval and template mechanism tests run on it, apart from the subagent's.
+TEST_SKILLS_DIR = Path(__file__).resolve().parent / "fixtures" / "skills"
+NO_SUBAGENTS_DIR = TEST_SKILLS_DIR.parent / "no-subagents"  # Missing on purpose: its payments skill would clash.
 
 
 async def allow_input(text: str, user_id: str) -> Verdict:
@@ -51,7 +56,13 @@ def open_guard(customer_messages: Sequence[str] = ()) -> RunGuard:
 
 
 def make_settings() -> Settings:
-    return Settings(bot_model=TEST_MODEL, guard_model=TEST_MODEL, bot_client_secret=TEST_CLIENT_SECRET)
+    return Settings(
+        bot_model=TEST_MODEL,
+        guard_model=TEST_MODEL,
+        bot_client_secret=TEST_CLIENT_SECRET,
+        skills_dir=TEST_SKILLS_DIR,
+        subagents_dir=NO_SUBAGENTS_DIR,
+    )
 
 
 class SigningKey:

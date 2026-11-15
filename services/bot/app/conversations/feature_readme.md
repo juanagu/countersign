@@ -12,7 +12,7 @@ transcript a reload shows once the BFF's 15-minute replay window has passed.
   refusal, without the model's output, whether it completed before or after the verdict.
 - `conversation_id_for(user_id, thread_id)`, `new_turn(client_messages, awaiting_results)` (drops client tool
   results the conversation awaits none for), `load_thread(store, user, thread)` / `stored_messages(...)`,
-  `transcript(messages, clock=)` (user and assistant text plus the stored `bank-template` cards, in order;
+  `transcript(messages, clock=, delegates=)` (user and assistant text plus the stored `bank-template` cards, in order;
   answers re-run the output guard's PII and grounding checks through `guardrails.history_guard.StoredAnswers`,
   on the bank's day in `clock`'s zone; no tool calls, no A2UI surfaces).
 - `GET /threads/{thread_id}/messages` (bearer `aud=bot`): `{"messages": [...]}` for the caller's own conversation

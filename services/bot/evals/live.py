@@ -7,12 +7,14 @@ reconnected twice).
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from evals.agui_client import BffSession, Event, RunTrace, bff_client
 from evals.bank_db import Ledger, read_ledger
+from evals.delegation import read_delegated
 
 STEP_UP_PIN = "123456"  # The mock IdP's synthetic PIN (AGENTS.md, rule 3).
 KNOWLEDGE_TOOL = "search_knowledge"
@@ -25,6 +27,8 @@ class LiveInput(BaseModel):
     turns: list[str]
     flow: Literal["chat", "transfer", "resume"] = "chat"
     source_account: str | None = None  # transfer: the account whose ledger is read before and after
+    # A subagent domain: its calls are read from the run's Phoenix spans, since its arguments never reach the client.
+    reads_trace: bool = False
 
 
 @dataclass
@@ -43,6 +47,7 @@ class LiveOutput:
     ledger_change: Ledger | None = None
     resume: ResumeCheck | None = None
     notes: list[str] = field(default_factory=list)
+    delegated: list[tuple[str, dict[str, Any]]] = field(default_factory=list)  # From the trace, not the client.
 
     @property
     def text(self) -> str:
@@ -56,7 +61,7 @@ class LiveOutput:
 
     @property
     def tools(self) -> list[tuple[str, dict[str, Any]]]:
-        return [call for trace in self.traces for call in trace.tool_args]
+        return [call for trace in self.traces for call in trace.tool_args] + self.delegated
 
     @property
     def components(self) -> list[dict[str, Any]]:
@@ -123,6 +128,12 @@ FLOWS = {"chat": _chat, "transfer": _transfer, "resume": _resume}
 
 
 async def run_live(case: LiveInput) -> LiveOutput:
+    since = datetime.now(UTC)
     async with bff_client() as http:
         session = await BffSession.login(http, case.user)
-        return await FLOWS[case.flow](session, case)
+        output = await FLOWS[case.flow](session, case)
+    if case.reads_trace:
+        delegated = await read_delegated(session.thread_id, since, output.cards)
+        output.delegated = delegated or []
+        output.notes += [] if delegated is not None else ["no trace for the thread in Phoenix"]
+    return output
