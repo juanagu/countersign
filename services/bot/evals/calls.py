@@ -26,22 +26,32 @@ class ObservedCall:
     args: dict[str, Any] = field(default_factory=dict)
     outcome: str = RESULT
     delegated: bool = False  # Read from a span, not from the client's stream.
+    retry_after_seconds: int | None = None  # The gateway's `retry_after_seconds`, on an `error:rate_limited`.
 
     @property
     def is_handoff(self) -> bool:
         return self.name.startswith(DELEGATE_PREFIX)
 
 
-def result_outcome(content: str) -> str:
-    """`result`, or `error:<code>` when the tool reported one (as `{"error": code, ...}`, wrapped or not)."""
+def parse_error(content: str) -> dict[str, Any]:
+    """The `{"error": code, ...}` object a tool reported, wrapped as untrusted data or not; empty when none."""
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
-        return RESULT
+        return {}
     inner = parsed.get("untrusted_data", parsed) if isinstance(parsed, dict) else None
-    if isinstance(inner, dict) and isinstance(inner.get("error"), str):
-        return f"{ERROR_PREFIX}{inner['error']}"
-    return RESULT
+    return inner if isinstance(inner, dict) and isinstance(inner.get("error"), str) else {}
+
+
+def retry_after(error: dict[str, Any]) -> int | None:
+    value = error.get("retry_after_seconds")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def result_outcome(content: str) -> str:
+    """`result`, or `error:<code>` when the tool reported one."""
+    error = parse_error(content)
+    return f"{ERROR_PREFIX}{error['error']}" if error else RESULT
 
 
 def client_calls(traces: Sequence[RunTrace], cancelled: Collection[str] = ()) -> list[ObservedCall]:
@@ -62,8 +72,13 @@ def client_calls(traces: Sequence[RunTrace], cancelled: Collection[str] = ()) ->
                 elif call_id not in resulted:
                     calls.append(ObservedCall(*known[call_id], outcome=UNFINISHED))
             elif event.get("type") == "TOOL_CALL_RESULT" and call_id in known:
-                outcome = CANCELLED if call_id in cancelled else result_outcome(str(event.get("content", "")))
-                calls.append(ObservedCall(*known[call_id], outcome=outcome))
+                content = str(event.get("content", ""))
+                outcome = CANCELLED if call_id in cancelled else result_outcome(content)
+                calls.append(
+                    ObservedCall(
+                        *known[call_id], outcome=outcome, retry_after_seconds=retry_after(parse_error(content))
+                    )
+                )
     return calls
 
 

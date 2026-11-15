@@ -270,11 +270,27 @@ Written after ADR 021 was built, so trajectories are in what the client and the 
   have loaded twice). `--only`, `--trials`, `--out` as designed. Trials run one at a time: they share one ledger.
 - **The gateway's write limit decides how long a run takes.** The gateway allows 20 T2 calls per customer per
   10 minutes (ADR 017). Fifteen trials prepare at least fifteen drafts, and every journey is Juan's, so a run, or two
-  runs in a row, hit `rate_limited` at `prepare_transfer`. That says nothing about the bot, so a trial refused for it
-  waits 60 s and runs again on a fresh thread (up to 12 times; `attempts` is in the output). In the three live runs 3 or
-  4 of 15 trials needed a second attempt, a run took several minutes longer than its roughly five minutes of work, and the retried trials' failed
-  attempts are not in the token bill. A journey that could run as Ana would spread the budget; the ADR fixes the users,
-  so it stays as is.
+  runs in a row, hit `rate_limited` at `prepare_transfer`. The attempt is judged first: it is run again on a fresh
+  thread only when the refusal is why it could not go on (every call before it broke no rule, and only steps are
+  missing). A forbidden or unexpected call, a run error, or a refusal after the steps were done keeps the attempt as the
+  verdict. The wait is the gateway's own `retry_after_seconds` from the parsed error, capped at the 10 minute window
+  (60 s when the error names none); the gateway gets no reset hook. Up to 12 retries. Every discarded attempt stays in
+  `--out` (`discarded`: thread, verdict, calls) and its tokens are in the bill. A journey that could run as Ana would
+  spread the budget; the ADR fixes the users, so it stays as is.
+- **Every trial starts from the same ledger.** Juan's balance is read once when `make cuj` starts, and
+  `bank_db.restore_balance` sets it back before each attempt, so `--trials` above 4 no longer drains the account. It is
+  the second named write to the synthetic bank, next to `expire_draft`; movements and transfers stay (the ledger
+  evaluators compare counts before and after a trial).
+- **Arguments per draft.** Spans carry neither arguments nor results (rule 7), so a delegated `prepare_transfer`'s
+  arguments come from the confirm card its own success made: the n-th successful prepare, in start order, owns the n-th
+  distinct confirm card (by `draftId`). A failed prepare has no card arguments. Matching on the result's `draft_id`
+  is not possible without result content on the span.
+- **Step-up against the interrupted draft.** The runner answers `interrupts[0]` and steps up against the confirm card
+  whose `draftId` is the interrupt's: `metadata.draft_id` when the bot sets one (it does not today), else the
+  `draft_id` argument of the paused `execute_transfer`. No match is a note, and the trial fails on it.
+- **Rules are validated at load.** `allow`, `forbid` and both sides of `requires` take the same outcomes as trajectory
+  steps; a typo fails the load instead of switching the check off. A group with no `pass_rates` entry is a failing
+  gate, and a run with no gates exits 1. Trial spans carry the trial's real start and end.
 - **`traceparent`.** Checked in commit 3: the BFF reads no inbound `traceparent` (nothing in `apps/bff/src`), so the
   `cuj.trial` span carries `cuj.thread_id` instead, and `make metrics` links it to the stack's runs through
   `bot.thread_id`. Spans are exported with `SimpleSpanProcessor` to `OTEL_EXPORTER_OTLP_ENDPOINT`.

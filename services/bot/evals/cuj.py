@@ -21,6 +21,14 @@ Action = Literal["approve", "cancel", "wrong_pin_then_approve", "expire_then_app
 SOURCE_ACCOUNTS = {"ana": "acc-ana-ars", "juan": "acc-juan-ars"}
 
 
+def _check_rule_outcome(rule: str) -> None:
+    """A `tool:outcome` rule names an outcome the trajectory can observe; a typo would match nothing and switch the
+    check off."""
+    _, _, outcome = rule.partition(":")
+    if outcome and not OUTCOME.match(outcome):
+        raise ValueError(f"rule {rule!r}: outcome {outcome!r} is not any, result, paused, cancelled or error:<code>")
+
+
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -82,12 +90,22 @@ class Scenario(Strict):
             raise ValueError(f"{self.id}: more scripted turns than max_turns")
         return self
 
+    @field_validator("allow", "forbid")
+    @classmethod
+    def known_rule_outcomes(cls, rules: list[str]) -> list[str]:
+        for rule in rules:
+            _check_rule_outcome(rule)
+        return rules
+
     @field_validator("requires")
     @classmethod
     def well_formed_rules(cls, rules: list[str]) -> list[str]:
         for rule in rules:
-            if len(rule.split(" <- ")) != 2:
+            sides = rule.split(" <- ")
+            if len(sides) != 2:
                 raise ValueError(f"requires rule {rule!r} is not 'call <- earlier call'")
+            for side in sides:
+                _check_rule_outcome(side)
         return rules
 
     @property

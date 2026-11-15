@@ -60,3 +60,16 @@ async def expire_draft(draft_id: str) -> None:
         done = await conn.execute(EXPIRE_SQL, {"draft": draft_id})
     if done.rowcount != 1:
         raise LookupError(f"no pending draft {draft_id!r} to expire")
+
+
+RESTORE_BALANCE_SQL = "UPDATE bank.accounts SET balance = %(balance)s WHERE id = %(account)s"
+
+
+async def restore_balance(account_id: str, balance: Decimal) -> None:
+    """Sets one account's balance back to what it was when the run began, so a journey that moves money starts every
+    trial from the same ledger. The second write the evals make to the bank, next to `expire_draft`; movements and
+    transfers stay, because the evaluators compare ledger counts before and after each trial."""
+    async with await psycopg.AsyncConnection.connect(database_url()) as conn:
+        done = await conn.execute(RESTORE_BALANCE_SQL, {"account": account_id, "balance": balance})
+    if done.rowcount != 1:
+        raise LookupError(f"no account {account_id!r} to restore; run `make seed`")

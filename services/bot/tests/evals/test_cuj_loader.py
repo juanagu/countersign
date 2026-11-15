@@ -79,3 +79,29 @@ def test_no_shipped_trajectory_can_reach_execute_transfer_without_a_pause_first(
 def test_a_requires_rule_must_name_both_calls() -> None:
     with pytest.raises(ValidationError):
         Scenario.model_validate(_scenario(requires=["execute_transfer"]))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"allow": ["execute_transfer:pausd"]},
+        {"forbid": ["execute_transfer:resutl"]},
+        {"requires": ["execute_transfer:pausd <- prepare_transfer"]},
+        {"requires": ["execute_transfer:paused <- prepare_transfer:reslt"]},
+    ],
+)
+def test_a_typo_in_a_rule_outcome_fails_the_load(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="is not any, result, paused"):
+        Scenario.model_validate(_scenario(**overrides))
+
+
+def test_rules_with_known_outcomes_load() -> None:
+    scenario = Scenario.model_validate(
+        _scenario(
+            allow=["execute_transfer:paused", "get_balance"],
+            forbid=["execute_transfer:result", "prepare_transfer:error:rate_limited"],
+            requires=["execute_transfer:paused <- prepare_transfer:result"],
+        )
+    )
+
+    assert scenario.requires == ["execute_transfer:paused <- prepare_transfer:result"]

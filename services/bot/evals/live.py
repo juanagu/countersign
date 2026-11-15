@@ -30,7 +30,6 @@ class LiveInput(BaseModel):
     source_account: str | None = None  # transfer: the account whose ledger is read before and after
     # A subagent domain: its calls are read from the run's Phoenix spans, since its arguments never reach the client.
     reads_trace: bool = False
-    scenario_id: str | None = None  # A CUJ: the runner looks the scenario up by this id.
 
 
 @dataclass
@@ -41,6 +40,15 @@ class ResumeCheck:
     text_before_cut: str
     replay: RunTrace
     second_replay: RunTrace
+
+
+@dataclass(frozen=True)
+class DiscardedAttempt:
+    """A CUJ attempt thrown away because the gateway's rate limit stopped it: why, what it did and its thread."""
+
+    thread_id: str
+    verdict: str
+    calls: list[str]
 
 
 @dataclass
@@ -56,6 +64,9 @@ class LiveOutput:
     thread_id: str = ""
     turns: int = 0
     attempts: int = 1  # A CUJ trial run again because the gateway refused its writes (rate limit).
+    discarded: list["DiscardedAttempt"] = field(default_factory=list)  # The attempts that came before this one.
+    start_ns: int = 0  # A CUJ trial's wall-clock span, first attempt's start to last attempt's end.
+    end_ns: int = 0
 
     @property
     def text(self) -> str:
@@ -152,7 +163,7 @@ async def run_live(case: LiveInput) -> LiveOutput:
         session = await BffSession.login(http, case.user)
         output = await FLOWS[case.flow](session, case)
     if case.reads_trace:
-        delegated = await read_delegated(session.thread_id, since, output.cards)
+        delegated = await read_delegated(session.thread_id, since, output.cards, runs=len(output.traces))
         output.delegated = delegated or []
         output.notes += [] if delegated is not None else ["no trace for the thread in Phoenix"]
     return output

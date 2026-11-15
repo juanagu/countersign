@@ -8,7 +8,7 @@ from evals.delegation import delegated_calls
 
 CONFIRM = {
     "template": "transfer-confirm",
-    "data": {"beneficiaryId": "ben-ana-juan", "amount": "10000.00", "currency": "ARS"},
+    "data": {"draftId": "drf_1", "beneficiaryId": "ben-ana-juan", "amount": "10000.00", "currency": "ARS"},
 }
 
 
@@ -75,3 +75,35 @@ def test_the_error_code_comes_from_the_transport_span_when_the_tool_span_has_no_
     ]
 
     assert [c.outcome for c in delegated_calls(spans, [])] == ["result", "error:insufficient_funds"]
+
+
+def _confirm(draft: str, amount: str) -> dict[str, Any]:
+    data = {"draftId": draft, "beneficiaryId": "ben-ana-juan", "amount": amount, "currency": "ARS"}
+    return {"template": "transfer-confirm", "data": data}
+
+
+def test_each_prepare_keeps_its_own_cards_arguments_and_a_failed_one_has_none() -> None:
+    failed = _span("p2", "ask", "prepare_transfer", "3", status="ERROR", message='{"error":"insufficient_funds"}')
+    spans = [
+        _span("ask", None, "ask_payments", "1"),
+        _span("p1", "ask", "prepare_transfer", "2"),
+        failed,
+        _span("p3", "ask", "prepare_transfer", "4"),
+    ]
+    cards = [_confirm("drf_1", "10000.00"), _confirm("drf_1", "10000.00"), _confirm("drf_2", "25000.00")]
+
+    prepares = [c for c in delegated_calls(spans, cards) if c.name == "prepare_transfer"]
+
+    assert [c.args.get("amount") for c in prepares] == [Decimal("10000.00"), None, Decimal("25000.00")]
+
+
+def test_the_gateways_retry_after_is_read_from_the_error() -> None:
+    message = '{"error":"rate_limited","retry_after_seconds":37}'
+    spans = [
+        _span("ask", None, "ask_payments", "1"),
+        _span("p", "ask", "prepare_transfer", "2", status="ERROR", message=message),
+    ]
+
+    [_, prepare] = delegated_calls(spans, [])
+
+    assert (prepare.outcome, prepare.retry_after_seconds) == ("error:rate_limited", 37)

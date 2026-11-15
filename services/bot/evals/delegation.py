@@ -1,9 +1,9 @@
 """The eval hook for subagent domains. Only a subagent's tool names reach the client, so a case reads its calls from
 the run's Phoenix spans by trace id: the handoff (the delegate tool's span) and the tool spans under it. Spans carry
-no arguments (rule 7), so the arguments are read from the server cards the calls produced."""
+no arguments or results (rule 7), so a `prepare_transfer`'s arguments are read from the confirm card its own success
+made: the n-th successful prepare, in start order, owns the n-th distinct confirm card (a failed one has none)."""
 
 import asyncio
-import json
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
@@ -11,7 +11,7 @@ from typing import Any
 
 from app.guardrails.stream_timing import THREAD_ATTRIBUTE
 from app.subagents.registry import DELEGATE_PREFIX
-from evals.calls import ERROR_PREFIX, RESULT, ObservedCall
+from evals.calls import ERROR_PREFIX, RESULT, ObservedCall, parse_error, retry_after
 from evals.metrics import Span, spans
 
 TOOL_NAME = "gen_ai.tool.name"
@@ -19,16 +19,20 @@ MCP_METHOD = "mcp.method.name"  # Set on the MCP transport's own span, which rep
 EXPORT_WAIT_SECONDS = 30.0  # The bot's BatchSpanProcessor exports every few seconds.
 POLL_SECONDS = 2.0
 UNKNOWN_ERROR = "unknown"
+CONFIRM_TEMPLATE = "transfer-confirm"
+PREPARE_TOOL = "prepare_transfer"
 
 
-def card_args(tool: str, cards: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """The arguments a call carried, as its server card shows them; only `prepare_transfer` has a card."""
-    if tool != "prepare_transfer":
-        return {}
-    confirms = [c["data"] for c in cards if c.get("template") == "transfer-confirm"]
-    if not confirms:
-        return {}
-    data = confirms[-1]
+def confirm_cards(cards: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The distinct confirm cards' data, in the order they were shown."""
+    seen: dict[str, dict[str, Any]] = {}
+    for card in cards:
+        if card.get("template") == CONFIRM_TEMPLATE:
+            seen.setdefault(str(card["data"]["draftId"]), card["data"])
+    return list(seen.values())
+
+
+def card_args(data: dict[str, Any]) -> dict[str, Any]:
     return {"beneficiary_id": data["beneficiaryId"], "amount": Decimal(data["amount"]), "currency": data["currency"]}
 
 
@@ -45,6 +49,7 @@ def delegated_calls(trace_spans: Sequence[Span], cards: Sequence[dict[str, Any]]
             parent = by_id[parent].get("parent_id")
         return False
 
+    confirms = iter(confirm_cards(cards))
     calls: list[ObservedCall] = []
     for span in sorted(trace_spans, key=lambda s: str(s.get("start_time"))):
         name = _tool(span)
@@ -53,33 +58,28 @@ def delegated_calls(trace_spans: Sequence[Span], cards: Sequence[dict[str, Any]]
         if span["context"]["span_id"] in handoffs:
             calls.append(ObservedCall(name, outcome=RESULT, delegated=True))
         elif under_handoff(span):
-            outcome = _outcome(span, trace_spans)
-            calls.append(ObservedCall(name, card_args(name, cards), outcome, delegated=True))
+            outcome, retry = _outcome(span, trace_spans)
+            data = next(confirms, None) if name == PREPARE_TOOL and outcome == RESULT else None
+            args = card_args(data) if data else {}
+            calls.append(ObservedCall(name, args, outcome, delegated=True, retry_after_seconds=retry))
     return calls
 
 
-def _outcome(call: Span, trace_spans: Sequence[Span]) -> str:
-    """`error:<code>` when the call's span or one of its descendants ended in an error carrying a code."""
+def _outcome(call: Span, trace_spans: Sequence[Span]) -> tuple[str, int | None]:
+    """`error:<code>` (and the gateway's `retry_after_seconds`) when the call's span or one of its descendants ended
+    in an error carrying a code."""
     family = {call["context"]["span_id"]}
     for span in sorted(trace_spans, key=lambda s: str(s.get("start_time"))):
         if span.get("parent_id") in family:
             family.add(span["context"]["span_id"])
     failed = [s for s in trace_spans if s["context"]["span_id"] in family and s.get("status_code") == "ERROR"]
     if not failed:
-        return RESULT
+        return RESULT, None
     # The tool's own span ends in ERROR with no message; the MCP transport span below it carries the code.
-    codes = [code for span in failed if (code := _error_code(str(span.get("status_message") or "")))]
-    return f"{ERROR_PREFIX}{codes[0] if codes else UNKNOWN_ERROR}"
-
-
-def _error_code(message: str) -> str:
-    """The `error` code of a tool failure's JSON message, or an empty string."""
-    try:
-        parsed = json.loads(message)
-    except json.JSONDecodeError:
-        return ""
-    code = parsed.get("error") if isinstance(parsed, dict) else None
-    return code if isinstance(code, str) else ""
+    errors = [e for span in failed if (e := parse_error(str(span.get("status_message") or "")))]
+    if not errors:
+        return f"{ERROR_PREFIX}{UNKNOWN_ERROR}", None
+    return f"{ERROR_PREFIX}{errors[0]['error']}", retry_after(errors[0])
 
 
 def _thread(span: Span) -> object:
@@ -92,7 +92,7 @@ def _tool(span: Span) -> str | None:
 
 
 async def read_delegated(
-    thread_id: str, since: datetime, cards: Sequence[dict[str, Any]], runs: int = 1
+    thread_id: str, since: datetime, cards: Sequence[dict[str, Any]], runs: int
 ) -> list[ObservedCall] | None:
     """The thread's delegated calls since `since`, once all of its `runs` runs reached Phoenix (a span is exported at
     its run's end, children first), or None when they never did."""
