@@ -138,8 +138,11 @@ describe('chat endpoint', () => {
     server = bot.server;
     const { app } = await buildTestApp(bot.url);
     const oversized = JSON.stringify({ ...JSON.parse(runBody()), tools: Array(MAX_RUN_BODY_BYTES).fill({}) });
-    const { path, init } = post(RUN_PATH, await loginCookie(app), oversized);
-    expect((await app.request(path, init)).status).toBe(413);
+    const cookie = await loginCookie(app);
+    const streamed = post(RUN_PATH, cookie, oversized);
+    expect((await app.request(streamed.path, streamed.init)).status).toBe(413);
+    const declared = post(RUN_PATH, cookie, oversized, { 'content-length': String(Buffer.byteLength(oversized)) });
+    expect((await app.request(declared.path, declared.init)).status).toBe(413);
     expect(bot.requests).toHaveLength(0);
   });
 

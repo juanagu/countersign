@@ -23,10 +23,8 @@ exists.
 ## Decision
 - `overrides` in `pnpm-workspace.yaml`: `undici@<6.29.1` → ^6.29.1 (undici 6 has no busboy dependency, so
   busboy 2.1.1 leaves the tree) and `graphql-scalars@<2.0.1` → ^2.0.1, a major bump outside type-graphql's
-  peer range that is safe only because the v2 runtime never loads it. `zod@>=4.0.0 <4.6.6` → ^4.6.7 keeps every
-  zod 4 copy patched.
-- zod 3 stays on 3.25.76, and `auditConfig.ignoreGhsas` lists GHSA-mrhx-c7xc-m3w5. With the zod 4 override,
-  only the zod 3 copy can match it. That zod runs on the server too: the v2 runtime parses each run body with
+  peer range that is safe only because the v2 runtime never loads it.
+- zod 3 stays on 3.25.76, and `auditConfig.ignoreGhsas` lists GHSA-mrhx-c7xc-m3w5. That zod runs on the server too: the v2 runtime parses each run body with
   `RunAgentInputSchema` from `@ag-ui/core` on zod 3, so a signed-in user could exhaust the BFF's memory with an
   oversized `messages` or `tools` array. Without a limit, a 3 MB body crashed the test worker. So the copilot
   route takes at most `MAX_RUN_BODY_BYTES` (1 MiB) and answers 413 over it, before the runtime parses
@@ -41,5 +39,8 @@ specs on both projects against the live stack.
 - The weekly audit is green with a low (katex) and a moderate (`@hono/node-server`) left; both sit in F57.
 - Exit: when `@a2ui/web_core` moves to zod 4 (or CopilotKit drops it), remove the ignore entry, then remove each
   override once `pnpm why` shows CopilotKit pulling a patched version on its own.
+- The ignore can't be scoped to a version, so it would also hide a vulnerable zod 4 copy. Today every zod 4 is
+  4.6.7. An override to floor zod 4 was tried and dropped: pnpm rewrote every `^3.25 || ^4` zod peer range to
+  `^4.6.7`, which invites the next unfrozen install to move A2UI onto zod 4.
 - An ignored GHSA is invisible to the audit. A new zod advisory has a different id, so it still fails the run.
 - A conversation whose run body grows past 1 MiB gets a 413. Raise the constant if real threads reach it.

@@ -12,8 +12,8 @@ import type { ThreadLog } from './runner/thread-log.js';
 export const COPILOT_BASE_PATH = '/copilotkit';
 export const AGENT_ID = 'default';
 
-// The runtime parses run bodies with zod 3, whose memory-exhaustion advisory is accepted (ADR 019) on the
-// condition that no request can carry an oversized collection.
+// The runtime parses run bodies with zod 3, whose memory-exhaustion advisory is accepted on the condition
+// that no request can carry an oversized collection.
 export const MAX_RUN_BODY_BYTES = 1024 * 1024;
 
 export interface ChatRoutesOptions {
