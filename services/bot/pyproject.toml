@@ -3,6 +3,7 @@ name = "bot"
 version = "0.1.0"
 description = "Banking assistant bot: FastAPI + Pydantic AI over AG-UI"
 requires-python = ">=3.12,<3.13"
+license = "MIT"
 dependencies = [
     "fastapi>=0.162.6",
     "fastembed>=0.9.1",

@@ -452,7 +452,7 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 | [001](decisions/001-typescript-6.md) | Pin TypeScript to 6.0 | One compiler version across the workspace. |
 | [002](decisions/002-node-service-runtime.md) | Hono for every Node service | Shared server, logger and env idiom; images install their workspace slice. |
 | [003](decisions/003-generated-contracts-layout.md) | Generated contracts are committed | JSON Schema to TS and Pydantic in two fixed places, drift checked pre-push. |
-| [004](decisions/004-local-checks-instead-of-ci.md) | No CI; checks run locally | Pre-push hook runs contracts-check, lint and test. |
+| [004](decisions/004-local-checks-instead-of-ci.md) | Local checks; CI added once public | Pre-push hook and CI's fast tier run contracts-check, lint and test; e2e and evals stay local. |
 | [005](decisions/005-phoenix-auth-off-locally.md) | Phoenix auth off locally | Loopback-only, synthetic data, no span content. |
 | [006](decisions/006-session-cookie-and-same-origin-proxy.md) | Session cookie and same-origin proxy | HttpOnly cookie, the browser never sees a token, `/api/*` proxied. |
 | [007](decisions/007-client-supplied-agent-input.md) | What the bot trusts from a run input | Identity from the token; client state and system prompt ignored. |

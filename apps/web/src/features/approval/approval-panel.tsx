@@ -18,7 +18,11 @@ export type { ApprovalDecision } from './lib/approval-decision';
 
 /** "Válida hasta las 09:42": the draft's lifetime, read from the server template. */
 export function ApprovalNote({ expiresAt }: { expiresAt: string }) {
-  const time = new Date(expiresAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  const time = new Date(expiresAt).toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
   return (
     <p className="card__note">
       <Icon name="clock" size={16} />

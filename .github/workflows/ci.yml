@@ -1,0 +1,180 @@
+name: CI
+
+# Adapted from juanagu/agent-config templates/ci.yml (ADR 004). `checks` is the fast tier and mirrors the
+# pre-push hook: contracts drift, lint (eslint, prettier, tsc, ruff, mypy) and the unit/integration tests.
+# `pnpm-audit` is the weekly dependency audit. There is no browser tier here: the Playwright specs and
+# `make eval` run against the live stack with a paid Anthropic model, so they stay local
+# (`make up && make seed && make ingest`, then `pnpm --filter @poc/web test:e2e` / `make eval`) and CI
+# holds no secrets.
+#
+# A push the `paths` filter excludes creates no run at all, so never make `checks` a required status
+# check. A schedule is disabled after 60 days without a commit on main: `gh workflow enable ci.yml`.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/feature_readme.md'
+      - '!README.md'
+      - '!SECURITY.md'
+      - '!AGENTS.md'
+      - '!CLAUDE.md'
+      - '!architecture.pdf'
+  pull_request:
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/feature_readme.md'
+      - '!README.md'
+      - '!SECURITY.md'
+      - '!AGENTS.md'
+      - '!CLAUDE.md'
+      - '!architecture.pdf'
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only a PR run is ever cancelled or replaced; a push to main, a tag and the weekly run each get a group
+# of their own (the run id), so none can bump another off the queue.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The fast tier in one job: every job pays its own runner setup and install.
+  checks:
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # The image infra/docker-compose.yml runs, seeded below, so the Postgres-backed repository and
+      # conversation-store tests run instead of skipping. The retrieval tests still skip: they need
+      # `make ingest`, which downloads the embedding model.
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg16
+        env:
+          POSTGRES_USER: bank
+          POSTGRES_PASSWORD: bank
+          POSTGRES_DB: bank
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U bank -d bank"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://bank:bank@localhost:5432/bank
+    steps:
+      - uses: actions/checkout@v4
+      # Reads the pnpm version from package.json's packageManager.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/bot/uv.lock
+      - run: make install
+      - name: Seed the mock bank
+        run: cat data/seed/*.sql | psql "$TEST_DATABASE_URL" -q -v ON_ERROR_STOP=1
+      - run: make contracts-check
+      - run: make lint
+      - run: make test
+
+  # The weekly run only: production dependencies with a high or critical advisory that has a fix. It runs
+  # no project code (`pnpm audit` reads the lockfile; no install), so it may write issues. An advisory with
+  # no patched version is a warning, not a failure, and so is an audit endpoint that stays down, a repo
+  # pnpm cannot audit, a failed checkout or setup, or the step's timeout: none of them is a vulnerability.
+  pnpm-audit:
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - id: pnpm
+        uses: pnpm/action-setup@v4
+        continue-on-error: true
+      - id: node
+        uses: actions/setup-node@v4
+        continue-on-error: true
+        with:
+          node-version: '22'
+      - name: pnpm audit (production, high and above)
+        id: audit
+        if: ${{ steps.checkout.outcome == 'success' && steps.pnpm.outcome == 'success' && steps.node.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          # Exit 0: nothing to fix (unfixable advisories are printed as warnings); 1: a high or critical
+          # advisory with a patched version; 2: no report, worth a retry; 3: no report, and a retry would
+          # fail the same way (no lockfile), printed as a warning naming the code.
+          TRIAGE: |
+            const fs = require("fs");
+            let report;
+            try { report = JSON.parse(fs.readFileSync("audit.json", "utf8")); } catch { process.exit(2); }
+            const code = report?.error?.code;
+            if (code && /LOCKFILE/.test(code)) {
+              console.log(`::warning::pnpm audit cannot run in this repo (${code}): ${report.error.message ?? ""}`);
+              process.exit(3);
+            }
+            if (!report || typeof report.advisories !== "object") process.exit(2);
+            const unpatched = (range) => !range || range === "<0.0.0";
+            let failing = 0;
+            for (const a of Object.values(report.advisories)) {
+              if (a.severity !== "high" && a.severity !== "critical") continue;
+              if (unpatched(a.patched_versions)) {
+                console.log(`::warning::${a.severity} ${a.module_name} ${a.vulnerable_versions}: no patched version yet`);
+                continue;
+              }
+              failing++;
+              console.log(`${a.severity}\t${a.module_name}\t${a.vulnerable_versions}\tpatched ${a.patched_versions}\t${a.url}`);
+            }
+            process.exit(failing ? 1 : 0);
+        run: |
+          for attempt in 1 2 3; do
+            status=0
+            timeout 120 pnpm audit --prod --audit-level=high --json > audit.json || status=$?
+            verdict=0
+            node -e "$TRIAGE" || verdict=$?
+            if [ "$verdict" -eq 1 ]; then echo "verdict=fixable" >> "$GITHUB_OUTPUT"; exit 1; fi
+            if [ "$verdict" -eq 0 ]; then echo "verdict=clean" >> "$GITHUB_OUTPUT"; exit 0; fi
+            if [ "$verdict" -eq 3 ]; then echo "verdict=misconfigured" >> "$GITHUB_OUTPUT"; exit 0; fi
+            echo "pnpm audit gave no report (exit $status), attempt $attempt: $(head -c 300 audit.json)"
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 30)); fi
+          done
+          echo "verdict=unreachable" >> "$GITHUB_OUTPUT"
+          echo "::warning::pnpm audit could not reach the registry's audit endpoint after 3 attempts; this is not a vulnerability finding."
+      - name: Open the audit issue, or comment on the open one
+        if: ${{ steps.audit.outcome == 'failure' && steps.audit.outputs.verdict == 'fixable' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: 'Weekly pnpm audit: high or critical in production dependencies'
+        run: |
+          existing=$(gh issue list --state open --limit 200 --json number,title \
+            --jq '[.[] | select(.title == $ENV.TITLE)][0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing on $(date -u +%Y-%m-%d): $RUN_URL"
+          else
+            gh issue create --title "$TITLE" \
+              --body "The weekly pnpm audit found a high or critical advisory with a patched version in a production dependency: $RUN_URL. Run the dependency-audit skill to triage it."
+          fi
+      - name: Fail the run on a fixable finding
+        if: ${{ steps.audit.outputs.verdict == 'fixable' }}
+        run: exit 1
+      - name: Warn when the audit did not finish
+        if: ${{ !cancelled() && steps.audit.outcome != 'success' && steps.audit.outputs.verdict != 'fixable' }}
+        run: echo "::warning::The weekly pnpm audit did not finish (checkout, setup or its timeout); no finding was recorded."
