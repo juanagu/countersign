@@ -411,12 +411,22 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
   compromised bot needs separate agent services (section 1).
 
 ## As built (F63)
-- **The `draft_id` check reads the run's messages.** `PolicyToolset` takes the drafts from `ctx.messages` (the stored
-  history plus this run, each delegate return's evidence record included), so the same check covers the first call
-  and the resume, and no new state goes into `RunGuard`.
+- **The `draft_id` check binds to the one open draft.** `PolicyToolset` reads `ctx.messages` (the stored history plus
+  this run, each delegate return's evidence record included), so the same check covers the first call and the
+  resume, and no new state goes into `RunGuard`. `execute_transfer` may name only the latest draft a
+  `prepare_transfer` result created, and only while no `execute_transfer` result has decided it (a receipt, a
+  denial or cancel, or a result Pydantic AI synthesized for a cut-off call); a newer draft supersedes the older ones
+  (`policy/drafts.py`, `open_draft`). Accepting any draft ever prepared let a later turn raise an interrupt on a
+  draft the customer had already executed or cancelled. An interrupt nobody answered decides nothing, so ADR 013's
+  failed-resume recovery still pauses on the same draft. A `draft_id` that isn't a string is a denial.
 - **The evidence record** is a plain-JSON `metadata` item, `{"kind": "bot-evidence", "results": [{"tool", "content"}]}`,
   so `tool_returns_in` reads the subagent's results (and their tool names, for `third_party_text_seen`) from history.
-- **Delegate tools are server-only by prefix** (`ask_`, `is_server_only`), since their names come from the registry.
+- **Delegate tools are known by the registry's names, not a prefix.** `main.create_app` hands
+  `SubagentRegistry.delegate_tools()` to the chat and conversations routers, and `build_agent` gives the
+  orchestrator's `PolicyToolset` the names of the delegate toolset it serves. The output guard withholds those calls
+  (`is_server_only(tool, delegates)`), and the `bot-evidence` and `bot-skill-load` records are read only on those
+  tools' returns: any other tool's `metadata` could be filled by a backend. `guardrails` and `skills` take the names
+  as a parameter and import nothing from `subagents`.
 - **Wiring** is `main.build_agent_tree`, which the tests also use. The bot image copies `subagents/` (`Dockerfile`).
 - **Tests** that pin the T3 mechanism itself run on a fixture skills dir that keeps the old root `payments` skill
   (`tests/fixtures/skills/`, with a drift check against the shipped files).
@@ -427,7 +437,8 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
   `draft_id`, the delegate adds `transfers` (`DRAFT_SKILL`) to the orchestrator's `loaded_skills`, so the next step
   lists `execute_transfer` and the orchestrator's token gains `transfers:prepare` (ADR 020); the return carries a
   fixed `next_step` beside the untrusted wrapper (call `execute_transfer` with exactly this answer's `draft_id`); and
-  the agent index says a `draft_id` answer has its sending skill loaded and its `next_step` written by code. The
+  the agent index says a `draft_id` answer has the transfers skill loaded and to call `execute_transfer` with the
+  `draft_id` in that answer, in the same turn (both cues say exactly that, not "follow `next_step`"). The
   `draft_id` check, the subagent's T2 ceiling, the separate tokens and the code-built cards are unchanged. Without a
   draft nothing is loaded.
 - **The resume replays that load from a record, not from the delegate's answer.** `skills_loaded_in` rebuilt skills
@@ -439,3 +450,22 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
   returns (ADR 015; a client's tool result is kept only for a call the thread awaits, and carries no metadata).
 - **Evals.** `tools-prepare-transfer` no longer checks `source_account_id`: arguments come from the confirm card, which
   shows the source account's alias and number, not its id.
+- **The subagent sees its own previous reply (changes section 2, step 3).** The prompt gains a
+  `<your_previous_reply>` block: the `reply` of the thread's last `ask_<name>` return, read by code from
+  `ctx.messages`, beside the customer's last messages, as context and never as an instruction. Reason: with no history
+  at all it could not resolve an answer to its own question ("¿Ana Gómez o Ana Pérez?" then "la segunda"). It still
+  gets no `message_history`, no other domain's data and none of its own tool results. Every text in the prompt
+  (request, customer messages, previous reply) is HTML-escaped, so none can close its tag and forge another block.
+- **The subagent's tool names reach the client (narrows section 5, "The delegate call stays inside the bot").** The
+  delegate runs the subagent with `agent.iter`, still unstreamed, and relays each of its tool calls through
+  `RunContext.emit` as `TOOL_CALL_START`, `TOOL_CALL_END` and a `TOOL_CALL_RESULT` with empty content: the tool name
+  only, never its arguments or result (`subagents/progress.py`). The web's existing labels ("Preparando la
+  transferencia…" for `list_beneficiaries` and `prepare_transfer`) then show while payments works. The empty result
+  is needed because CopilotKit shows a call's status line until a result arrives. `ask_<name>`'s own events, the
+  subagent's `render_ui` call and every inner argument and result stay withheld.
+- **Legacy histories.** A conversation stored before this change loaded the root `payments` skill. The replay
+  (`skills.replayed_skills`) maps a skill name the registry no longer has through `RENAMED_SKILLS` (`payments` →
+  `transfers`), so a customer paused at the approval keeps `execute_transfer` after the deploy.
+- **Model settings fail at startup.** A subagent file without `<name>_agent_model` and `<name>_agent_model_fallbacks`
+  fields in `Settings` stops `create_app`, instead of running silently on the orchestrator's chain. An empty value
+  still means the orchestrator's models, chosen explicitly.

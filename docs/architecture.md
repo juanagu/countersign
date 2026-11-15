@@ -266,9 +266,9 @@ sequenceDiagram
 - **The orchestrator keeps T3 ([ADR 021](decisions/021-in-process-domain-subagents.md)).** The payments subagent
   prepares the draft; its confirm card reaches the client because the delegate tool copies `bank-template` events
   from template tools' returns (and `a2ui-surface` events from `render_ui`), never from either model's text. The
-  orchestrator loads `transfers` and calls `execute_transfer`, whose `draft_id` must be one a `prepare_transfer` result
-  recorded in this conversation (the run's messages or the delegate return's evidence record), or the policy denies
-  it before any interrupt. A subagent's output type has no `DeferredToolRequests`, so a call that defers inside one
+  orchestrator loads `transfers` and calls `execute_transfer`, whose `draft_id` must be the conversation's open draft:
+  the latest a `prepare_transfer` result recorded (the run's messages or the delegate return's evidence record) that
+  no `execute_transfer` result has decided yet. Otherwise the policy denies it before any interrupt. A subagent's output type has no `DeferredToolRequests`, so a call that defers inside one
   fails its run instead of pausing.
 - **Failed resume.** If the resume run fails, the card says so and the customer asks again; the bot raises a new
   interrupt for the same draft and `mcp-payments` never debits a draft twice.
@@ -296,7 +296,8 @@ Two kinds of UI leave the bot, with different trust:
   ([ADR 012](decisions/012-agent-side-a2ui-generation.md)).
 - **What the client never sees.** The raw `render_ui` call, every delegate call (`ask_<name>`, whose request and reply
   are model text) and every reasoning event are withheld by the output guard; the client gets only the validated
-  surface. A subagent's own tool calls never reach the stream at all.
+  surface. A subagent's own tool calls reach the stream by name only (start, end and an empty result), for the
+  progress line; their arguments and results never do.
 - **Ordering.** The output guard holds model-built surfaces until the end of the next text message, so the customer
   reads the answer first and the card under it.
 - **Rendering.** The web app registers the catalog with CopilotKit's A2UI renderer and a separate renderer for
@@ -443,7 +444,7 @@ memory, so they are per replica.
 `make eval` (`services/bot/evals/`, needs `make up`, `make ingest` and an API key) re-seeds the bank and drives the
 live stack through the BFF as a browser session: chat turns, the full transfer flow with step-up and resume, and a
 dropped-connection resume. Judging reads what the client received, and "money moved exactly once" is read from
-Postgres. A subagent's calls never reach the client, so payments cases (`reads_trace`) read the handoff and the
+Postgres. A subagent's call arguments never reach the client, so payments cases (`reads_trace`) read the handoff and the
 subagent's tool spans from Phoenix by the run's `bot.thread_id`, and their arguments from the confirm card
 (`evals/delegation.py`, ADR 021 §6). It gates on `evals/thresholds.yaml`:
 
