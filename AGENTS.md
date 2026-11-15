@@ -1,4 +1,4 @@
-# Conversational Banking Assistant — POC
+# Countersign — conversational banking assistant POC
 
 This repo is a proof of concept for a banking-grade chatbot. It proves one reference
 architecture end to end: streamed answers over SSE, generative UI (A2UI + server

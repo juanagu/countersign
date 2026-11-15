@@ -9,7 +9,7 @@ meant to be typed as written. All data is synthetic.
 Prerequisites: Node 22+, pnpm 12, uv 0.13+, Docker with Compose v2 (see the [README](../README.md)).
 
 ```sh
-git clone <repo> chatbotpoc && cd chatbotpoc
+git clone https://github.com/juanagu/countersign.git && cd countersign
 make install        # pnpm install + uv sync, and the pre-push hook
 make set-key        # paste your Anthropic API key (hidden); saved to .env. Or copy .env.example to .env and fill ANTHROPIC_API_KEY
 make up             # builds and starts infra + all services, waits until every container is healthy
