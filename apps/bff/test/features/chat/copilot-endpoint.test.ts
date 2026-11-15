@@ -3,6 +3,7 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MAX_RUN_BODY_BYTES } from '../../../src/features/chat/copilot-endpoint.js';
 import { buildTestApp, loginCookie, TEST_ISSUER } from '../../support/build-app.js';
 
 const RUN_PATH = '/copilotkit/agent/default/run';
@@ -129,6 +130,16 @@ describe('chat endpoint', () => {
     const { app } = await buildTestApp(bot.url);
     const { path, init } = post(RUN_PATH, await loginCookie(app), runBody(), { 'content-type': 'text/plain' });
     expect((await app.request(path, init)).status).toBe(415);
+    expect(bot.requests).toHaveLength(0);
+  });
+
+  it('refuses a run body over the size limit with 413 before it reaches the runtime', async () => {
+    const bot = await startFakeBot();
+    server = bot.server;
+    const { app } = await buildTestApp(bot.url);
+    const oversized = JSON.stringify({ ...JSON.parse(runBody()), tools: Array(MAX_RUN_BODY_BYTES).fill({}) });
+    const { path, init } = post(RUN_PATH, await loginCookie(app), oversized);
+    expect((await app.request(path, init)).status).toBe(413);
     expect(bot.requests).toHaveLength(0);
   });
 

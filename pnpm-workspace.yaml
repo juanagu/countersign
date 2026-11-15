@@ -13,6 +13,8 @@ allowBuilds:
 overrides:
   'undici@<6.29.1': ^6.29.1
   'graphql-scalars@<2.0.1': ^2.0.1
+  # Keeps every zod 4 copy patched, so the ignore below can only ever cover the zod 3 one.
+  'zod@>=4.0.0 <4.6.6': ^4.6.7
 
 # Accepted, not patched: zod 3's memory-exhaustion advisory. CopilotKit's A2UI renderer (@a2ui/web_core
 # 0.15) needs zod 3 internals and no patched zod 3 exists; ADR 019 has the reasoning and the exit.
