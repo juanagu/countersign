@@ -91,6 +91,7 @@ class ModelChains:
             faults=faults,
         )
         # A subagent runs with `agent.run`, not streamed, so it gets the request deadline, not the first-event one.
+        # It shares `breakers` (keyed by model name) and `faults`: `primary:` and `all:` faults reach it too.
         subagent_chains = {
             name: build_model_chain(
                 name,

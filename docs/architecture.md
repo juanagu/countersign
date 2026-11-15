@@ -194,7 +194,8 @@ Notes:
   `services/bot/subagents/` (`payments` T2) that runs as its own Pydantic AI agent in the bot's process, on its own
   model chain (`PAYMENTS_AGENT_MODEL`, empty = the orchestrator's models), called through one tool, `ask_payments`.
   It gets the orchestrator's identity, token and `RunGuard`, only its own skill, its own `PolicyToolset` and gateway
-  token, and the conversation's shared `FrequencyCaps`. Its prompt is built in code from the request and the
+  token, and the conversation's shared `FrequencyCaps`. `ask_payments` declares T2, the subagent's ceiling, and passes
+  its own gate (`DelegatePolicyToolset`: tier, input verdict, at most 3 delegations per turn). Its prompt is built in code from the request and the
   customer's last three redacted messages; it has no history. Subagents stop at T2: the orchestrator owns every T3
   tool ([subagents readme](../services/bot/app/subagents/feature_readme.md)).
 - **Risk tiers** (T0 public read, T1 personal read, T2 reversible write, T3 money movement) are declared in the tool's
@@ -268,7 +269,8 @@ sequenceDiagram
   from template tools' returns (and `a2ui-surface` events from `render_ui`), never from either model's text. The
   orchestrator loads `transfers` and calls `execute_transfer`, whose `draft_id` must be the conversation's open draft:
   the latest a `prepare_transfer` result recorded (the run's messages or the delegate return's evidence record) that
-  no `execute_transfer` result has decided yet. Otherwise the policy denies it before any interrupt. A subagent's output type has no `DeferredToolRequests`, so a call that defers inside one
+  no `execute_transfer` result has decided yet (a refusal before anything was sent, such as `policy_denied` or
+  `service_unavailable`, decides nothing). Otherwise the policy denies it before any interrupt. A subagent's output type has no `DeferredToolRequests`, so a call that defers inside one
   fails its run instead of pausing.
 - **Failed resume.** If the resume run fails, the card says so and the customer asks again; the bot raises a new
   interrupt for the same draft and `mcp-payments` never debits a draft twice.

@@ -415,9 +415,14 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
 - **The `draft_id` check binds to the one open draft.** `PolicyToolset` reads `ctx.messages` (the stored history plus
   this run, each delegate return's evidence record included), so the same check covers the first call and the
   resume, and no new state goes into `RunGuard`. `execute_transfer` may name only the latest draft a
-  `prepare_transfer` result created, and only while no `execute_transfer` result has decided it (a receipt, a
-  denial or cancel, or a result Pydantic AI synthesized for a cut-off call); a newer draft supersedes the older ones
-  (`policy/drafts.py`, `open_draft`). Accepting any draft ever prepared let a later turn raise an interrupt on a
+  `prepare_transfer` result created, and only while no `execute_transfer` result has decided it (a receipt, the
+  customer's denial or cancel, the bank's answer about that draft such as `draft_expired`, or a result Pydantic AI
+  synthesized for a cut-off call); a newer draft supersedes the older ones (`policy/drafts.py`, `open_draft`). A
+  refusal before anything was sent decides nothing: the policy's `policy_denied` (a cap, the input verdict, the
+  write-intent re-check), the `service_unavailable` an approved call returns when its token or session can't be set
+  up (the gateway's own breaker-open answer has the same code and is sent before forwarding), and a `retried` call.
+  The customer can then ask again and gets a new interrupt on the same draft. The error code is read only where the
+  bot writes it (a policy dict, a `ToolFailed` JSON message), never inside `untrusted_data`. Accepting any draft ever prepared let a later turn raise an interrupt on a
   draft the customer had already executed or cancelled. An interrupt nobody answered decides nothing, so ADR 013's
   failed-resume recovery still pauses on the same draft. A `draft_id` that isn't a string is a denial.
 - **The evidence record** is a plain-JSON `metadata` item, `{"kind": "bot-evidence", "results": [{"tool", "content"}]}`,
@@ -431,11 +436,31 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
 - **Wiring** is `main.build_agent_tree`, which the tests also use. The bot image copies `subagents/` (`Dockerfile`).
 - **Tests** that pin the T3 mechanism itself run on a fixture skills dir that keeps the old root `payments` skill
   (`tests/fixtures/skills/`, with a drift check against the shipped files).
+- **The hand-off is declared in the spec.** `payments.md` carries `hands_off: {tool: prepare_transfer, skill:
+  transfers}` (`SubagentSpec.hands_off`); the delegate reads the draft from that tool's results and loads that skill,
+  and a spec without `hands_off` hands nothing off. `SubagentRegistry` refuses at load a hand-off whose tool isn't the
+  spec's or whose skill is missing, below T3 or without a draft-bound tool. The `next_step` and index wording stay in
+  code (`DRAFT_NEXT_STEP`, `registry._index_line`), filled with the skill's name and `DRAFT_BOUND_TOOLS`. The T2
+  ceiling is checked once, in `SubagentRegistry.__init__`.
+- **One confirm card per delegation.** Of the hand-off tool's results, the delegate forwards only the card of the
+  draft its answer binds (the last one prepared); a subagent that prepared twice shows one card, the one
+  `execute_transfer` can name. Other template and `render_ui` cards are unaffected.
+- **The delegate tools are inside the policy.** Each `ask_<name>` declares the spec's `max_tier` (T2 for payments)
+  under `bank/riskTier` in its tool metadata, like an MCP tool, and runs behind `policy.DelegatePolicyToolset`, which
+  denies with the same `policy_denied` shape a tool without a tier, a blocked input verdict (moved there from the
+  delegate) and a fourth delegation in one orchestrator run (`FrequencyCaps.acquire_delegation`,
+  `DELEGATIONS_PER_TURN = 3`, counted in the conversation's shared caps and keyed by the run id). A refused call
+  starts no subagent. The delegate isn't wrapped in `PolicyToolset` because no skill grants it and its answer is
+  already wrapped; the subagent's own calls still pass its own `PolicyToolset`.
+- **Model chains share faults and breakers.** The subagent's chain uses the same `BreakerRegistry` (keyed by model
+  name, ADR 018) and the same `LLM_FAULT_INJECTION`: `primary:` and `all:` reach it (so `make eval-backup` fails
+  payments' primary too), a subagent can't be targeted alone, and a fault that opens a model's breaker skips that
+  model in every chain that lists it.
 - **Code loads `transfers` when payments returns a draft.** Live, the orchestrator delegated, showed the confirm card
   and ended the turn without calling `load_skill('transfers')`, so `execute_transfer` was never in its tool list and
   no interrupt was raised (4 of 4 Playwright runs of scenarios 3 and 3b). The instruction to call it lived only in
   the `transfers` skill, which the model sees after loading it. Now, when an `ask_payments` return carries a
-  `draft_id`, the delegate adds `transfers` (`DRAFT_SKILL`) to the orchestrator's `loaded_skills`, so the next step
+  `draft_id`, the delegate adds `transfers` (the spec's `hands_off.skill`) to the orchestrator's `loaded_skills`, so the next step
   lists `execute_transfer` and the orchestrator's token gains `transfers:prepare` (ADR 020); the return carries a
   fixed `next_step` beside the untrusted wrapper (call `execute_transfer` with exactly this answer's `draft_id`); and
   the agent index says a `draft_id` answer has the transfers skill loaded and to call `execute_transfer` with the

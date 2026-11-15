@@ -1,7 +1,9 @@
 """`LLM_FAULT_INJECTION`: make chain members fail on purpose, for tests and the failover demo (ADR 018).
 
 A spec is comma-separated `target:fault` entries. Targets: `orchestrator` or `guard` (that role's primary),
-`primary` (both roles' primaries), `all` (every model of both chains). Faults: `rate_limited` (or `429`),
+`primary` (the primary of every chain, each subagent's included), `all` (every model of every chain). A subagent
+cannot be named alone; its chain shares the breakers, keyed by model name, so a fault that opens a model's breaker
+also skips that model in every chain that lists it. Faults: `rate_limited` (or `429`),
 `overloaded` (`529`), `unavailable` (`503`), `server_error` (`500`), `connection`, `stall` (never answers, so
 a deadline fires) and `after_first_event` (a streamed request fails after its first event; others pass).
 Never set outside local runs.
@@ -29,6 +31,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 INJECTED = "injected fault"
+# The roles a target can name alone. `primary` and `all` also reach each subagent's chain (its role is its name).
 ROLES = ("orchestrator", "guard")
 _ERRORS: dict[str, type[ModelAPIError]] = {
     "rate_limited": ModelRateLimitError,
