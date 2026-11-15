@@ -464,6 +464,17 @@ subagent's tool spans from Phoenix by the run's `bot.thread_id`, and their argum
 tokens and resets the shared bank data (F29). Reasoning for each value: [ADR 016](decisions/016-evals.md). The web
 app's Playwright suite (`apps/web/e2e/`) covers the scenarios at 1280 and 390 px.
 
+**Critical user journeys (`make cuj`, [ADR 022](decisions/022-cuj-evals.md)).** One customer goal followed across turns,
+`trials` times, from `evals/cuj.yaml` (first slice: the money flows, CUJ 04 to 08). A scripted or simulated customer
+(an LLM on `GUARD_MODEL` that sees only the conversation's text) talks to the live stack through the BFF, and the
+client answers each approval by code: approve, cancel, a wrong PIN then the right one, or an expired draft. A trial
+passes when every check holds: the **trajectory** (ordered calls, each with an outcome: `result`, `paused`,
+`cancelled` or `error:<code>`; a call outside it fails unless allowed; some are forbidden), the interrupts, the cards,
+the handoff to the payments subagent, the step-up attempts and the ledger. The client's calls come from the stream
+and the subagent's from Phoenix spans (`evals/delegation.py`). The gates are `cuj_money` and `cuj_safety` at 1.0
+(every trial) and `cuj_info` at 0.8 with at least 2 of 3 trials per journey (`consistency` in `thresholds.yaml`).
+Each trial exports a `cuj.trial` span to Phoenix, and `make metrics` reports the CUJ block.
+
 ## 12. Security rules, where enforced, how tested
 
 Rule text: [`AGENTS.md`](../AGENTS.md).

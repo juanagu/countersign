@@ -1,8 +1,11 @@
 # 022 — Critical user journey evals: extend `make eval` on pydantic-evals, don't adopt evalbench yet
 
-**Status:** accepted (2026-11-15), not built (backlog F64). Extends [ADR 016](016-evals.md); leaves the existing groups and
-gates alone. The user settled the open questions: `make eval` runs `make cuj` once the suite is stable, and CUJ 08 may
-move its own draft's `expires_at` into the past in the synthetic bank.
+**Status:** accepted (2026-11-15), first slice (CUJ 04 to 08) built (backlog F64): `8491151` scenario model and
+Trajectory evaluator, `5213791` bad-PIN and expiry support, `800194f` runner, simulated user and `make cuj`,
+`710ef6d` CUJ 04 to 08, `4a9a5f6` the CUJ block in `make metrics`, then the docs. Build notes are under "As built" at the
+end. Extends [ADR 016](016-evals.md); leaves the existing groups and gates alone. The user settled the open
+questions: `make eval` runs `make cuj` once the suite is stable, and CUJ 08 may move its own draft's `expires_at` into
+the past in the synthetic bank.
 
 ## Context
 The user asked to "consider adding CUJ" and pointed at
@@ -234,3 +237,77 @@ Commits, each green on `make test` and `make lint`:
 
 Revisit evalbench if it gains an HTTP or AG-UI agent generator with per-call outcomes, if we need cross-run history it
 already gives, or if we want to compare our suite against a second harness.
+
+## As built (F64, first slice: CUJ 04 to 08)
+
+Written after ADR 021 was built, so trajectories are in what the client and the spans show, not in the section 1 table's
+`load_skill(payments)`.
+
+- **The trajectory reads two sources and merges them** (`evals/calls.py`). The client's stream gives `ask_payments`,
+  `execute_transfer` and the interrupt. The subagent's `list_beneficiaries`, `list_accounts`, `render_ui` and
+  `prepare_transfer` come from Phoenix spans through `evals/delegation.py`, placed right after the `ask_payments` that
+  made them. `prepare_transfer`'s arguments come from the confirm card, as ADR 021 section 6 says. Spans carry no result
+  content (rule 7), so a delegated call's outcome is `result`, or `error:<code>` read from its span's error status.
+  `load_skill(transfers)` never appears: code loads it (ADR 021), so the table's `load_skill` steps are gone.
+- **`handoffs: [payments]`** is implemented and read from spans (`LiveOutput.handoffs`).
+- **Outcomes** are `paused`, `result`, `error:<code>`, `any` and one more: **`cancelled`**. A cancelled approval is not
+  a paused call and not a result: the client answers the interrupt with a refusal, and the bot gets a tool result
+  carrying the reason. Without the fourth outcome, `forbid: [execute_transfer:result]` would fire on every cancel. The
+  call that paused appears twice in a trajectory when it is answered: `paused` in the run that raised it, then its
+  outcome from the resume (which has no start event).
+- **`requires`, and outcomes in `allow`.** A retry after `draft_expired` is acceptable when it starts from a new draft
+  and not otherwise ("no retry by the model without a new `prepare_transfer`"). Two additions express it: `allow`
+  entries may name an outcome (`execute_transfer:paused`), and `requires: ["execute_transfer:paused <- prepare_transfer"]`
+  fails a pause that has no `prepare_transfer` since the previous one. The first exploratory run of CUJ 08 showed
+  the bot doing exactly that retry (below).
+- **Format changes from section 4's example.** `ledger: none | once` replaces `ledger_delta: 0` (a debit of
+  amount + fee exactly once, one transfer and one "sent" movement, is a case the number could not state);
+  `step_up_requests` is joined by `step_up_statuses` (`[401, 200]` for CUJ 07); `expect.interrupts`,
+  `expect.text_contains_any` and `expect.balance_read_matches_ledger` are new. 06's text check is `text_contains_any`:
+  "No se envió la transferencia..." is the web's resolved-line, not bot text, so it is not asserted as such.
+  Scripted journeys (05, 07, 08) have no `plan`; 04 and 06 are simulated.
+- **Entry point.** `python -m evals.cuj_runner` (the loader and models are in `evals/cuj.py`, which an `__main__` would
+  have loaded twice). `--only`, `--trials`, `--out` as designed. Trials run one at a time: they share one ledger.
+- **The gateway's write limit decides how long a run takes.** The gateway allows 20 T2 calls per customer per
+  10 minutes (ADR 017). Fifteen trials prepare at least fifteen drafts, and every journey is Juan's, so a run, or two
+  runs in a row, hit `rate_limited` at `prepare_transfer`. That says nothing about the bot, so a trial refused for it
+  waits 60 s and runs again on a fresh thread (up to 12 times; `attempts` is in the output). In the three live runs 3 or
+  4 of 15 trials needed a second attempt, a run took several minutes longer than its roughly five minutes of work, and the retried trials' failed
+  attempts are not in the token bill. A journey that could run as Ana would spread the budget; the ADR fixes the users,
+  so it stays as is.
+- **`traceparent`.** Checked in commit 3: the BFF reads no inbound `traceparent` (nothing in `apps/bff/src`), so the
+  `cuj.trial` span carries `cuj.thread_id` instead, and `make metrics` links it to the stack's runs through
+  `bot.thread_id`. Spans are exported with `SimpleSpanProcessor` to `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- **Not built from the ADR:** the LLM judge as an extra score. The five journeys are decided by the ledger, the cards,
+  the interrupts and the trajectory, which is stricter; the judge belongs to the open-text journeys of the second slice.
+
+### Live results (`make cuj`, three runs of 3 trials per journey, against the stack on main's code)
+
+| Run | cuj_money | Failed trial | Tokens (5 journeys, 15 trials) |
+| --- | --- | --- | --- |
+| 1 | 15/15 | none | 818k |
+| 2 | 14/15 | CUJ 05 trial 2: the harness read `error:unknown` for `prepare_transfer` | 774k |
+| 3 | 15/15 | none | 789k |
+
+The failure was the harness, not the bot: the tool's own span ends in ERROR with no message, and the MCP transport span
+under it carries `{"error":"insufficient_funds"}`; the code took the first error span it saw. Fixed with a test
+(`test_the_error_code_comes_from_the_transport_span_when_the_tool_span_has_no_message`), then CUJ 05 was run again
+three times: 3 of 3 passed, 119k tokens. So 44 of 45 trials passed as run, 45 of 45 on the bot's behaviour. Per journey, tokens per trial
+(orchestrator, subagent and guard models, from Phoenix; the simulated customer's own tokens are not counted) were
+about 93k for CUJ 04, 47k to 49k for 05, 51k for 06, 31k for 07 and 51k for 08. `make eval` does **not** run
+`make cuj` yet: the runs were stable in two of three and the third was a harness bug, but the ADR asks for a week of
+stable runs and the rate limit means `make cuj` cannot follow `make eval` straight away (its scenario 3 and tool
+cases spend the same customer's budget). Backlog note: F70.
+
+### What the journeys showed about the bot
+- **CUJ 08, first exploratory run (before `requires`):** after `draft_expired` the orchestrator called `ask_payments`
+  again, the subagent made no tool call, and the orchestrator called `execute_transfer` with the expired draft id,
+  raising a second approval card. No money could move (the draft is expired), but the model retried without a new
+  `prepare_transfer`, which is what the journey forbids. It did not recur in the nine trials that followed, one of
+  which re-prepared properly. Not fixed here (bot behaviour is out of scope); the `requires` rule now fails the trial
+  when it happens.
+- **The payments subagent calls `render_ui`** (quick replies on the vague opening), seen in the spans under its handoff.
+  Allowed in every journey; worth knowing the subagent has the surface tool.
+- **A vague opening takes two `ask_payments` handoffs** (one to list beneficiaries, one to prepare) in CUJ 04 and 06, and
+  the subagent re-lists beneficiaries and accounts on each: ADR 021's "stateless subagent" cost, visible in the tokens.
+- **`prepare_transfer` is rate limited** after about 20 prepares in 10 minutes for one customer (above).

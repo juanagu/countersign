@@ -135,6 +135,13 @@ the red-team results, then a gate table:
 | `controls` | legitimate requests that must not be blocked | 1.0 |
 
 Thresholds live in `services/bot/evals/thresholds.yaml`; [ADR 016](decisions/016-evals.md) explains them.
+
+`make cuj` runs the critical user journeys ([ADR 022](decisions/022-cuj-evals.md)) on their own: the money flows
+(transfer, insufficient balance, cancel on the card, wrong PIN then right, expired approval), each three times, with
+a gate per group (`cuj_money` needs every trial). It re-seeds the bank, costs real tokens, and waits out the
+gateway's write limit (20 reversible writes per customer per 10 minutes) when a run hits it.
+`make cuj CUJ_ARGS="--only cuj-06 --trials 1"` runs one journey once; `CUJ_ARGS="--out /tmp/cuj.json"` writes each
+trial's calls, failed checks and tokens as JSON.
 `make eval EVAL_ARGS="--only scenario-3"` runs the matching golden cases only (and fails the skipped gates);
 `EVAL_ARGS="--out /tmp/eval.json"` also writes per-case results as JSON. `make metrics METRICS_ARGS="--hours 1"`
 narrows the window.
