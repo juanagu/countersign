@@ -3,6 +3,7 @@ name: payments
 description: Saved beneficiaries and preparing transfers to them.
 tools: [list_beneficiaries, prepare_transfer, execute_transfer, list_accounts, get_balance]
 max_tier: T3
+scopes: [accounts:read, beneficiaries:read, transfers:prepare]
 ---
 # Payments
 
