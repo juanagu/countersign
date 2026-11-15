@@ -4,6 +4,8 @@ Phoenix 21 has no dashboard API, so this script is the dashboard:
 - time to first token and to first UI surface: the `bot.stream` span of each run (`app/guardrails/stream_timing.py`);
 - tokens per run: the pydantic-ai model spans (`chat <model>`) in that run's trace, orchestrator and guard together;
 - guardrail blocks: the `guardrail.*` metric log lines in `docker compose logs bot`, by kind;
+- critical user journeys (ADR 022): the `cuj.trial` spans `make cuj` exports, per journey, with the tokens of the
+  trial's thread;
 - model failover (ADR 018): runs by the orchestrator model that served them (`bot.models_served` on `bot.stream`)
   with their time to first token, and the `llm.failover` log lines by role and reason.
 """
@@ -27,6 +29,7 @@ PHOENIX_SPANS = "http://localhost:6006/v1/projects/default/spans"
 PAGE_SIZE = 1000
 MAX_PAGES = 200
 STREAM_SPAN = "bot.stream"
+CUJ_SPAN = "cuj.trial"  # Exported by `evals/cuj_spans.py`.
 TTFT = "bot.time_to_first_token_ms"
 FIRST_SURFACE = "bot.time_to_first_surface_ms"
 MODEL_SPAN_PREFIX = "chat "  # pydantic-ai's model-request spans; the SDK's own spans would count tokens twice
@@ -101,6 +104,23 @@ def tokens_by_thread(stream_spans: list[Span], model_spans: list[Span]) -> dict[
     return dict(totals)
 
 
+def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[str]:
+    """One line per journey: trials, pass rate, and the median turns and tokens of its trials."""
+    by_cuj: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for span in trial_spans:
+        by_cuj[str(span["attributes"].get("cuj.id", UNRECORDED))].append(span["attributes"])
+    rows = []
+    for cuj_id, trials in sorted(by_cuj.items()):
+        passed = sum(bool(t.get("cuj.passed")) for t in trials)
+        turns = percentile([float(t.get("cuj.turns") or 0) for t in trials], 0.5)
+        tokens = percentile([thread_tokens.get(str(t.get("cuj.thread_id")), 0.0) for t in trials], 0.5)
+        rows.append(
+            f"  {cuj_id:30} {len(trials):3} trials  pass {passed / len(trials):4.0%}  "
+            f"turns p50 {turns or 0:.0f}  tokens p50 {tokens or 0:,.0f}"
+        )
+    return rows
+
+
 def cache_read_share(model_spans: list[Span]) -> float | None:
     """Share of model input tokens served from the prompt cache; None without input."""
     model_requests = [s["attributes"] for s in model_spans if s["name"].startswith(MODEL_SPAN_PREFIX)]
@@ -164,6 +184,13 @@ def bot_logs(hours: float) -> str:
     return run.stdout + run.stderr
 
 
+def print_cuj_block(since: datetime, stream_spans: list[Span], model_spans: list[Span]) -> None:
+    rows = cuj_rows(list(spans(since, name=CUJ_SPAN)), tokens_by_thread(stream_spans, model_spans))
+    print(f"Critical user journeys (cuj.trial spans, tokens of each trial's thread): {len(rows)} journeys")
+    for row in rows:
+        print(row)
+
+
 def main(hours: float) -> int:
     since = datetime.now(UTC) - timedelta(hours=hours)
     stream_spans = list(spans(since, name=STREAM_SPAN))
@@ -179,6 +206,7 @@ def main(hours: float) -> int:
     runs = Counter(served_model(span) for span in stream_spans)
     for model, values in sorted(ttft_by_served_model(stream_spans).items()):
         print(f"  {model:32} {runs[model]:5} runs  {summary(values)}")
+    print_cuj_block(since, stream_spans, model_spans)
     logs = bot_logs(hours)
     counts = guardrail_counts(logs)
     print(f"Guardrail events (bot logs): {sum(counts.values())}")

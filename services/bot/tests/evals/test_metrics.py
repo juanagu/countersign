@@ -8,6 +8,7 @@ from evals.metrics import (
     TTFT,
     UNRECORDED,
     cache_read_share,
+    cuj_rows,
     failover_counts,
     guardrail_counts,
     latencies,
@@ -121,3 +122,25 @@ def test_failovers_count_by_role_and_reason_from_the_log_lines() -> None:
         ]
     )
     assert failover_counts(logs) == {"orchestrator overloaded": 2, "guard first_event_timeout": 1}
+
+
+def test_each_journey_reports_its_pass_rate_turns_and_the_tokens_of_its_threads() -> None:
+    def trial(cuj_id: str, passed: bool, turns: int, thread: str) -> dict[str, object]:
+        attributes = {"cuj.id": cuj_id, "cuj.passed": passed, "cuj.turns": turns, "cuj.thread_id": thread}
+        return {"name": "cuj.trial", "context": {"trace_id": thread}, "attributes": attributes}
+
+    trials = [trial("cuj-04", True, 3, "a"), trial("cuj-04", False, 3, "b"), trial("cuj-05", True, 1, "c")]
+
+    rows = cuj_rows(trials, {"a": 90_000.0, "b": 100_000.0, "c": 40_000.0})
+
+    assert rows == [
+        "  cuj-04                           2 trials  pass  50%  turns p50 3  tokens p50 90,000",
+        "  cuj-05                           1 trials  pass 100%  turns p50 1  tokens p50 40,000",
+    ]
+
+
+def test_a_journey_without_a_thread_in_phoenix_counts_zero_tokens() -> None:
+    attributes = {"cuj.id": "cuj-04", "cuj.passed": True, "cuj.turns": 2, "cuj.thread_id": "gone"}
+    trials = [{"name": "cuj.trial", "context": {"trace_id": "x"}, "attributes": attributes}]
+
+    assert cuj_rows(trials, {}) == ["  cuj-04                           1 trials  pass 100%  turns p50 2  tokens p50 0"]

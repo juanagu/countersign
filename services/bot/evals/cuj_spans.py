@@ -11,7 +11,8 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-SPAN_NAME = "cuj.trial"
+from evals.metrics import CUJ_SPAN
+
 NANOS = 1_000_000_000
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ def emit_trials(trials: Iterable[Trial], endpoint: str | None) -> None:
     tracer = provider.get_tracer("evals.cuj")
     try:
         for t in trials:
-            span = tracer.start_span(SPAN_NAME, start_time=t.start_ns)
+            span = tracer.start_span(CUJ_SPAN, start_time=t.start_ns)
             span.set_attributes(
                 {
                     "cuj.id": t.cuj_id,
