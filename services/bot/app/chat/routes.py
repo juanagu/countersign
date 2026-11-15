@@ -16,7 +16,7 @@ from app.chat.interrupt_answers import resumed_calls, without_interrupt_answers
 from app.conversations.history import conversation_id_for, load_thread, new_turn
 from app.conversations.run_store import RunConversationStore
 from app.core.llm.run_record import start_run_record
-from app.guardrails.history_guard import NON_EVIDENCE_TOOLS
+from app.guardrails.history_guard import grounds_no_figure
 from app.guardrails.messages import (
     customer_spoke_since_last_response,
     customer_texts,
@@ -58,7 +58,7 @@ def _start_guard(
         user_id=user_id,
         customer_messages=customer_texts(history),
         third_party_text_seen=bool(tools_returned_in(history) & THIRD_PARTY_TEXT_TOOLS),
-        earlier_tool_results=tool_results_in(history, excluding=NON_EVIDENCE_TOOLS),
+        earlier_tool_results=tool_results_in(history, excluding=grounds_no_figure),
         resume_only=genuine_resume and not customer_spoke_since_last_response(history),
     )
 

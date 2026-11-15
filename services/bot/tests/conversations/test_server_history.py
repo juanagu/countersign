@@ -28,7 +28,7 @@ from app.guardrails.output_guard import UNGROUNDED_FALLBACK
 from app.main import create_app
 from app.skills.registry import SkillRegistry
 from tests.conftest import TEST_CLIENT_SECRET, TEST_MODEL, SigningKey, make_settings, open_guardrails
-from tests.policy.test_approval_flow import DRAFT_ID, FakePayments
+from tests.policy.test_approval_flow import DRAFT_ID, PREPARE_ARGS, FakePayments
 
 HEADERS = {"accept": "text/event-stream"}
 
@@ -176,6 +176,8 @@ async def test_an_approval_resumes_from_the_stored_conversation(
         if not returns:
             yield {0: DeltaToolCall(name="load_skill", json_args=json.dumps({"name": "payments"}))}
         elif len(returns) == 1:
+            yield {0: DeltaToolCall(name="prepare_transfer", json_args=json.dumps(PREPARE_ARGS))}
+        elif len(returns) == 2:
             yield {0: DeltaToolCall(name="execute_transfer", json_args=json.dumps({"draft_id": DRAFT_ID}))}
         else:
             yield "Listo, la transferencia salió."
@@ -221,7 +223,7 @@ async def test_an_approval_resumes_from_the_stored_conversation(
         for p in getattr(m, "parts", [])
         if isinstance(p, ToolCallPart)
     ]
-    assert [c.tool_name for c in calls] == ["load_skill", "execute_transfer"]
+    assert [c.tool_name for c in calls] == ["load_skill", "prepare_transfer", "execute_transfer"]
 
 
 async def test_the_reload_grounds_dates_on_the_configured_bank_timezone(

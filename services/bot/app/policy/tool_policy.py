@@ -1,5 +1,5 @@
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -12,6 +12,11 @@ MAX_TRANSACTIONS = 50
 MAX_PERIOD_DAYS = 400
 TRANSFER_CAPS = {"ARS": 2_000_000, "USD": 10_000}
 _ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+PREPARE_TRANSFER = "prepare_transfer"
+# Tools whose `draft_id` must name a draft a `prepare_transfer` result recorded in this conversation (ADR 021 §3): the
+# one value that crosses from a subagent's answer into a T3 call is checked in code, not trusted.
+DRAFT_BOUND_TOOLS = frozenset({"execute_transfer"})
 
 ArgCheck = Callable[[Mapping[str, Any], date], str | None]
 """Given the arguments and the bank's today, returns a denial reason, or None when they are within bounds."""
@@ -70,6 +75,22 @@ def _transfer_bounds(args: Mapping[str, Any], _today: date) -> str | None:
     return f"transfers are capped at {cap} {currency}" if amount > cap else None
 
 
+def prepared_draft_id(content: Any) -> str | None:
+    """The draft id in a `prepare_transfer` result, raw or as the policy wrapped it; None for an error."""
+    if isinstance(content, Mapping) and "untrusted_data" in content:
+        content = content["untrusted_data"]
+    if not isinstance(content, Mapping) or "error" in content:
+        return None
+    draft_id = content.get("draft_id")
+    return draft_id if isinstance(draft_id, str) and draft_id else None
+
+
+def drafts_prepared_in(tool_returns: Iterable[tuple[str, Any]]) -> set[str]:
+    """The drafts the `prepare_transfer` results among (tool name, content) pairs created."""
+    drafts = (prepared_draft_id(content) for name, content in tool_returns if name == PREPARE_TRANSFER)
+    return {draft for draft in drafts if draft}
+
+
 DEFAULT_ARG_CHECKS: Mapping[str, ArgCheck] = {
     "list_transactions": _transactions_bounds,
     "spending_summary": _summary_bounds,
@@ -93,11 +114,21 @@ class ToolPolicy:
     def visible(self, tool: str, tier: RiskTier | None, loaded: set[str]) -> bool:
         return tier is not None and self._granted(tool, tier, loaded)
 
-    def check_call(self, tool: str, tier: RiskTier | None, args: Mapping[str, Any], loaded: set[str]) -> Decision:
+    def check_call(
+        self,
+        tool: str,
+        tier: RiskTier | None,
+        args: Mapping[str, Any],
+        loaded: set[str],
+        prepared_drafts: Collection[str] = frozenset(),
+    ) -> Decision:
+        """`prepared_drafts` are the drafts this conversation's `prepare_transfer` results created."""
         if tier is None:
             return Decision(False, "the tool declares no risk tier")
         if not self._granted(tool, tier, loaded):
             return Decision(False, "no loaded skill grants this tool")
+        if tool in DRAFT_BOUND_TOOLS and args.get("draft_id") not in prepared_drafts:
+            return Decision(False, "the draft was not prepared in this conversation")
         check = self._arg_checks.get(tool)
         reason = check(args, self._clock.today()) if check else None
         if not reason and tier is RiskTier.T3:

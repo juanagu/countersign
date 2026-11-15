@@ -132,8 +132,8 @@ def _fake_gateway(executed: list[dict[str, str]]) -> FastMCP:
         return {"beneficiaries": []}
 
     @mcp.tool(meta=_meta("T2", "transfers:prepare"))
-    def prepare_transfer(beneficiary_id: str, amount: str) -> dict[str, Any]:
-        return {"draft_id": DRAFT_ID, "beneficiary_id": beneficiary_id, "amount": amount}
+    def prepare_transfer(beneficiary_id: str, amount: float, currency: str) -> dict[str, Any]:
+        return {"draft_id": DRAFT_ID, "beneficiary_id": beneficiary_id, "amount": amount, "currency": currency}
 
     @mcp.tool(meta=_meta("T3", "transfers:execute", **{"bank/listScope": "transfers:prepare"}))
     def execute_transfer(draft_id: str, step_up_token: str = "") -> dict[str, Any]:
@@ -236,7 +236,7 @@ def _distinct(sessions: list[MCPToolset[BotDeps]]) -> list[MCPToolset[BotDeps]]:
 
 LOAD_ACCOUNTS = ToolCallPart("load_skill", {"name": "accounts"})
 LOAD_PAYMENTS = ToolCallPart("load_skill", {"name": "payments"})
-PREPARE = ToolCallPart("prepare_transfer", {"beneficiary_id": "ben-ana", "amount": "50000"})
+PREPARE = ToolCallPart("prepare_transfer", {"beneficiary_id": "ben-ana", "amount": 50000, "currency": "ARS"})
 EXECUTE_CALL = ToolCallPart("execute_transfer", {"draft_id": DRAFT_ID})
 
 

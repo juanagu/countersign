@@ -6,9 +6,10 @@ from pydantic_ai import ApprovalRequired, RunContext, ToolReturn
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from app.chat.deps import BotDeps
+from app.guardrails.messages import tool_returns_in
 from app.policy.frequency_caps import FrequencyCaps
 from app.policy.risk_tier import RISK_TIER_META_KEY, RiskTier
-from app.policy.tool_policy import ToolPolicy
+from app.policy.tool_policy import DRAFT_BOUND_TOOLS, ToolPolicy, drafts_prepared_in
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,9 @@ class PolicyToolset(WrapperToolset[BotDeps]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[BotDeps], tool: ToolsetTool[BotDeps]
     ) -> Any:
         tier = tool_tier(tool)
-        decision = self.policy.check_call(name, tier, tool_args, ctx.deps.loaded_skills)
+        # The run's messages: the stored history, and this run's results, a subagent's evidence record included.
+        drafts = drafts_prepared_in(tool_returns_in(ctx.messages)) if name in DRAFT_BOUND_TOOLS else set()
+        decision = self.policy.check_call(name, tier, tool_args, ctx.deps.loaded_skills, drafts)
         if not decision.allowed or tier is None:
             return _denied(name, decision.reason)
         if reason := await self._guard_denial(name, tier, tool_args, ctx, needs_approval=decision.needs_approval):

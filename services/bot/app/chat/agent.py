@@ -15,7 +15,7 @@ from app.policy.tool_policy import ToolPolicy
 from app.skills.load_skill import skills_toolset
 from app.skills.registry import SkillRegistry
 
-__all__ = ["SYSTEM_PROMPT", "BotAgent", "BotDeps", "build_agent"]
+__all__ = ["PROMPT_CACHING", "SYSTEM_PROMPT", "BotAgent", "BotDeps", "build_agent", "unavailable_servers_note"]
 
 # A run ends with text, or paused on tool calls awaiting the customer's approval (AG-UI interrupt).
 BotAgent = Agent[BotDeps, str | DeferredToolRequests]
@@ -50,16 +50,33 @@ You are the virtual assistant of a retail bank. This is a demo: every customer a
 """
 
 
+def unavailable_servers_note(ctx: RunContext[BotDeps]) -> str | None:
+    if not ctx.deps.unavailable_servers:
+        return None
+    names = ", ".join(sorted(ctx.deps.unavailable_servers))
+    return (
+        f"These banking services are unavailable right now: {names}. Their tools are missing. Tell the "
+        "customer the service is temporarily unavailable and to try again later; do not guess the data."
+    )
+
+
 def build_agent(
     model: Model | str,
     *,
     skills: SkillRegistry,
     domain_tools: Sequence[AbstractToolset[BotDeps]] = (),
     clock: BankClock | None = None,
+    caps: FrequencyCaps | None = None,
+    delegates: Sequence[AbstractToolset[BotDeps]] = (),
+    agent_index: str | None = None,
 ) -> BotAgent:
+    """`caps` is shared with every subagent's policy, so delegating never resets the conversation's write caps.
+
+    `delegates` are the subagents' `ask_<name>` tools (ADR 021) and `agent_index` the list the model sees for them.
+    """
     clock = clock or BankClock()
-    policy, caps = ToolPolicy(skills, clock=clock), FrequencyCaps()  # One cap counter across every domain toolset.
-    toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills), genui_toolset()]
+    policy, caps = ToolPolicy(skills, clock=clock), caps or FrequencyCaps()  # One counter across every toolset.
+    toolsets: list[AbstractToolset[BotDeps]] = [skills_toolset(skills), genui_toolset(), *delegates]
     toolsets += [
         PolicyToolset(wrapped=TemplateToolset(wrapped=toolset), policy=policy, caps=caps) for toolset in domain_tools
     ]
@@ -79,14 +96,10 @@ def build_agent(
         return skills.index()
 
     @agent.instructions
-    def unavailable_servers(ctx: RunContext[BotDeps]) -> str | None:
-        if not ctx.deps.unavailable_servers:
-            return None
-        names = ", ".join(sorted(ctx.deps.unavailable_servers))
-        return (
-            f"These banking services are unavailable right now: {names}. Their tools are missing. Tell the "
-            "customer the service is temporarily unavailable and to try again later; do not guess the data."
-        )
+    def subagent_index(_: RunContext[BotDeps]) -> str | None:
+        return agent_index
+
+    agent.instructions(unavailable_servers_note)
 
     @agent.instructions
     def today(_: RunContext[BotDeps]) -> str:

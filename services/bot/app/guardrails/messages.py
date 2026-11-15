@@ -1,6 +1,6 @@
 """Reads and redacts the customer's turns in a Pydantic AI message history."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -43,26 +43,47 @@ def customer_texts(messages: Sequence[ModelMessage]) -> list[str]:
     return texts
 
 
+# A `ToolReturnPart.metadata` item holding the tool results another agent's policy recorded (ADR 021): the root
+# history never holds a subagent's own tool returns, only its delegate tool's return.
+EVIDENCE_RECORD = "bot-evidence"
+
+
+def evidence_record(results: Sequence[tuple[str, Any]]) -> dict[str, Any]:
+    """(tool name, result content) pairs, as plain JSON so the conversation store keeps them as they are."""
+    return {"kind": EVIDENCE_RECORD, "results": [{"tool": tool, "content": content} for tool, content in results]}
+
+
+def _recorded(metadata: Any) -> Iterator[tuple[str, Any]]:
+    for item in metadata if isinstance(metadata, list) else ():
+        if not isinstance(item, Mapping) or item.get("kind") != EVIDENCE_RECORD:
+            continue
+        for result in item.get("results") or ():
+            if isinstance(result, Mapping) and isinstance(result.get("tool"), str):
+                yield result["tool"], result.get("content")
+
+
+def tool_returns_in(messages: Sequence[ModelMessage]) -> list[tuple[str, Any]]:
+    """(tool name, content) for each tool result the history holds, oldest first, a subagent's recorded ones
+    included right after the delegate tool's own return."""
+    returns: list[tuple[str, Any]] = []
+    for message in messages:
+        for part in message.parts if isinstance(message, ModelRequest) else ():
+            if isinstance(part, ToolReturnPart):
+                returns.append((part.tool_name, part.content))
+                returns.extend(_recorded(part.metadata))
+    return returns
+
+
 def tools_returned_in(messages: Sequence[ModelMessage]) -> set[str]:
     """Names of the tools whose results the history already holds."""
-    return {
-        part.tool_name
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    }
+    return {name for name, _ in tool_returns_in(messages)}
 
 
-def tool_results_in(messages: Sequence[ModelMessage], *, excluding: frozenset[str] = frozenset()) -> list[Any]:
-    """The content of each tool result the history holds, oldest first, except the excluded tools'."""
-    return [
-        part.content
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name not in excluding
-    ]
+def tool_results_in(
+    messages: Sequence[ModelMessage], *, excluding: Callable[[str], bool] = lambda _: False
+) -> list[Any]:
+    """The content of each tool result the history holds, oldest first, except those of the excluded tools."""
+    return [content for name, content in tool_returns_in(messages) if not excluding(name)]
 
 
 def customer_spoke_since_last_response(messages: Sequence[ModelMessage]) -> bool:
