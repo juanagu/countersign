@@ -493,4 +493,4 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 | [018](decisions/018-llm-model-failover.md) | LLM failover | In-process chain per role, first-event deadline, circuit breaker. |
 | [019](decisions/019-copilotkit-advisory-overrides.md) | Dependency advisories | pnpm overrides for undici and graphql-scalars; zod 3's advisory accepted until A2UI moves to zod 4. |
 | [020](decisions/020-skill-scoped-gateway-tokens.md) | Skill-scoped gateway tokens | The gateway token carries only the loaded skills' scopes, `transfers:execute` only for an approved call; the gateway lists and calls by token scope. Amends 017. |
-| [022](decisions/022-cuj-evals.md) | CUJ evals (proposed) | Multi-turn journeys with a simulated user, trials and per-call outcomes, built on `make eval`'s pydantic-evals; evalbench evaluated and not adopted. |
+| [022](decisions/022-cuj-evals.md) | CUJ evals | Multi-turn journeys with a simulated user, trials and per-call outcomes, built on `make eval`'s pydantic-evals; evalbench evaluated and not adopted. |

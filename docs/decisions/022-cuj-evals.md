@@ -1,6 +1,8 @@
 # 022 — Critical user journey evals: extend `make eval` on pydantic-evals, don't adopt evalbench yet
 
-**Status:** proposed. Nothing is built. Extends [ADR 016](016-evals.md); leaves the existing groups and gates alone.
+**Status:** accepted (2026-11-15), not built (backlog F64). Extends [ADR 016](016-evals.md); leaves the existing groups and
+gates alone. The user settled the open questions: `make eval` runs `make cuj` once the suite is stable, and CUJ 08 may
+move its own draft's `expires_at` into the past in the synthetic bank.
 
 ## Context
 The user asked to "consider adding CUJ" and pointed at
@@ -194,10 +196,11 @@ one flaky wording can't hide behind eight green trials of another CUJ.
 ### 7. Subagents (ADR 021)
 CUJ trajectories are written in domain tools and client-visible outcomes, so they stay valid whether the root agent or
 an in-process payments subagent makes the call: 04 to 08 must give the same trajectory, cards, interrupt and ledger. When
-021 is accepted, an optional `handoffs: [payments]` field asserts the root handed off, read from whatever the AG-UI
-stream shows for the delegation. What the CUJs then pin that unit tests can't:
-- the approval interrupt still reaches the customer from inside the subagent, and the resume reaches the same call
-  (04, 06, 07, 08);
+021 is built, an optional `handoffs: [payments]` field asserts the root handed off. A subagent's events never reach
+the AG-UI stream (ADR 021), so the field is read from the run's Phoenix spans by trace id. What the CUJs then pin that
+unit tests can't:
+- the subagent prepares and the orchestrator alone pauses on `execute_transfer`: the interrupt, the confirm card and
+  the resume are unchanged from the customer's side (04, 06, 07, 08);
 - the subagent's token carries no `transfers:execute` before approval (ADR 020), seen as 05 and 06 never reaching the gateway;
 - an instruction in tool output read by the subagent doesn't make the root or the subagent prepare a write (09);
 - trials show whether the root's choice to delegate is stable, which a single run hides.
@@ -219,15 +222,15 @@ one capability (`on_interrupt`), so it is built once. 09 to 11 follow in a secon
 12 waits on F25.
 
 Commits, each green on `make test` and `make lint`:
-1. `feat(f63): CUJ scenario model, loader and Trajectory evaluator`: `evals/cuj.py` (models, loader), `evals/cuj_evaluators.py`,
+1. `feat(f64): CUJ scenario model, loader and Trajectory evaluator`: `evals/cuj.py` (models, loader), `evals/cuj_evaluators.py`,
    `tests/evals/test_cuj_loader.py`, `test_cuj_evaluators.py` (stub traces, including `paused` versus `result`).
-2. `feat(f63): bad-PIN and expiry support in the live client`: `evals/agui_client.py`, `evals/bank_db.py`, their tests.
-3. `feat(f63): CUJ runner, simulated user and make cuj`: `evals/cuj_runner.py`, `evals/cuj_user.py`, `Makefile`,
+2. `feat(f64): bad-PIN and expiry support in the live client`: `evals/agui_client.py`, `evals/bank_db.py`, their tests.
+3. `feat(f64): CUJ runner, simulated user and make cuj`: `evals/cuj_runner.py`, `evals/cuj_user.py`, `Makefile`,
    `thresholds.yaml`, `evals/thresholds.py` (`consistency`), and the `traceparent` check.
-4. `feat(f63): CUJ 04 to 08`: `evals/cuj.yaml`. Run `make cuj` live three times; record the pass rate and the token bill
+4. `feat(f64): CUJ 04 to 08`: `evals/cuj.yaml`. Run `make cuj` live three times; record the pass rate and the token bill
    in the commit message.
-5. `feat(f63): CUJ block in make metrics`: `evals/metrics.py`, `tests/evals/test_metrics.py`.
-6. `docs(f63)`: `docs/architecture.md` section 11, `DEMO.md` section 3, `backlog.md`, this ADR's status.
+5. `feat(f64): CUJ block in make metrics`: `evals/metrics.py`, `tests/evals/test_metrics.py`.
+6. `docs(f64)`: `docs/architecture.md` section 11, `DEMO.md` section 3, `backlog.md`, this ADR's status.
 
 Revisit evalbench if it gains an HTTP or AG-UI agent generator with per-call outcomes, if we need cross-run history it
 already gives, or if we want to compare our suite against a second harness.
