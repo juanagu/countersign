@@ -3,7 +3,7 @@
 A proof of concept for a banking-grade chatbot: streamed answers over SSE, generative UI,
 RAG with citations, an agent calling domain tools over MCP, guardrails and a human-approved
 money-movement flow. All data is synthetic. The brief is [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` imports it); the build
-plan is [`docs/PLAN.md`](docs/PLAN.md); the system's shape is in [`docs/architecture.md`](docs/architecture.md); decisions are in [`docs/decisions/`](docs/decisions/). To run the
+plan is [`docs/PLAN.md`](docs/PLAN.md); the system's shape is in [`docs/architecture.md`](docs/architecture.md) (slides: [`architecture.pdf`](architecture.pdf)); decisions are in [`docs/decisions/`](docs/decisions/). To run the
 five demo scenarios in the browser, follow [`docs/DEMO.md`](docs/DEMO.md).
 
 ## Prerequisites
