@@ -1,4 +1,4 @@
-import { readTier, type RiskTier } from '@poc/mcp-kit';
+import { readListScope, readScope, readTier, type RiskTier } from '@poc/mcp-kit';
 import { McpError, type Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Backend } from './backends.js';
 import { BackendFailure, type BackendClient } from './backend-client.js';
@@ -11,6 +11,8 @@ export interface Route {
   tool: string;
   backend: Backend;
   tier: RiskTier;
+  /** The scope a caller's token needs to call the tool. */
+  scope: string;
 }
 
 export interface CatalogDeps {
@@ -34,8 +36,9 @@ export class Catalog {
 
   constructor(private readonly deps: CatalogDeps) {}
 
-  get tools(): Tool[] {
-    return this.merged.tools;
+  /** The tools this caller's scopes let it see. The catalog itself stays unfiltered and shared. */
+  toolsFor(scopes: ReadonlySet<string>): Tool[] {
+    return this.merged.tools.filter((tool) => isListable(tool, scopes));
   }
 
   /** Tool names two backends both serve: neither is served, and the gateway reports unhealthy. */
@@ -58,6 +61,7 @@ export class Catalog {
 
   private async refreshBackend(backend: Backend, caller: CallerContext): Promise<void> {
     const breaker = this.deps.breakers.get(backend.name);
+    if (!this.mayListSomething(backend, caller)) return; // Nothing here for this caller: no exchange, no breaker.
     if (!breaker?.tryAcquire()) return; // Open: the last good list stands.
     try {
       const token = await this.deps.exchanger.tokenFor(caller.principal, caller.token, backend.audience);
@@ -68,15 +72,26 @@ export class Catalog {
       breaker.recordSuccess();
       this.lastGood.set(
         backend.name,
-        tools.filter((tool) => readTier(tool._meta) !== undefined),
+        tools.filter((tool) => readTier(tool._meta) !== undefined && readScope(tool._meta) !== undefined),
       );
     } catch (error) {
       if (error instanceof BackendFailure && error.kind === 'unavailable') breaker.recordFailure();
       else if (error instanceof BackendFailure || error instanceof McpError)
         breaker.recordSuccess(); // It answered.
-      else breaker.release(); // The call never reached the backend.
+      else breaker.release(); // Never reached the backend, e.g. an exchange the IdP refused with invalid_scope.
     }
   }
+
+  /** False when the backend's last good list has no tool this caller may list; unknown backends are tried. */
+  private mayListSomething(backend: Backend, caller: CallerContext): boolean {
+    const known = this.lastGood.get(backend.name);
+    return known === undefined || known.some((tool) => isListable(tool, caller.principal.scopes));
+  }
+}
+
+function isListable(tool: Tool, scopes: ReadonlySet<string>): boolean {
+  const listScope = readListScope(tool._meta);
+  return listScope !== undefined && scopes.has(listScope);
 }
 
 function merge(backends: readonly Backend[], lastGood: ReadonlyMap<string, Tool[]>) {
@@ -84,7 +99,10 @@ function merge(backends: readonly Backend[], lastGood: ReadonlyMap<string, Tool[
   for (const backend of backends) {
     for (const tool of lastGood.get(backend.name) ?? []) {
       const tier = readTier(tool._meta);
-      if (tier) owners.set(tool.name, [...(owners.get(tool.name) ?? []), { tool: tool.name, backend, tier }]);
+      const scope = readScope(tool._meta);
+      if (tier && scope) {
+        owners.set(tool.name, [...(owners.get(tool.name) ?? []), { tool: tool.name, backend, tier, scope }]);
+      }
     }
   }
   const conflicts = [...owners].filter(([, routes]) => routes.length > 1).map(([name]) => name);

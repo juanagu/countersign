@@ -66,6 +66,12 @@ export class ToolCallProxy {
     const route = this.deps.catalog.route(name);
     if (!route) return { result: errorResult({ error: 'unknown_tool' }), outcome: 'unknown_tool' };
 
+    // Before the limiter: a refusal that is never forwarded is not charged (F44).
+    if (!caller.principal.scopes.has(route.scope)) {
+      const body = { error: 'insufficient_scope', scope: route.scope };
+      return { result: errorResult(body), outcome: 'insufficient_scope', route };
+    }
+
     // The customer is the token's `sub`: tool arguments never name who is asking.
     const decision = this.deps.limiter.check(caller.principal.sub, route.tier);
     if (!decision.allowed) {

@@ -1,7 +1,8 @@
 import type { RiskTier } from '@poc/mcp-kit';
 import type { Logger } from 'pino';
 
-export type CallOutcome = 'ok' | 'tool_error' | 'rate_limited' | 'unavailable' | 'upstream_error' | 'unknown_tool';
+export type CallOutcome =
+  'ok' | 'tool_error' | 'rate_limited' | 'unavailable' | 'upstream_error' | 'unknown_tool' | 'insufficient_scope';
 
 /**
  * One line per `tools/call` (rule 7). The fields are the whole record: there is deliberately nowhere to put

@@ -96,6 +96,17 @@ describe('createTokenExchanger', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it.each([
+    ['{"error":"invalid_scope"}', 'invalid_scope'],
+    ['{"error":"made_up_by_the_idp"}', undefined],
+    ['not json', undefined],
+  ])('keeps only an RFC 6749 error code from %s', async (body, code) => {
+    const { exchanger, fail } = setup();
+    fail(new Response(body, { status: 400 }));
+    const error = await exchanger.tokenFor(principal('juan', 'j1'), 'in-1', 'mcp-accounts').catch((e: unknown) => e);
+    expect((error as TokenExchangeError).code).toBe(code);
+  });
+
   it('refuses an unexpected IdP body', async () => {
     const { exchanger, fail } = setup();
     fail(Response.json({ nope: true }));
