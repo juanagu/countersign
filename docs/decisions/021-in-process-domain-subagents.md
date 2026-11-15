@@ -1,7 +1,8 @@
 # 021 — Domain subagents in the bot's process: delegation as a tool, the orchestrator keeps T3
 
-**Status:** proposed (2026-11-15), not built. The `AGENTS.md` wording in section 8 waits for the user's approval.
-Once accepted, it overrides the "multi-agent orchestration" line in `docs/PLAN.md`'s out-of-scope list and the
+**Status:** accepted (2026-11-15), not built (backlog F63). The user approved section 8's `AGENTS.md` wording as written
+(applied), payments as the first slice, and slower transfer turns. It overrides the "multi-agent orchestration"
+line in `docs/PLAN.md`'s out-of-scope list and the
 "One orchestrator agent, no multi-agent" sentence in `AGENTS.md`, the way ADR 017 overrode the gateway line. It
 reuses ADR 013 (approval and step-up) and ADR 020 (scopes per loaded skill) without changing either.
 
@@ -256,7 +257,7 @@ evals consume this hook.
 
 **Recommendation: payments.**
 
-### 8. Proposed `AGENTS.md` wording (for the user's approval, not applied)
+### 8. `AGENTS.md` wording (approved and applied)
 Under "Architecture", replace "One orchestrator agent, no multi-agent and no A2A in this POC. Domain behaviour
 comes from **skills** (markdown instruction files plus a tool allow-list) loaded on demand." with:
 
