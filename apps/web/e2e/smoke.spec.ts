@@ -3,6 +3,11 @@ import { ask, expectNoHorizontalScroll, signIn, snapshot } from './support';
 
 test.describe('@smoke', () => {
   test('signs in and streams an answer', async ({ page }, info) => {
+    // nginx's Content-Security-Policy must not block anything the app itself loads (fonts, styles, SSE).
+    const blocked: string[] = [];
+    page.on('console', (message) => {
+      if (message.text().includes('Content Security Policy')) blocked.push(message.text());
+    });
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Asistente bancario' })).toBeVisible();
     await snapshot(page, info, 'login');
@@ -17,6 +22,7 @@ test.describe('@smoke', () => {
     await expect(answer).not.toBeEmpty();
     await snapshot(page, info, 'chat');
     await expectNoHorizontalScroll(page);
+    expect(blocked).toEqual([]);
   });
 
   test('a signed-out visitor sees only the login', async ({ page }) => {
