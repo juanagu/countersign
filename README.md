@@ -66,6 +66,8 @@ Each pattern stands on its own; the ADR explains the alternatives and why this o
 | Risk tiers on every tool, enforced by a policy toolset   | A prompt talking the agent into a write it shouldn't make    | [`services/bot/app/policy`](services/bot/app/policy), [ADR 014](docs/decisions/014-guardrails.md)                                            |
 | Approval plus a step-up token bound to the exact draft   | The amount or payee changing after the person said yes       | [ADR 013](docs/decisions/013-transfer-approval-and-step-up.md)                                                                               |
 | Token exchange at every hop, no passthrough              | One leaked token reaching every backend                      | [ADR 008](docs/decisions/008-token-exchange-and-mcp-audiences.md), [ADR 017](docs/decisions/017-mcp-gateway.md)                              |
+| Tokens scoped to the loaded skills, enforced at the gateway | A policy bug reaching tools no loaded skill grants           | [ADR 020](docs/decisions/020-skill-scoped-gateway-tokens.md)                                                                                 |
+| Domain subagents that stop at reversible writes          | A domain agent moving money without the person's approval    | [`services/bot/app/subagents`](services/bot/app/subagents), [ADR 021](docs/decisions/021-in-process-domain-subagents.md)                    |
 | An MCP gateway: catalog, rate limits, breaker, audit     | Each backend reimplementing auth and limits, or failing open | [`services/mcp-gateway`](services/mcp-gateway), [ADR 017](docs/decisions/017-mcp-gateway.md)                                                 |
 | Server templates for transactional UI                    | A model-written receipt for a transfer that never happened   | [ADR 011](docs/decisions/011-server-templates-as-activity-messages.md)                                                                       |
 | Model-built UI validated against a catalog               | Generated forms that ask for a password or card number       | [ADR 012](docs/decisions/012-agent-side-a2ui-generation.md)                                                                                  |
@@ -90,7 +92,10 @@ flowchart LR
   bff --- redis[("Redis")]
 ```
 
-One orchestrator agent loads domain skills on demand. Redis holds the thread event log that lets a stream resume, and
+One orchestrator agent loads domain skills on demand and hands complex domains to subagents that run in the bot's
+process, each on its own model and scoped token; payments is the first, and it can prepare a transfer but never execute
+one. They share one process, so a domain that needs real isolation becomes a separate agent service
+([ADR 021](docs/decisions/021-in-process-domain-subagents.md)). Redis holds the thread event log that lets a stream resume, and
 every service exports OpenTelemetry traces to Phoenix. The full picture is in
 [`docs/architecture.md`](docs/architecture.md).
 
@@ -135,7 +140,7 @@ so the Playwright suite and `make eval`, which need the live stack and a paid mo
 | ----------------------- | ------------------------------------------------------------------------------ |
 | `apps/web`              | React + Vite chat UI on CopilotKit v2: A2UI renderer and server-template cards |
 | `apps/bff`              | Hono BFF: CopilotKit runtime proxying to the bot, Redis thread log, mock IdP   |
-| `services/bot`          | FastAPI + Pydantic AI: orchestrator, skills, guardrails, RAG, evals (`evals/`) |
+| `services/bot`          | FastAPI + Pydantic AI: orchestrator, skills, subagents, guardrails, RAG, evals |
 | `services/mcp-gateway`  | The bot's single MCP endpoint, in front of the two MCP servers                 |
 | `services/mcp-accounts` | MCP server: accounts, balances, movements, spending summary                    |
 | `services/mcp-payments` | MCP server: beneficiaries, prepare and execute transfer                        |
@@ -149,10 +154,12 @@ so the Playwright suite and `make eval`, which need the live stack and a paid mo
 
 Eight rules shape the design, and each one needs a negative test. The full text is in [`AGENTS.md`](AGENTS.md).
 
-1. The model never holds credentials: the bot exchanges the user's token for one bound to the MCP gateway, the gateway
-   exchanges again per MCP server (bound `aud`, only the scopes it needs), and no hop forwards the token it received.
+1. The model never holds credentials: the bot exchanges the user's token for one bound to the MCP gateway, once per
+   agent and scoped to the skills that agent loaded; the gateway serves only the tools those scopes allow and exchanges
+   again per MCP server (bound `aud`, only the scopes it needs), and no hop forwards the token it received.
 2. Every tool declares a risk tier (T0 public read to T3 money movement), enforced by code, not by the prompt.
-3. Money movement needs human approval plus a short-lived, single-use step-up token bound to the exact draft.
+3. Money movement needs human approval plus a short-lived, single-use step-up token bound to the exact draft; only
+   the orchestrator holds `execute_transfer`, and `transfers:execute` is requested only for the approved call.
 4. Confirm and receipt cards are server templates filled from tool results, never from model text.
 5. A2UI payloads are validated against the catalog before they leave the bot; the catalog has no credential inputs.
 6. Tool output is untrusted data and cannot trigger a write tool without a fresh policy check.
