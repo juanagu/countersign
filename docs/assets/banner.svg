@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="t d">
+  <title id="t">Countersign</title>
+  <desc id="d">AI agents that take real actions, safely. The model proposes; a person countersigns.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1312"/>
+      <stop offset="1" stop-color="#0e3f47"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#7cc8d2" stroke-opacity="0.06"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="360" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="360" rx="20" fill="url(#grid)"/>
+  <g transform="translate(72 78)">
+    <rect width="72" height="72" rx="18" fill="#7cc8d2"/>
+    <path d="M20 37l10 10 22-24" fill="none" stroke="#0d1312" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M16 58c8-4 14 3 22-1s14-3 18 0" fill="none" stroke="#0d1312" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+  <g font-family="-apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+    <text x="168" y="133" fill="#e4ecea" font-size="56" font-weight="700" letter-spacing="-1">Countersign</text>
+    <text x="72" y="210" fill="#e4ecea" font-size="30" font-weight="600">AI agents that take real actions, safely.</text>
+    <text x="72" y="250" fill="#9aa9a6" font-size="22">The model proposes. Code checks the policy. A person countersigns.</text>
+    <g font-size="17" font-weight="600">
+      <rect x="72" y="284" width="190" height="40" rx="20" fill="#172120" stroke="#26312f"/>
+      <text x="167" y="309" fill="#7cc8d2" text-anchor="middle">Model proposes</text>
+      <text x="282" y="309" fill="#5e6e6a" text-anchor="middle">→</text>
+      <rect x="302" y="284" width="200" height="40" rx="20" fill="#172120" stroke="#26312f"/>
+      <text x="402" y="309" fill="#7cc8d2" text-anchor="middle">Policy by risk tier</text>
+      <text x="522" y="309" fill="#5e6e6a" text-anchor="middle">→</text>
+      <rect x="542" y="284" width="230" height="40" rx="20" fill="#172120" stroke="#26312f"/>
+      <text x="657" y="309" fill="#7cc8d2" text-anchor="middle">Person approves + PIN</text>
+      <text x="792" y="309" fill="#5e6e6a" text-anchor="middle">→</text>
+      <rect x="812" y="284" width="296" height="40" rx="20" fill="#7cc8d2"/>
+      <text x="960" y="309" fill="#0d1312" text-anchor="middle">Server executes the exact draft</text>
+    </g>
+  </g>
+</svg>
