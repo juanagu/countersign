@@ -19,7 +19,7 @@ async function setup() {
       headers: { 'content-type': 'application/json', cookie, ...headers },
       body: JSON.stringify(body),
     });
-  return { app, stepUp };
+  return { app, cookie, stepUp };
 }
 
 describe('POST /auth/step-up', () => {
@@ -51,6 +51,35 @@ describe('POST /auth/step-up', () => {
   it('locks step-up after three wrong PINs, even for the right one', async () => {
     const { stepUp } = await setup();
     for (let i = 0; i < 3; i++) await stepUp({ ...DRAFT, pin: '000000' });
+    expect((await stepUp({ ...DRAFT, pin: '123456' })).status).toBe(429);
+  });
+
+  it('holds concurrent wrong PINs to three guesses, and keeps the lock for the right one after', async () => {
+    const { app, cookie, stepUp } = await setup();
+    // Each body arrives only once every request has passed the session check, so all six are in flight together.
+    let release!: () => void;
+    const bodiesSent = new Promise<void>((resolve) => (release = resolve));
+    const heldBody = () =>
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await bodiesSent;
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ ...DRAFT, pin: '000000' })));
+          controller.close();
+        },
+      });
+    const inFlight = Array.from({ length: 6 }, () =>
+      app.request('/auth/step-up', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: heldBody(),
+        duplex: 'half',
+      } as RequestInit),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    release();
+    const statuses = (await Promise.all(inFlight)).map((res) => res.status);
+    expect(statuses.filter((status) => status === 401).length).toBeLessThanOrEqual(3);
+    expect(statuses.every((status) => status === 401 || status === 429)).toBe(true);
     expect((await stepUp({ ...DRAFT, pin: '123456' })).status).toBe(429);
   });
 
@@ -132,6 +161,33 @@ describe('PinAttempts', () => {
     for (let i = 0; i < 3; i++) attempts.fail('juan');
     clock = at(5);
     expect(attempts.locked('juan')).toBe(false);
+    attempts.fail('juan');
+    expect(attempts.locked('juan')).toBe(false);
+  });
+
+  it('keeps the lock when a failure lands while it is active', () => {
+    const attempts = new PinAttempts(() => 0);
+    for (let i = 0; i < 4; i++) attempts.fail('juan');
+    expect(attempts.locked('juan')).toBe(true);
+  });
+
+  it('restarts the five minutes from a failure that lands during the lock', () => {
+    let clock = 0;
+    const attempts = new PinAttempts(() => clock);
+    for (let i = 0; i < 3; i++) attempts.fail('juan');
+    clock = at(4);
+    attempts.fail('juan');
+    clock = at(8, 59);
+    expect(attempts.locked('juan')).toBe(true);
+    clock = at(9);
+    expect(attempts.locked('juan')).toBe(false);
+  });
+
+  it('starts a fresh count after a served lock even if nobody checked it', () => {
+    let clock = 0;
+    const attempts = new PinAttempts(() => clock);
+    for (let i = 0; i < 3; i++) attempts.fail('juan');
+    clock = at(6);
     attempts.fail('juan');
     expect(attempts.locked('juan')).toBe(false);
   });

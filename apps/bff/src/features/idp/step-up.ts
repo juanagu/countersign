@@ -32,7 +32,7 @@ interface FailureStreak {
 
 /**
  * Counts wrong PINs per user within 15 minutes of the streak's first failure; the third in that window locks
- * step-up for five minutes from that failure.
+ * step-up for five minutes from that failure. A failure during the lock restarts the five minutes, never lifts it.
  */
 export class PinAttempts {
   private readonly failures = new Map<string, FailureStreak>();
@@ -55,10 +55,11 @@ export class PinAttempts {
     this.failures.set(sub, { count, startedAt: streak.startedAt, lockedUntil });
   }
 
-  /** The streak a new failure joins: none once its window has passed or its lock was served. */
+  /** The streak a new failure joins: an active lock always; otherwise none once its window or its lock is over. */
   private currentStreak(sub: string, now: number): FailureStreak | undefined {
     const streak = this.failures.get(sub);
-    if (!streak || streak.lockedUntil !== undefined) return undefined;
+    if (!streak) return undefined;
+    if (streak.lockedUntil !== undefined) return now < streak.lockedUntil ? streak : undefined;
     return now - streak.startedAt < FAILURE_WINDOW_MS ? streak : undefined;
   }
 
@@ -84,6 +85,8 @@ export function stepUpRoutes({ issuer, pin, now = Date.now }: StepUpOptions): Ho
     const body = stepUpBody.safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: 'invalid_request' }, 400);
     const { pin: given, ...draft } = body.data;
+    // Re-checked after the await above: requests that passed the first check together may have locked it since.
+    if (attempts.locked(sub)) return c.json({ error: 'locked' }, 429);
     if (!samePin(given, pin)) {
       attempts.fail(sub);
       return c.json({ error: 'invalid_pin' }, 401);
