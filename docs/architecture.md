@@ -14,12 +14,13 @@ end:
 - **Generative UI**: model-built A2UI surfaces validated against a catalog, plus server-built templates for anything
   transactional.
 - **RAG with citations** over a Spanish knowledge base.
-- **One orchestrator agent** that loads domain skills on demand and calls tools over MCP, through a gateway.
+- **One orchestrator agent** that loads domain skills on demand, hands complex domains to in-process subagents
+  (payments, [ADR 021](decisions/021-in-process-domain-subagents.md)), and calls tools over MCP, through a gateway.
 - **Guardrails** at the input, the tool call and the output.
 - **Money movement** that needs human approval and a step-up (PIN) bound to the exact transfer.
 - **Evals** that gate quality, and traces without PII.
 
-Out of scope (see [`PLAN.md`](PLAN.md)): multi-agent and A2A, a real IdP, production deployment, voice.
+Out of scope (see [`PLAN.md`](PLAN.md)): A2A and separate agent services, a real IdP, production deployment, voice.
 
 ## 2. Components
 
@@ -60,7 +61,7 @@ The two MCP servers also export OTel to Phoenix (omitted above to keep the diagr
 | --- | --- | --- | --- |
 | web | `apps/web` | Chat UI. Calls only its own origin (`/api/*`, proxied to the BFF, [ADR 006](decisions/006-session-cookie-and-same-origin-proxy.md)). | 5173 |
 | bff | `apps/bff` | CopilotKit runtime that proxies runs to the bot, Redis-backed thread log, and the mock IdP (login, session cookie, token exchange, step-up, JWKS). | 3000 |
-| bot | `services/bot` | The orchestrator agent, skills, guardrails, generative UI, RAG, conversation store. | 8000 |
+| bot | `services/bot` | The orchestrator agent, skills, the in-process payments subagent, guardrails, generative UI, RAG, conversation store. | 8000 |
 | mcp-gateway | `services/mcp-gateway` | The bot's one MCP endpoint: catalog, per-customer rate limits, breaker per backend, audit line per call. | 8100 |
 | mcp-accounts | `services/mcp-accounts` | Account tools (T1). | 8101 |
 | mcp-payments | `services/mcp-payments` | Beneficiary, prepare and execute transfer tools. | 8102 |
@@ -109,7 +110,11 @@ What each side refuses (each has a negative test, section 12):
 - The IdP refuses client `bot` any audience except `mcp-gateway`, refuses a session token (`aud=bff`) as a subject,
   and refuses to chain a second hop from a backend token.
 - **Scopes ([ADR 020](decisions/020-skill-scoped-gateway-tokens.md)).** The bot always sends `scope`: the union of the
-  `scopes` in the frontmatter of the skills the run has loaded. A request with no `scope` or a blank one gets
+  `scopes` in the frontmatter of the skills the run has loaded. Each agent exchanges on its own
+  ([ADR 021](decisions/021-in-process-domain-subagents.md)): the payments subagent for exactly its own scopes
+  (`accounts:read beneficiaries:read transfers:prepare`), the orchestrator for its loaded root skills', never their
+  union. Both present the same `aud=bot` token as the same `bot` client, so the IdP and the gateway can't tell them
+  apart: separate tokens guard against a bug in one agent's policy, not against a compromised process. A request with no `scope` or a blank one gets
   `invalid_request`; one outside the audience's ceiling gets `invalid_scope` (refused, never trimmed to what is
   allowed); duplicates are issued once. `transfers:execute` may only be requested alone (`soloScopes` in
   `client-policies.ts`), so the one token that can execute a transfer can do nothing else. The gateway hop sends no
@@ -162,6 +167,10 @@ sequenceDiagram
   end
   Note over T: only RUN_STARTED leaves until the verdict
   M->>T: load_skill (T0)
+  opt a subagent domain (ADR 021)
+    M->>T: ask_payments(request), withheld from the client
+    T->>T: payments subagent run: own policy and token, same RunGuard
+  end
   M->>T: tool call
   T->>T: tool policy: skill grants it, tier, argument bounds, caps
   T->>G: MCP call, tier above T0 waits for the verdict
@@ -178,21 +187,30 @@ Notes:
 
 - **Orchestrator and skills.** One agent (`services/bot/app/chat/agent.py`). The system prompt is server-owned;
   client-supplied state is ignored ([ADR 007](decisions/007-client-supplied-agent-input.md)). A skill is a markdown
-  file with a tool allow-list and a `max_tier` (`services/bot/skills/`: `accounts` T1, `knowledge` T0, `payments` T3);
+  file with a tool allow-list and a `max_tier` (`services/bot/skills/`: `accounts` T1, `knowledge` T0, `transfers` T3);
   `load_skill` makes its tools visible for the rest of the run ([skills readme](../services/bot/app/skills/feature_readme.md)).
-  `render_ui` and `load_skill` are bot-local; everything else is a domain tool.
+  `render_ui`, `load_skill` and the delegate tools are bot-local; everything else is a domain tool.
+- **Subagents ([ADR 021](decisions/021-in-process-domain-subagents.md)).** A subagent is a skill file in
+  `services/bot/subagents/` (`payments` T2) that runs as its own Pydantic AI agent in the bot's process, on its own
+  model chain (`PAYMENTS_AGENT_MODEL`, empty = the orchestrator's models), called through one tool, `ask_payments`.
+  It gets the orchestrator's identity, token and `RunGuard`, only its own skill, its own `PolicyToolset` and gateway
+  token, and the conversation's shared `FrequencyCaps`. Its prompt is built in code from the request and the
+  customer's last three redacted messages; it has no history. Subagents stop at T2: the orchestrator owns every T3
+  tool ([subagents readme](../services/bot/app/subagents/feature_readme.md)).
 - **Risk tiers** (T0 public read, T1 personal read, T2 reversible write, T3 money movement) are declared in the tool's
   MCP `_meta` (`bank/riskTier`) and enforced by `PolicyToolset`, not by the prompt. A tool with no tier is denied
   ([policy readme](../services/bot/app/policy/feature_readme.md)).
 - **Banking tools connect lazily, with the scopes of the loaded skills.** A run that loads no banking skill makes no
   token exchange and opens no MCP session. Loading `accounts` exchanges for `accounts:read` and opens a session on that
-  token; loading `payments` as well closes it and exchanges for the union, so a run holds one session at a time. A
+  token; loading `transfers` as well closes it and exchanges for the union, so a run holds one session at a time. A
+  subagent's toolset is its own, built with only its own scopes, and its session closes when its run ends. A
   tool with no valid `bank/scope` is hidden from the model
   ([banking readme](../services/bot/app/banking/feature_readme.md)).
 - **Where state lives.** Events: Redis, owned by the BFF, a 15-minute replay window. Conversation history: Postgres
   `chat` schema, owned by the bot, scoped to the user. The two are independent, which is what makes a reload past
   the window possible (section 9).
-- **Models** come from env (`BOT_MODEL`, `GUARD_MODEL`), each with an optional failover chain (section 9).
+- **Models** come from env (`BOT_MODEL`, `GUARD_MODEL`, `PAYMENTS_AGENT_MODEL`), each with an optional failover chain
+  (section 9).
 
 ## 5. Money movement (rules 3 and 4)
 
@@ -245,6 +263,13 @@ sequenceDiagram
   as `service_unavailable` before reaching the gateway, so the step-up `jti` stays unspent and the customer asks
   again. One thing still rests on bot code: requesting `transfers:execute` only for an approved call, because the IdP
   grants it to `bot` whenever it is asked for alone. The money lock is still the step-up token.
+- **The orchestrator keeps T3 ([ADR 021](decisions/021-in-process-domain-subagents.md)).** The payments subagent
+  prepares the draft; its confirm card reaches the client because the delegate tool copies `bank-template` events
+  from template tools' returns (and `a2ui-surface` events from `render_ui`), never from either model's text. The
+  orchestrator loads `transfers` and calls `execute_transfer`, whose `draft_id` must be one a `prepare_transfer` result
+  recorded in this conversation (the run's messages or the delegate return's evidence record), or the policy denies
+  it before any interrupt. A subagent's output type has no `DeferredToolRequests`, so a call that defers inside one
+  fails its run instead of pausing.
 - **Failed resume.** If the resume run fails, the card says so and the customer asks again; the bot raises a new
   interrupt for the same draft and `mcp-payments` never debits a draft twice.
 - Three wrong PINs lock step-up for five minutes (`apps/bff/src/features/idp/step-up.ts`).
@@ -269,8 +294,9 @@ Two kinds of UI leave the bot, with different trust:
   under one root `Card`). An invalid tree is dropped, logged as `a2ui.invalid_payload`, and the model gets a text
   fallback. The catalog has no input components: no login, PIN, password or card-number field can be rendered
   ([ADR 012](decisions/012-agent-side-a2ui-generation.md)).
-- **What the client never sees.** The raw `render_ui` call and every reasoning event are withheld by the output guard;
-  the client gets only the validated surface.
+- **What the client never sees.** The raw `render_ui` call, every delegate call (`ask_<name>`, whose request and reply
+  are model text) and every reasoning event are withheld by the output guard; the client gets only the validated
+  surface. A subagent's own tool calls never reach the stream at all.
 - **Ordering.** The output guard holds model-built surfaces until the end of the next text message, so the customer
   reads the answer first and the card under it.
 - **Rendering.** The web app registers the catalog with CopilotKit's A2UI renderer and a separate renderer for
@@ -346,6 +372,13 @@ All in `services/bot/app/guardrails/` and `services/bot/app/policy/` ([ADR 014](
   A failing sentence becomes a fallback; surfaces get PII masked and are dropped when a number is ungrounded. A
   `RUN_ERROR` reaches the client as a fixed Spanish message.
 
+**Across a subagent (ADR 021).** The subagent shares the orchestrator's `RunGuard`: the input verdict gates its tools,
+`third_party_text_seen` sends its writes to the write-intent judge with the customer's messages (never the
+orchestrator's request), and its tool results ground the orchestrator's text. Its answer reaches the orchestrator as
+`{"untrusted_data": {"agent", "status", "reply", "draft_id"}}`, where `status` and `draft_id` are set by code; the
+reply never grounds a figure, live or from history (the delegate return's evidence record carries the subagent's tool
+results instead). A blocked message starts no subagent.
+
 ## 9. Resilience
 
 **Resumable streams** ([ADR 015](decisions/015-resumable-streams.md)).
@@ -391,7 +424,9 @@ memory, so they are per replica.
 
 - **Traces.** Every service exports OpenTelemetry to Phoenix (`OTEL_EXPORTER_OTLP_ENDPOINT`). `traceparent` is
   propagated by HTTP auto-instrumentation (undici in Node, httpx in Python) from the BFF through bot, gateway and
-  backends, so one customer turn is one trace (the browser is not instrumented). Agent spans keep structure (model, tool names, tokens, timings) but no
+  backends, so one customer turn is one trace (the browser is not instrumented). A subagent's agent-run span is a
+  child of the orchestrator's `ask_<name>` tool span, and each delegation logs one `subagent.run` line (agent, status,
+  duration, requests, tool names in order, trace id; never the request, the reply or arguments). Agent spans keep structure (model, tool names, tokens, timings) but no
   prompts, completions or arguments (`include_content=False`).
 - **No PII in logs or traces (rule 7).** A logging filter redacts messages, `extra` fields and exception text; a
   `RedactingSpanExporter` wraps the OTLP exporter in the bot ([ADR 014](decisions/014-guardrails.md)). The gateway
@@ -408,7 +443,9 @@ memory, so they are per replica.
 `make eval` (`services/bot/evals/`, needs `make up`, `make ingest` and an API key) re-seeds the bank and drives the
 live stack through the BFF as a browser session: chat turns, the full transfer flow with step-up and resume, and a
 dropped-connection resume. Judging reads what the client received, and "money moved exactly once" is read from
-Postgres. It gates on `evals/thresholds.yaml`:
+Postgres. A subagent's calls never reach the client, so payments cases (`reads_trace`) read the handoff and the
+subagent's tool spans from Phoenix by the run's `bot.thread_id`, and their arguments from the confirm card
+(`evals/delegation.py`, ADR 021 §6). It gates on `evals/thresholds.yaml`:
 
 | Gate | Cases | Pass rate |
 | --- | --- | --- |
@@ -430,14 +467,14 @@ Rule text: [`AGENTS.md`](../AGENTS.md).
 
 | # | Rule | Enforced in | Negative tests |
 | --- | --- | --- | --- |
-| 1 | No credentials in the model; exchange, no passthrough | `apps/bff/src/features/idp/client-policies.ts` (`scopeRequired`, `soloScopes`), `token-exchange.ts`, `packages/mcp-kit/src/jwt-verifier.ts`, `tool-meta.ts`, `services/mcp-gateway/src/features/proxy/catalog.ts`, `tool-call-proxy.ts`, `services/bot/app/banking/token_exchange.py`, `mcp_toolsets.py` | `apps/bff/test/features/idp/token-exchange.test.ts`, `gateway-exchange.test.ts`, `packages/mcp-kit/test/jwt-verifier.test.ts`, `services/mcp-gateway/test/features/proxy/token-chain.test.ts`, `scopes.test.ts`, `skill-scopes.test.ts`, `services/bot/tests/banking/test_token_exchange.py`, `test_mcp_end_to_end.py` |
-| 2 | Risk tiers enforced by policy | `services/bot/app/policy/tool_policy.py`, `policy_toolset.py`, `packages/mcp-kit/src/risk-tier.ts` | `services/bot/tests/policy/test_tool_policy.py`, `test_guarded_policy.py` |
-| 3 | T3 needs approval and step-up | `services/bot/app/policy/policy_toolset.py`, `services/bot/app/banking/mcp_toolsets.py` (approved exchange), `apps/bff/src/features/idp/step-up.ts`, `client-policies.ts` (`soloScopes`), `services/mcp-payments/src/features/transfers/execute-transfer.ts`, `step-up-verifier.ts` | `services/bot/tests/policy/test_approval_flow.py`, `services/bot/tests/banking/test_mcp_end_to_end.py`, `apps/bff/test/features/idp/step-up.test.ts`, `token-exchange.test.ts`, `services/mcp-gateway/test/features/proxy/scopes.test.ts`, `services/mcp-payments/test/features/transfers/execute-transfer.test.ts` |
-| 4 | Transactional UI is never model-generated | `services/bot/app/genui/templates.py` | `services/bot/tests/genui/test_templates.py` |
-| 5 | A2UI validated before it leaves the bot | `services/bot/app/genui/render_ui.py`, `a2ui.py`, `guardrails/output_guard.py`, `packages/contracts/schemas/a2ui-catalog.json` | `services/bot/tests/genui/test_render_ui.py`, `services/bot/tests/guardrails/test_output_guard.py` |
-| 6 | Tool output is untrusted data | `services/bot/app/policy/policy_toolset.py`, `guardrails/write_intent.py` | `services/bot/tests/policy/test_guarded_policy.py` |
-| 7 | No PII in logs or traces | `services/bot/app/guardrails/log_redaction.py`, `span_redaction.py`, `pii.py`; `make pii-scan` | `services/bot/tests/guardrails/test_redaction.py`, `test_pii.py` |
-| 8 | Identity from the token only | `services/bot/app/auth/`, `chat/deps.py`; `Principal.sub` in `packages/mcp-kit` | `services/bot/tests/chat/test_agent_endpoint.py`, `services/mcp-accounts/test/features/accounts/account-tools.test.ts` |
+| 1 | No credentials in the model; exchange, no passthrough | `services/bot/app/subagents/delegate.py`, `app/main.py` (a banking toolset per agent), `apps/bff/src/features/idp/client-policies.ts` (`scopeRequired`, `soloScopes`), `token-exchange.ts`, `packages/mcp-kit/src/jwt-verifier.ts`, `tool-meta.ts`, `services/mcp-gateway/src/features/proxy/catalog.ts`, `tool-call-proxy.ts`, `services/bot/app/banking/token_exchange.py`, `mcp_toolsets.py` | `services/bot/tests/subagents/test_delegate.py`, `apps/bff/test/features/idp/token-exchange.test.ts`, `gateway-exchange.test.ts`, `packages/mcp-kit/test/jwt-verifier.test.ts`, `services/mcp-gateway/test/features/proxy/token-chain.test.ts`, `scopes.test.ts`, `skill-scopes.test.ts`, `services/bot/tests/banking/test_token_exchange.py`, `test_mcp_end_to_end.py` |
+| 2 | Risk tiers enforced by policy | `services/bot/app/subagents/registry.py` (T2 ceiling), `services/bot/app/policy/tool_policy.py`, `policy_toolset.py`, `packages/mcp-kit/src/risk-tier.ts` | `services/bot/tests/subagents/test_registry.py`, `test_delegate.py`, `services/bot/tests/policy/test_tool_policy.py`, `test_guarded_policy.py` |
+| 3 | T3 needs approval and step-up | `services/bot/app/policy/tool_policy.py` (`draft_id` check), `subagents/build.py` (no deferral), `services/bot/app/policy/policy_toolset.py`, `services/bot/app/banking/mcp_toolsets.py` (approved exchange), `apps/bff/src/features/idp/step-up.ts`, `client-policies.ts` (`soloScopes`), `services/mcp-payments/src/features/transfers/execute-transfer.ts`, `step-up-verifier.ts` | `services/bot/tests/subagents/test_delegate.py`, `services/bot/tests/policy/test_approval_flow.py`, `services/bot/tests/banking/test_mcp_end_to_end.py`, `apps/bff/test/features/idp/step-up.test.ts`, `token-exchange.test.ts`, `services/mcp-gateway/test/features/proxy/scopes.test.ts`, `services/mcp-payments/test/features/transfers/execute-transfer.test.ts` |
+| 4 | Transactional UI is never model-generated | `services/bot/app/subagents/delegate.py` (forwarding), `services/bot/app/genui/templates.py` | `services/bot/tests/subagents/test_delegate_stream.py`, `services/bot/tests/genui/test_templates.py` |
+| 5 | A2UI validated before it leaves the bot | `services/bot/app/genui/render_ui.py`, `a2ui.py`, `guardrails/output_guard.py`, `packages/contracts/schemas/a2ui-catalog.json` | `services/bot/tests/subagents/test_delegate_stream.py`, `services/bot/tests/genui/test_render_ui.py`, `services/bot/tests/guardrails/test_output_guard.py` |
+| 6 | Tool output is untrusted data | `services/bot/app/subagents/delegate.py`, `guardrails/messages.py` (evidence record), `services/bot/app/policy/policy_toolset.py`, `guardrails/write_intent.py` | `services/bot/tests/subagents/test_delegate.py`, `test_delegate_stream.py`, `services/bot/tests/policy/test_guarded_policy.py` |
+| 7 | No PII in logs or traces | `services/bot/app/guardrails/log_redaction.py`, `span_redaction.py`, `pii.py`; `make pii-scan` | `services/bot/tests/subagents/test_delegate_stream.py`, `services/bot/tests/guardrails/test_redaction.py`, `test_pii.py` |
+| 8 | Identity from the token only | `services/bot/app/auth/`, `chat/deps.py`; `Principal.sub` in `packages/mcp-kit` | `services/bot/tests/subagents/test_delegate.py`, `services/bot/tests/chat/test_agent_endpoint.py`, `services/mcp-accounts/test/features/accounts/account-tools.test.ts` |
 
 ## 13. Data model
 
@@ -468,6 +505,10 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 - **Gateway direction.** [ADR 017](decisions/017-mcp-gateway.md) weighed agentgateway; the small Hono service stands
   in for it. Replacing it, with shared rate limits across replicas, is the production step.
 - **Evals** share the demo database (F29) and do not count judge tokens (F30).
+- **In-process subagents (ADR 021).** They share one process and one IdP client, so per-agent tokens guard against
+  mistakes, not a compromised process; a domain that needs isolation becomes a separate agent service under its own
+  ADR. A subagent has no T3 step: one that needs it needs the bridged interrupt or a separate service. A thread paused
+  before the deploy that replaced the root `payments` skill takes ADR 013's failed-resume path.
 
 ## 15. ADR index
 

@@ -4,7 +4,9 @@ The single gate in front of every domain tool (security rules 2 and 6).
 
 ## Exposed interface
 
-- `ToolPolicy.visible(tool, tier, loaded)` and `.check_call(tool, tier, args, loaded) -> Decision`.
+- `ToolPolicy.visible(tool, tier, loaded)` and `.check_call(tool, tier, args, loaded, prepared_drafts) -> Decision`.
+- `drafts_prepared_in(tool_returns)`, `prepared_draft_id(content)`, `DRAFT_BOUND_TOOLS` (`execute_transfer`): the
+  drafts a conversation's `prepare_transfer` results created.
 - `PolicyToolset(wrapped, policy, caps)`: hides tools no loaded skill grants, re-checks each call, wraps results
   as `{"untrusted_data": ..., "note": ...}`, and answers a denial with `{"error": "policy_denied"}`.
 - `FrequencyCaps`: per-conversation (user + AG-UI `threadId`) sliding-window caps, 5 T2 and 3 T3 calls per
@@ -25,6 +27,12 @@ The bounds fail closed: a period without `to` counts up to today on the bank's c
 denied, and `spending_summary` needs a start date.
 
 ## Approval (T3)
+
+`execute_transfer`'s `draft_id` must be a draft a `prepare_transfer` result recorded in this conversation: in the run's
+messages (stored history included), or in a delegate tool's evidence record when the payments subagent prepared it
+(ADR 021). `PolicyToolset` reads them from `ctx.messages`; otherwise the call is denied before any interrupt, on the
+first call and on the resume alike. Each agent has its own `PolicyToolset` over its own skills; a subagent's stops at
+T2, and every agent shares the process's one `FrequencyCaps`.
 
 T3 calls are `needs_approval`: without approval `PolicyToolset` raises `ApprovalRequired` (metadata
 `draft_id`), which ends the run as an AG-UI interrupt. `step_up_token` is hidden from the model's schema and

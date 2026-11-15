@@ -18,7 +18,9 @@ to the loaded skills.
 
 ## Data flow
 
-The scopes a run wants are the union of its loaded skills' `scopes`. A run that wants none (no skill, or only
+Each agent gets its own `banking_toolset` (`main.build_agent_tree`, ADR 021): the orchestrator's with the root
+skills' scopes, each subagent's with only its own, so their tokens, sessions and `jti`s are separate and never their
+union. The scopes a run wants are the union of its loaded skills' `scopes`. A run that wants none (no skill, or only
 `knowledge`) makes no token exchange and opens no MCP session. Otherwise the toolset exchanges the user's `aud=bot`
 token for `aud=mcp-gateway` with exactly that set and opens an `MCPToolset` session with the result as static
 `auth`. When a skill loaded later wants more (accounts, then payments), it exchanges for the

@@ -19,9 +19,13 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 - `OutputGuard(evidence)`: sentence buffering, `image_check` (`images.strip_images`), `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
   grounding, and a safe `RUN_ERROR` message.
 - `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`,
-  `tools_returned_in()`, `tool_results_in()`, `customer_spoke_since_last_response()`.
-- `history_guard.py`, the output guard over stored history: `NON_EVIDENCE_TOOLS` (`load_skill`, `render_ui`:
-  their results ground no figure), and `StoredAnswers(clock)`, which walks a stored history (`read(message)`) and
+  `tool_returns_in()` (each tool result, a delegate's `evidence_record()` entries included), `tools_returned_in()`,
+  `tool_results_in()`, `customer_spoke_since_last_response()`.
+- `output_guard.is_server_only(tool)`: `render_ui` and every delegate tool (`ask_<name>`); their `TOOL_CALL_*` events are
+  withheld.
+- `history_guard.py`, the output guard over stored history: `grounds_no_figure(tool)` (`load_skill`, `render_ui` and
+  every `ask_<name>`: their results ground no figure; a subagent's tool results ground through the delegate return's
+  evidence record), and `StoredAnswers(clock)`, which walks a stored history (`read(message)`) and
   returns each answer as the guard's deterministic checks released it (`released(text, answer)`): PII masking
   and grounding against the tool results before it, the customer's latest message and the bank's day in
   `clock`'s zone. For the reload transcript.

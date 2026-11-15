@@ -1,6 +1,7 @@
 # 021 — Domain subagents in the bot's process: delegation as a tool, the orchestrator keeps T3
 
-**Status:** accepted (2026-11-15), not built (backlog F63). The user approved section 8's `AGENTS.md` wording as written
+**Status:** accepted (2026-11-15), and built (backlog F63): `d06c481` subagent specs, `b5b765c` the delegate tool,
+`959c501` payments as a subagent, then the docs. Build notes are under "As built" at the end. The user approved section 8's `AGENTS.md` wording as written
 (applied), payments as the first slice, and slower transfer turns. It overrides the "multi-agent orchestration"
 line in `docs/PLAN.md`'s out-of-scope list and the
 "One orchestrator agent, no multi-agent" sentence in `AGENTS.md`, the way ADR 017 overrode the gateway line. It
@@ -408,3 +409,16 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
   scopes, and the golden transfer case pins their behaviour.
 - **The isolation limit is accepted, not solved.** Anyone who needs the domains isolated from each other against a
   compromised bot needs separate agent services (section 1).
+
+## As built (F63)
+- **The `draft_id` check reads the run's messages.** `PolicyToolset` takes the drafts from `ctx.messages` (the stored
+  history plus this run, each delegate return's evidence record included), so the same check covers the first call
+  and the resume, and no new state goes into `RunGuard`.
+- **The evidence record** is a plain-JSON `metadata` item, `{"kind": "bot-evidence", "results": [{"tool", "content"}]}`,
+  so `tool_returns_in` reads the subagent's results (and their tool names, for `third_party_text_seen`) from history.
+- **Delegate tools are server-only by prefix** (`ask_`, `is_server_only`), since their names come from the registry.
+- **Wiring** is `main.build_agent_tree`, which the tests also use. The bot image copies `subagents/` (`Dockerfile`).
+- **Tests** that pin the T3 mechanism itself run on a fixture skills dir that keeps the old root `payments` skill
+  (`tests/fixtures/skills/`, with a drift check against the shipped files).
+- **Evals.** `tools-prepare-transfer` no longer checks `source_account_id`: arguments come from the confirm card, which
+  shows the source account's alias and number, not its id.
