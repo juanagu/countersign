@@ -58,6 +58,12 @@ def test_a_subagent_named_like_a_skill_fails_to_load(tmp_path: Path) -> None:
         SubagentRegistry.from_dir(tmp_path, skills=_SKILLS)
 
 
+@pytest.mark.parametrize("role", ["orchestrator", "guard"])
+def test_a_subagent_named_like_a_model_role_fails_to_load(role: str) -> None:
+    with pytest.raises(ValueError, match="name of a model role"):
+        SubagentRegistry([parse_subagent(_SPEC.format(name=role, tier="T2", extra=""))], skills=_SKILLS)
+
+
 def test_two_subagents_with_one_name_fail_to_load() -> None:
     spec = parse_subagent(_SPEC.format(name="payments", tier="T2", extra=""))
     with pytest.raises(ValueError, match="defined twice"):
@@ -89,8 +95,9 @@ def test_a_hand_off_to_a_skill_that_grants_the_t3_call_loads_and_without_one_the
         ("prepare_transfer", "loans", "which is not a skill"),
         ("execute_transfer", "transfers", "which it does not have"),
         ("prepare_transfer", "accounts", "grants no T3 call"),
+        ("list_beneficiaries", "transfers", "only prepare_transfer makes drafts"),
     ],
-    ids=["missing-skill", "tool-not-its-own", "skill-without-t3"],
+    ids=["missing-skill", "tool-not-its-own", "skill-without-t3", "tool-makes-no-draft"],
 )
 def test_a_hand_off_that_names_a_missing_skill_or_tool_fails_to_load(
     tmp_path: Path, tool: str, skill: str, error: str

@@ -100,7 +100,7 @@ services:
     build: { context: ../services/bot }
     environment:
       LLM_FAULT_INJECTION: ${LLM_FAULT_INJECTION:-}
-      # The payments subagent's chain (ADR 021); empty means the orchestrator's models.
+      # The payments subagent's chain; empty means the orchestrator's models.
       PAYMENTS_AGENT_MODEL: ${PAYMENTS_AGENT_MODEL:-}
       PAYMENTS_AGENT_MODEL_FALLBACKS: ${PAYMENTS_AGENT_MODEL_FALLBACKS:-}
       IDP_ISSUER: http://bff:3000

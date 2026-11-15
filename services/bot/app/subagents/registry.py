@@ -5,8 +5,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from app.core.llm.fault_injection import ROLES
 from app.policy.risk_tier import RiskTier
-from app.policy.tool_policy import DRAFT_BOUND_TOOLS
+from app.policy.tool_policy import DRAFT_BOUND_TOOLS, PREPARE_TRANSFER
 from app.skills.registry import Skill, SkillRegistry, split_frontmatter
 
 # The orchestrator owns every T3 tool: a subagent's deferred call could never pause the root run.
@@ -45,6 +46,11 @@ def _check_hand_off(spec: SubagentSpec, skills: SkillRegistry) -> None:
         return
     if hand_off.tool not in spec.tools:
         raise ValueError(f"subagent {spec.name!r} hands off from {hand_off.tool!r}, which it does not have")
+    # The open-draft rule reads drafts from this tool's results only.
+    if hand_off.tool != PREPARE_TRANSFER:
+        raise ValueError(
+            f"subagent {spec.name!r} hands off from {hand_off.tool!r}; only {PREPARE_TRANSFER} makes drafts"
+        )
     skill = skills.get(hand_off.skill)
     if skill is None:
         raise ValueError(f"subagent {spec.name!r} hands off to {hand_off.skill!r}, which is not a skill")
@@ -63,6 +69,9 @@ class SubagentRegistry:
                 raise ValueError(f"subagent {spec.name!r} declares {spec.max_tier.name}; subagents stop at T2")
             if skills.get(spec.name) is not None:
                 raise ValueError(f"subagent {spec.name!r} has the name of a skill")
+            # Its model chain runs under its name as the fault-injection role, so a role name would collide.
+            if spec.name in ROLES:
+                raise ValueError(f"subagent {spec.name!r} has the name of a model role")
             if spec.name in self._specs:
                 raise ValueError(f"subagent {spec.name!r} is defined twice")
             _check_hand_off(spec, skills)
