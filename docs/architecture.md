@@ -468,3 +468,4 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 | [017](decisions/017-mcp-gateway.md) | MCP gateway | One more hop in the exchange chain, actor chains, limits, breaker, audit. |
 | [018](decisions/018-llm-model-failover.md) | LLM failover | In-process chain per role, first-event deadline, circuit breaker. |
 | [019](decisions/019-copilotkit-advisory-overrides.md) | Dependency advisories | pnpm overrides for undici and graphql-scalars; zod 3's advisory accepted until A2UI moves to zod 4. |
+| [020](decisions/020-skill-scoped-gateway-tokens.md) | Skill-scoped gateway tokens | Proposed: the gateway token carries only the loaded skills' scopes, `transfers:execute` only for an approved call; the gateway lists and calls by token scope. |
