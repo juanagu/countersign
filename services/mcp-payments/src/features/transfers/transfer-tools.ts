@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { fail, ok, requireScope, tierMeta, type Principal } from '@poc/mcp-kit';
+import { fail, ok, requireScope, toolMeta, type Principal } from '@poc/mcp-kit';
 import { z } from 'zod';
 import { executeTransfer } from './execute-transfer.js';
 import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
@@ -78,7 +78,7 @@ export function buildPaymentsServer(
     {
       description: "Lists the customer's saved beneficiaries (people they can transfer to).",
       annotations: { readOnlyHint: true },
-      _meta: tierMeta('T1'),
+      _meta: toolMeta('T1', SCOPES.readBeneficiaries),
     },
     async () =>
       requireScope(principal.scopes, SCOPES.readBeneficiaries) ??
@@ -93,7 +93,7 @@ export function buildPaymentsServer(
         'The customer must confirm it in the app before anything moves.',
       inputSchema: { source_account_id: id, beneficiary_id: id, amount, currency },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-      _meta: tierMeta('T2'),
+      _meta: toolMeta('T2', SCOPES.prepare),
     },
     async (args) => {
       const scopeError = requireScope(principal.scopes, SCOPES.prepare);
@@ -119,7 +119,7 @@ export function buildPaymentsServer(
       description: "Executes a prepared transfer. Requires the customer's approval and a step-up token.",
       inputSchema: { draft_id: id, step_up_token: z.string().min(1).max(4096) },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
-      _meta: tierMeta('T3'),
+      _meta: toolMeta('T3', SCOPES.execute, { listScope: SCOPES.prepare }),
     },
     async ({ draft_id, step_up_token }) => {
       // Checked before the step-up token, so a caller without the scope can't spend its jti.

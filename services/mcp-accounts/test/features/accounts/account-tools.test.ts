@@ -1,4 +1,4 @@
-import { createJwtVerifier } from '@poc/mcp-kit';
+import { createJwtVerifier, readListScope, readScope } from '@poc/mcp-kit';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
@@ -34,6 +34,30 @@ describe('mcp-accounts tools', () => {
       'spending_summary',
     ]);
     for (const tool of tools) expect(tool._meta?.['bank/riskTier']).toBe('T1');
+  });
+
+  it('declares accounts:read as the scope of every tool, with no list scope', async () => {
+    const { tools } = await (await connectClient(app, await anaToken())).listTools();
+    for (const tool of tools) {
+      expect(readScope(tool._meta)).toBe('accounts:read');
+      expect(readListScope(tool._meta)).toBe('accounts:read');
+    }
+  });
+
+  it.each([
+    ['list_accounts', {}],
+    ['get_balance', { account_id: 'acc-ana-ars' }],
+    ['list_transactions', {}],
+    ['spending_summary', { from: '2026-01-01', to: '2026-01-31' }],
+  ])('%s refuses a principal holding every scope except its own', async (name, args) => {
+    const token = await keys.sign({
+      aud: AUDIENCE,
+      sub: 'ana',
+      scope: 'beneficiaries:read transfers:prepare transfers:execute',
+    });
+    const result = await (await connectClient(app, token)).callTool({ name, arguments: args });
+    expect(result.isError).toBe(true);
+    expect(parseText(result).error).toBe('insufficient_scope');
   });
 
   it("lists only the caller's accounts, with masked numbers", async () => {

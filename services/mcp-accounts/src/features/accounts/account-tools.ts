@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { fail, ok, requireScope, tierMeta, type Principal } from '@poc/mcp-kit';
+import { fail, ok, requireScope, toolMeta, type Principal } from '@poc/mcp-kit';
 import { z } from 'zod';
 import type { Account, AccountsRepository } from './accounts-repository.js';
 import { CATEGORY_GUIDANCE, TRANSACTION_CATEGORIES } from './categories.js';
@@ -41,7 +41,7 @@ export function buildAccountsServer(principal: Principal, repo: AccountsReposito
     {
       description: "Lists the customer's own accounts (id, type, currency, alias, masked number).",
       annotations: { readOnlyHint: true },
-      _meta: tierMeta('T1'),
+      _meta: toolMeta('T1', READ_SCOPE),
     },
     async () => denied() ?? ok({ accounts: (await repo.listAccounts(principal.sub)).map(publicAccount) }),
   );
@@ -52,7 +52,7 @@ export function buildAccountsServer(principal: Principal, repo: AccountsReposito
       description: "Returns the balance of one of the customer's accounts. Use list_accounts first to get its id.",
       inputSchema: { account_id: accountId },
       annotations: { readOnlyHint: true },
-      _meta: tierMeta('T1'),
+      _meta: toolMeta('T1', READ_SCOPE),
     },
     async ({ account_id }) => {
       const scopeError = denied();
@@ -77,7 +77,7 @@ export function buildAccountsServer(principal: Principal, repo: AccountsReposito
         limit: z.number().int().min(1).max(MAX_TRANSACTIONS).default(DEFAULT_TRANSACTIONS),
       },
       annotations: { readOnlyHint: true },
-      _meta: tierMeta('T1'),
+      _meta: toolMeta('T1', READ_SCOPE),
     },
     async ({ account_id, from, to, category, limit }) => {
       const scopeError = denied();
@@ -103,7 +103,7 @@ export function buildAccountsServer(principal: Principal, repo: AccountsReposito
         CATEGORY_GUIDANCE,
       inputSchema: { from: isoDate, to: isoDate, account_id: accountId.optional() },
       annotations: { readOnlyHint: true },
-      _meta: tierMeta('T1'),
+      _meta: toolMeta('T1', READ_SCOPE),
     },
     async ({ from, to, account_id }) => {
       const scopeError = denied();
