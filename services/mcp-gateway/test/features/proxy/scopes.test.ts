@@ -152,6 +152,15 @@ describe('the gateway lists and calls by token scope', () => {
     );
   });
 
+  it('serves a payments call when the catalog was first filled by an accounts-only caller', async () => {
+    const stack = await createStack();
+    await (await stack.connect(await stack.gatewayToken('juan', ACCOUNTS_ONLY))).listTools();
+    const client = await stack.connect(await stack.gatewayToken('juan', BEFORE_APPROVAL));
+    const result = await client.callTool({ name: 'prepare_transfer', arguments: ARGS });
+    expect(result.isError).toBeFalsy();
+    expect(parseText(result).draft_id).toBeDefined();
+  });
+
   it('an execute-only token lists exactly execute_transfer', async () => {
     const stack = await createStack();
     await warm(stack);

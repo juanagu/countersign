@@ -110,8 +110,12 @@ class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
                 raise
             logger.warning("mcp session growth failed", extra={"server": self.audience, **_error_fields(error)})
             return self._session
-        await self._close_session(None, None, None)  # Only after the new one is up.
-        self._session, self._session_scopes = session, wanted
+        old, self._session, self._session_scopes = self._session, session, wanted
+        if old is not None:  # Only after the new one is up, and a failed close can't orphan it.
+            try:
+                await old.__aexit__(None, None, None)
+            except Exception as error:
+                logger.warning("mcp session close failed", extra={"server": self.audience, **_error_fields(error)})
         return session
 
     async def _call_approved(

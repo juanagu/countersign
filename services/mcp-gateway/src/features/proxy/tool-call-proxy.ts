@@ -64,8 +64,12 @@ export class ToolCallProxy {
     name: string,
     args: Record<string, unknown> | undefined,
   ): Promise<Dispatched> {
-    if (!this.deps.catalog.loaded) await this.deps.catalog.refresh(caller);
-    const route = this.deps.catalog.route(name);
+    // A narrow first caller fills only its own backends, so a missing name refreshes with this caller's token.
+    let route = this.deps.catalog.route(name);
+    if (!route) {
+      await this.deps.catalog.refresh(caller);
+      route = this.deps.catalog.route(name);
+    }
     if (!route) return { result: errorResult({ error: 'unknown_tool' }), outcome: 'unknown_tool' };
 
     // Before the limiter: a refusal that is never forwarded is not charged.
