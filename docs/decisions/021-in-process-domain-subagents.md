@@ -341,7 +341,8 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
 - **Rule 5.**
   - A forwarded surface with PII is masked, and one with an ungrounded number is dropped.
   - The subagent's raw `render_ui` call never reaches the client, and the `ask_<name>` `TOOL_CALL_*` events are
-    withheld.
+    withheld; only the status call spanning the delegation leaves, with no arguments and an empty result, and it
+    closes when the subagent fails.
 - **Rule 6.**
   - The orchestrator sees the reply wrapped as `untrusted_data`.
   - A figure found only in the reply is ungrounded in the orchestrator's text, in the same run and from history.
@@ -456,13 +457,16 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
   at all it could not resolve an answer to its own question ("¿Ana Gómez o Ana Pérez?" then "la segunda"). It still
   gets no `message_history`, no other domain's data and none of its own tool results. Every text in the prompt
   (request, customer messages, previous reply) is HTML-escaped, so none can close its tag and forge another block.
-- **The subagent's tool names reach the client (narrows section 5, "The delegate call stays inside the bot").** The
-  delegate runs the subagent with `agent.iter`, still unstreamed, and relays each of its tool calls through
-  `RunContext.emit` as `TOOL_CALL_START`, `TOOL_CALL_END` and a `TOOL_CALL_RESULT` with empty content: the tool name
-  only, never its arguments or result (`subagents/progress.py`). The web's existing labels ("Preparando la
-  transferencia…" for `list_beneficiaries` and `prepare_transfer`) then show while payments works. The empty result
-  is needed because CopilotKit shows a call's status line until a result arrives. `ask_<name>`'s own events, the
-  subagent's `render_ui` call and every inner argument and result stay withheld.
+- **One status line spans the delegation (narrows section 5, "The delegate call stays inside the bot").** The
+  delegate runs the subagent unstreamed inside one status call (`subagents/progress.py`): through `RunContext.emit`
+  it sends `TOOL_CALL_START` named `ask_<name>` under a fresh id, never the delegate's own call id, and, in a
+  `finally` once the subagent finishes, fails or is cancelled, `TOOL_CALL_END` and a `TOOL_CALL_RESULT` with empty
+  content. The web labels `ask_payments` "Preparando la transferencia…". The output guard lets that call out only
+  because code put its id in `RunGuard.status_calls`; `ask_<name>`'s own events, with the request and the reply, stay
+  withheld. Nothing of the subagent's own tool calls (names, arguments, results) reaches the client. The empty result
+  is needed because CopilotKit shows a call's status line until a result arrives. A first version relayed each inner
+  tool call by name instead, but each start and result wrapped only the tool's execution, milliseconds, while the slow
+  part is the subagent's model calls between tools, so the line never showed.
 - **Legacy histories.** A conversation stored before this change loaded the root `payments` skill. The replay
   (`skills.replayed_skills`) maps a skill name the registry no longer has through `RENAMED_SKILLS` (`payments` →
   `transfers`), so a customer paused at the approval keeps `execute_transfer` after the deploy.

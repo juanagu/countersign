@@ -6,6 +6,7 @@ It also withholds what the client must not see: reasoning, the raw render_ui too
 import logging
 import re
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from typing import Any
 from uuid import uuid4
 
@@ -131,10 +132,13 @@ class OutputGuard:
         checks: Sequence[SentenceCheck] = DEFAULT_CHECKS,
         *,
         delegates: Collection[str] = frozenset(),
+        status_calls: AbstractSet[str] = frozenset(),
     ) -> None:
+        """`status_calls` is read live: code adds a delegation's status call id before emitting it."""
         self._evidence = evidence
         self._checks = checks
         self._delegates = frozenset(delegates)
+        self._status_calls = status_calls
         self._buffers: dict[str, str] = {}
         self._withheld_calls: set[str] = set()
         # Model-built cards wait for the end of the next text message (or of the run), so the customer reads the
@@ -169,11 +173,14 @@ class OutputGuard:
         yield from held
 
     def _withheld(self, event: BaseEvent) -> bool:
-        """Reasoning, and every event of a server-only tool call (start, args, end, result)."""
+        """Reasoning, and every event of a server-only tool call (start, args, end, result), except a delegation's
+        status call."""
         if event.type in REASONING_EVENTS:
             return True
-        server_only = isinstance(event, ToolCallStartEvent | ToolCallChunkEvent) and is_server_only(
-            event.tool_call_name or "", self._delegates
+        server_only = (
+            isinstance(event, ToolCallStartEvent | ToolCallChunkEvent)
+            and is_server_only(event.tool_call_name or "", self._delegates)
+            and event.tool_call_id not in self._status_calls
         )
         if server_only:
             self._withheld_calls.add(str(getattr(event, "tool_call_id", "")))

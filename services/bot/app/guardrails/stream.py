@@ -75,7 +75,7 @@ class _HeldRun:
     """The stream's state: events are held until the verdict, then pass through the output guard."""
 
     def __init__(self, guard: RunGuard, *, thread_id: str, run_id: str, delegates: Collection[str]) -> None:
-        self.output = OutputGuard(guard.evidence, delegates=delegates)
+        self.output = OutputGuard(guard.evidence, delegates=delegates, status_calls=guard.status_calls)
         self.held: list[BaseEvent] | None = []
         self.started = False
         self.blocked = False

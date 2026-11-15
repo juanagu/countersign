@@ -20,7 +20,7 @@ gateway token. Subagents stop at T2: the orchestrator owns every T3 tool.
 - `delegate_toolset([Subagent(spec, agent)])` (`delegate.py`): one `ask_<name>(request)` tool per subagent, plus
   `subagent_prompt`, `previous_reply`, `forwarded_events`, `last_prepared_draft`, `DRAFT_SKILL` (`transfers`) and
   `DRAFT_NEXT_STEP`.
-- `ToolProgressRelay` and `SubagentToolProgress` (`progress.py`): the subagent's tool calls, relayed by name.
+- `delegation_status` and `DelegationStatus` (`progress.py`): one status call spanning the subagent's run.
 - Shipped: `services/bot/subagents/payments.md` (T2: beneficiaries, accounts, `prepare_transfer`), on
   `PAYMENTS_AGENT_MODEL` (empty = the orchestrator's models). `main.build_agent_tree` wires it.
 
@@ -41,7 +41,8 @@ wrapper as `next_step`, and records the load as a `skill_load_record` metadata i
 `bank-template` events of template tools and the `a2ui-surface` events of `render_ui` (the output guard checks them
 like the orchestrator's), plus one evidence record of the subagent's tool results for later turns. The call's own
 events are withheld from the client (`is_server_only` with the registry's delegate names). The subagent runs
-unstreamed through `agent.iter`; each of its tool calls reaches the client as `TOOL_CALL_START`, `TOOL_CALL_END` and an
-empty `TOOL_CALL_RESULT` with the tool name only (`ToolProgressRelay`), so the web's progress labels show; arguments and
-results never leave. Each run logs one `subagent.run` line: agent, status, duration,
+unstreamed inside one status call (`delegation_status`): `TOOL_CALL_START` named `ask_<name>` under a fresh id
+registered in `RunGuard.status_calls`, so the output guard lets it out, then, always, `TOOL_CALL_END` and an empty
+`TOOL_CALL_RESULT`, so the web's progress label shows for the whole delegation. None of the subagent's own tool calls,
+arguments or results leave. Each run logs one `subagent.run` line: agent, status, duration,
 requests, tool names, trace id, never text or arguments.

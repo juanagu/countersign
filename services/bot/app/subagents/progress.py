@@ -1,12 +1,15 @@
-"""A subagent's tool calls, relayed to the client by name only so its progress line shows ("Preparando la
-transferencia…"). Arguments and results stay in the bot: they are customer data and third-party text."""
+"""One status call that spans a subagent's whole run, so the client's progress line shows while it works
+("Preparando la transferencia…"). It carries the delegate's name only: the request, the reply and the subagent's own
+tool calls stay in the bot, as customer data and model text."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Literal
+from uuid import uuid4
 
 from ag_ui.core import BaseEvent, EventType, ToolCallEndEvent, ToolCallResultEvent, ToolCallStartEvent
 from pydantic_ai import CustomEvent, RunContext
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent
 
 from app.chat.deps import BotDeps
 
@@ -14,8 +17,8 @@ Stage = Literal["start", "end", "result"]
 
 
 @dataclass(kw_only=True)
-class SubagentToolProgress(CustomEvent):
-    """One stage of one subagent tool call. The AG-UI adapter sends its payload verbatim."""
+class DelegationStatus(CustomEvent):
+    """One stage of the status call. The AG-UI adapter sends its payload verbatim."""
 
     stage: Stage
     call_id: str
@@ -38,29 +41,19 @@ class SubagentToolProgress(CustomEvent):
         )
 
 
-class ToolProgressRelay:
-    """Emits each subagent tool call into the orchestrator's event stream, from the delegate tool's context."""
+@asynccontextmanager
+async def delegation_status(ctx: RunContext[BotDeps], tool: str) -> AsyncIterator[None]:
+    """Opens the status call under a fresh id, never the delegate's own, whose events stay withheld; the output guard
+    lets it out only because its id is in `RunGuard.status_calls`. It closes however the run ends."""
+    call_id = f"status-{uuid4().hex}"
+    ctx.deps.guard.status_calls.add(call_id)
+    await _emit(ctx, "start", call_id, tool)
+    try:
+        yield
+    finally:
+        await _emit(ctx, "end", call_id, tool)
+        await _emit(ctx, "result", call_id, tool)
 
-    def __init__(self, ctx: RunContext[BotDeps]) -> None:
-        self._ctx = ctx
-        self._open: dict[str, str] = {}
 
-    async def on(self, event: AgentStreamEvent) -> None:
-        if isinstance(event, FunctionToolCallEvent):
-            self._open[event.part.tool_call_id] = event.part.tool_name
-            await self._emit("start", event.part.tool_call_id, event.part.tool_name)
-        elif isinstance(event, FunctionToolResultEvent) and event.tool_call_id in self._open:
-            await self._close(event.tool_call_id)
-
-    async def close_open_calls(self) -> None:
-        """A run that failed mid-call still ends each line it started."""
-        for call_id in list(self._open):
-            await self._close(call_id)
-
-    async def _close(self, call_id: str) -> None:
-        tool = self._open.pop(call_id)
-        await self._emit("end", call_id, tool)
-        await self._emit("result", call_id, tool)
-
-    async def _emit(self, stage: Stage, call_id: str, tool: str) -> None:
-        await self._ctx.emit(SubagentToolProgress(stage=stage, call_id=call_id, tool=tool))
+async def _emit(ctx: RunContext[BotDeps], stage: Stage, call_id: str, tool: str) -> None:
+    await ctx.emit(DelegationStatus(stage=stage, call_id=call_id, tool=tool))

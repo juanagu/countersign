@@ -32,7 +32,7 @@ from app.policy.tool_policy import PREPARE_TRANSFER, prepared_draft_id
 from app.skills.history import skill_load_record
 from app.skills.registry import Skill
 from app.subagents.build import SubagentAgent
-from app.subagents.progress import ToolProgressRelay
+from app.subagents.progress import delegation_status
 from app.subagents.registry import delegate_tool_name
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ def _delegate(subagent: Subagent) -> Any:
         previous = previous_reply(ctx.messages, delegate_tool_name(name))
         prompt = subagent_prompt(request, guard.customer_messages, previous_reply=previous)
         try:
-            result = await _run(subagent.agent, prompt, deps, ctx)
+            result = await _run(subagent.agent, prompt, deps, ctx, tool=delegate_tool_name(name))
         except Exception as error:  # A deferred call (UserError), a model or tool failure: the turn goes on.
             _log_run(name, "failed", started, ctx.usage.requests - requests_before, [], error=error)
             return _answer(name, "failed", reply="", draft_id=None, metadata=None)
@@ -109,21 +109,13 @@ def _delegate(subagent: Subagent) -> Any:
     return delegate
 
 
-async def _run(agent: SubagentAgent, prompt: str, deps: BotDeps, ctx: RunContext[BotDeps]) -> AgentRunResult[str]:
-    """Runs the subagent unstreamed, relaying each of its tool calls to the client by name as the call happens."""
-    relay = ToolProgressRelay(ctx)
-    try:
-        async with agent.iter(prompt, deps=deps, usage=ctx.usage) as run:
-            async for node in run:
-                if agent.is_call_tools_node(node):
-                    async with node.stream(run.ctx) as events:
-                        async for event in events:
-                            await relay.on(event)
-    finally:
-        await relay.close_open_calls()
-    if run.result is None:
-        raise RuntimeError("the subagent run ended without a result")
-    return run.result
+async def _run(
+    agent: SubagentAgent, prompt: str, deps: BotDeps, ctx: RunContext[BotDeps], *, tool: str
+) -> AgentRunResult[str]:
+    """Runs the subagent unstreamed, inside one status call named `tool` that the client shows as its progress
+    line."""
+    async with delegation_status(ctx, tool):
+        return await agent.run(prompt, deps=deps, usage=ctx.usage)
 
 
 def subagent_prompt(request: str, customer_messages: Sequence[str], *, previous_reply: str | None = None) -> str:

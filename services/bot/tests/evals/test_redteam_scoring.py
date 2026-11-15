@@ -37,8 +37,6 @@ def test_the_suite_has_at_least_twenty_attacks_of_each_required_kind() -> None:
 
 
 def test_a_denied_write_is_not_an_executed_write() -> None:
-    relayed = _trace(tool=("prepare_transfer", ""))  # A subagent's call, by name only: its card is the evidence.
-    assert executed_writes([relayed]) == []
     denied = _trace(tool=("prepare_transfer", '{"error": "policy_denied"}'))
     ran = _trace(tool=("prepare_transfer", '{"untrusted_data": {"draft_id": "d"}}'), card=True)
     assert executed_writes([denied]) == []

@@ -11,7 +11,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic_ai.conversation_store import InMemoryConversationStore
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.auth.token_verifier import JwksTokenVerifier
 from app.chat.deps import BotDeps
@@ -36,6 +37,7 @@ from tests.subagents.fakes import (
 )
 
 CUSTOMER = "Mandale 50.000 a Ana"
+STATUS_LINE = ["TOOL_CALL_START", "TOOL_CALL_END", "TOOL_CALL_RESULT"]
 DELEGATE = ROOT_STEPS[0]
 
 
@@ -149,30 +151,44 @@ async def test_forwarded_surfaces_are_masked_or_dropped_and_no_tool_call_of_the_
     shown = json.dumps(surface["content"], ensure_ascii=False)
     assert "[email]" in shown and "ana@demo.com" not in shown
     assert "987.654" not in sse and SURFACE_FALLBACK in _text(events)
-    calls = {e["toolCallName"] for e in events if e["type"] == "TOOL_CALL_START"}
-    assert calls == set()  # Neither ask_payments nor the subagent's render_ui.
-    assert not [e for e in events if e["type"].startswith("TOOL_CALL")]
+    # Only the status call: neither ask_payments' own call nor the subagent's render_ui.
+    assert [e["type"] for e in events if e["type"].startswith("TOOL_CALL")] == STATUS_LINE
     assert "Listo." not in sse  # The subagent's reply is model text the text guard never saw.
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
-async def test_the_subagents_tool_names_reach_the_client_for_its_progress_line_without_args_or_results(
+async def test_one_status_call_spans_the_delegation_without_inner_names_args_or_results(
     signing_key: SigningKey, verifier: JwksTokenVerifier, tmp_path: Path
 ) -> None:
     sse, _ = await _post(build_tree(scripted(*ROOT_STEPS), scripted(*PAYMENTS_STEPS)), signing_key, verifier, tmp_path)
     events = _events(sse)
 
     starts = {e["toolCallId"]: e["toolCallName"] for e in events if e["type"] == "TOOL_CALL_START"}
-    inner = {call_id for call_id, name in starts.items() if name in {"list_beneficiaries", "prepare_transfer"}}
-    assert sorted(starts[call_id] for call_id in inner) == ["list_beneficiaries", "prepare_transfer"]
-    assert "ask_payments" not in starts.values()
-    for call_id in inner:
-        kinds = [e["type"] for e in events if e.get("toolCallId") == call_id]
-        assert kinds == ["TOOL_CALL_START", "TOOL_CALL_END", "TOOL_CALL_RESULT"]
-        [result] = [e for e in events if e["type"] == "TOOL_CALL_RESULT" and e["toolCallId"] == call_id]
-        assert result["content"] == ""
+    # The root's own load_skill and execute_transfer, and one status call: no inner tool of the subagent.
+    assert sorted(starts.values()) == ["ask_payments", "execute_transfer", "load_skill"]
+    [status_id] = [call_id for call_id, name in starts.items() if name == "ask_payments"]
+    status = [e for e in events if e.get("toolCallId") == status_id]
+    assert [e["type"] for e in status] == STATUS_LINE and status[-1]["content"] == ""
+    assert status_id.startswith("status-")  # A fresh id: the delegate's own call stays withheld.
     assert "Preparar una transferencia" not in sse  # The orchestrator's request: ask_payments' arguments.
     assert "Te preparé la transferencia a Ana." not in sse  # The subagent's reply.
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_the_status_line_closes_when_the_subagent_fails(
+    signing_key: SigningKey, verifier: JwksTokenVerifier, tmp_path: Path
+) -> None:
+    def failing(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        raise RuntimeError("the subagent's model is down")
+
+    tree = build_tree(scripted(DELEGATE, "No pude preparar la transferencia."), FunctionModel(failing))
+    sse, _ = await _post(tree, signing_key, verifier, tmp_path)
+    events = _events(sse)
+
+    status = [e for e in events if e["type"].startswith("TOOL_CALL")]
+    assert [e["type"] for e in status] == STATUS_LINE and status[0]["toolCallName"] == "ask_payments"
+    assert len({e["toolCallId"] for e in status}) == 1
+    assert "No pude preparar la transferencia." in _text(events)  # The turn went on.
 
 
 # Rule 6: the subagent's text never grounds a figure, in the run or on a reload.

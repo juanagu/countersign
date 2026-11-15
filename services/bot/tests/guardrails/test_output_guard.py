@@ -198,6 +198,14 @@ def test_the_delegate_tools_it_is_handed_never_leave_whatever_their_name(evidenc
     assert {getattr(e, "tool_call_id", None) for e in out} == {"a"}  # Named by the registry, not by a prefix.
 
 
+def test_only_a_status_call_code_registered_leaves_under_a_delegates_name(evidence: Evidence) -> None:
+    status_calls: set[str] = set()
+    guard = OutputGuard(evidence, delegates={"ask_payments"}, status_calls=status_calls)
+    status_calls.add("status-1")  # Added live, after the guard was built, as the delegate does.
+    out = _run(guard, [*_tool_call("d", "ask_payments"), *_tool_call("status-1", "ask_payments")])
+    assert {getattr(e, "tool_call_id", None) for e in out} == {"status-1"}
+
+
 def test_reasoning_never_leaves_the_bot(evidence: Evidence) -> None:
     reasoning: list[BaseEvent] = [
         ReasoningStartEvent(type=EventType.REASONING_START, message_id="t"),

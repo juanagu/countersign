@@ -16,7 +16,7 @@ return a `Verdict`: allow, redact (with the redacted text) or block (with a reas
 - `PendingApprovals` (`Guardrails.pending_approvals`): `record()` / `consume()` the approval interrupts raised per
   user and thread; `recording_interrupts(events, pending, key)` records those a run ends with. Only a resume that
   consumes them skips the classifier.
-- `OutputGuard(evidence, delegates=)`: sentence buffering, `image_check` (`images.strip_images`), `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
+- `OutputGuard(evidence, delegates=, status_calls=)`: sentence buffering, `image_check` (`images.strip_images`), `pii_leak_check`, `grounding_check`, A2UI surface PII masking and
   grounding, and a safe `RUN_ERROR` message.
 - `pii.redact()`, `redact_value()`, `pii_check()`; `messages.redact_customer_turns()`, `customer_texts()`,
   `tool_returns_in(messages, delegates=)` (each tool result, the `evidence_record()` entries of a delegate tool's
