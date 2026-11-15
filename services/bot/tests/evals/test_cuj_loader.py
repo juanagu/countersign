@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from evals.cuj import Scenario, parse_scenarios
+from evals.cuj import CUJ_PATH, Scenario, load_scenarios, parse_scenarios
 
 MINIMAL = """
 - id: cuj-x
@@ -59,3 +59,23 @@ def test_rejects_duplicate_ids() -> None:
 @pytest.mark.parametrize("outcome", ["any", "result", "paused", "cancelled", "error:draft_expired"])
 def test_accepts_every_documented_outcome(outcome: str) -> None:
     Scenario.model_validate(_scenario(trajectory=[{"tool": "execute_transfer", "outcome": outcome}]))
+
+
+def test_the_shipped_money_journeys_load_with_unique_ids_and_a_policy_for_each_pause() -> None:
+    scenarios = load_scenarios(CUJ_PATH)
+
+    assert [s.id[:6] for s in scenarios] == ["cuj-04", "cuj-05", "cuj-06", "cuj-07", "cuj-08"]
+    assert {s.group for s in scenarios} == {"cuj_money"}
+    expecting_a_pause = [s for s in scenarios if s.expect.interrupts]
+    assert all(s.on_interrupt.get("transfer-confirm") for s in expecting_a_pause)
+
+
+def test_no_shipped_trajectory_can_reach_execute_transfer_without_a_pause_first() -> None:
+    for scenario in load_scenarios(CUJ_PATH):
+        executes = [s.outcome for s in scenario.trajectory if s.tool == "execute_transfer"]
+        assert executes[:1] in ([], ["paused"]), scenario.id
+
+
+def test_a_requires_rule_must_name_both_calls() -> None:
+    with pytest.raises(ValidationError):
+        Scenario.model_validate(_scenario(requires=["execute_transfer"]))

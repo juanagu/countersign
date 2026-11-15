@@ -7,10 +7,12 @@ from typing import Any
 import httpx
 import pytest
 
-from evals.agui_client import RUN_PATH, STEP_UP_PATH, BffSession
+from evals.agui_client import RUN_PATH, STEP_UP_PATH, BffSession, RunTrace
+from evals.calls import ObservedCall
 from evals.cuj import Scenario
-from evals.cuj_runner import TrialResult, cuj_gates, play
+from evals.cuj_runner import TrialResult, cuj_gates, play, run_trial
 from evals.cuj_user import Turn, is_end
+from evals.live import LiveOutput
 from evals.thresholds import Consistency, Thresholds
 
 CARD = {
@@ -195,7 +197,7 @@ def test_the_end_token(message: str, ends: bool) -> None:
 
 
 def _trial(cuj_id: str, group: str, trial: int, passed: bool) -> TrialResult:
-    return TrialResult(cuj_id, group, trial, passed, {}, 0.0, 1, "t", "", [], "scripted", 0, 0)
+    return TrialResult(cuj_id, group, trial, passed, {}, 0.0, 1, "t", "", [], "scripted", 1, 0, 0)
 
 
 def test_a_group_at_one_fails_on_a_single_failed_trial() -> None:
@@ -218,3 +220,46 @@ def test_consistency_keeps_one_flaky_journey_from_hiding_behind_a_green_one() ->
 
     assert rate.ok  # 25 of 27 trials is above 0.8 ...
     assert not consistency.ok  # ... but one journey passed one trial of three.
+
+
+def _refused() -> LiveOutput:
+    handoff = [
+        {"type": "TOOL_CALL_START", "toolCallId": "a", "toolCallName": "ask_payments"},
+        {"type": "TOOL_CALL_RESULT", "toolCallId": "a", "messageId": "m", "content": ""},
+    ]
+    delegated = [
+        ObservedCall("ask_payments", delegated=True),
+        ObservedCall("prepare_transfer", outcome="error:rate_limited", delegated=True),
+    ]
+    return LiveOutput([RunTrace(handoff)], delegated=delegated)
+
+
+async def test_a_trial_the_gateway_rate_limited_runs_again_after_the_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    outputs = iter([_refused(), _refused(), LiveOutput([])])
+
+    async def attempt(_scenario: Scenario, _reply: object) -> LiveOutput:
+        return next(outputs)
+
+    monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
+    monkeypatch.setattr("evals.cuj_runner.RATE_LIMIT_WAIT_SECONDS", 0.0)
+
+    output = await run_trial(_scenario(), None)
+
+    assert output.attempts == 3
+    assert output.delegated == []  # The third attempt's output.
+
+
+async def test_a_trial_that_stays_rate_limited_is_returned_to_fail_not_looped_forever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def attempt(_scenario: Scenario, _reply: object) -> LiveOutput:
+        return _refused()
+
+    monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
+    monkeypatch.setattr("evals.cuj_runner.RATE_LIMIT_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr("evals.cuj_runner.RATE_LIMIT_RETRIES", 2)
+
+    output = await run_trial(_scenario(), None)
+
+    assert output.attempts == 3
+    assert output.calls[-1].outcome == "error:rate_limited"

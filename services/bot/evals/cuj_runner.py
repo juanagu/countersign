@@ -49,6 +49,11 @@ CONFIRM_TEMPLATE = "transfer-confirm"
 WRONG_PIN = "000000"
 CANCEL_PAYLOAD = {"approved": False, "reason": "El cliente canceló la transferencia."}  # As the web's Cancelar sends.
 HANDOFF_PREFIX = "ask_"
+# The gateway allows each customer 20 reversible writes per 10 minutes (ADR 017), and every trial prepares at least
+# one. A trial refused for that reason says nothing about the bot, so it waits for the window and runs again.
+RATE_LIMITED = "error:rate_limited"
+RATE_LIMIT_WAIT_SECONDS = 60.0
+RATE_LIMIT_RETRIES = 12
 
 CujEvaluator = Evaluator[LiveInput, LiveOutput, Meta]
 Report = EvaluationReport[LiveInput, LiveOutput, Meta]
@@ -58,7 +63,7 @@ def evaluators_for(scenario: Scenario) -> list[CujEvaluator]:
     expect = scenario.expect
     checks: list[CujEvaluator] = [
         NoRunErrors(),
-        Trajectory(scenario.trajectory, scenario.allow, scenario.forbid),
+        Trajectory(scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires),
         Cards(expect.cards.present, expect.cards.absent),
         *(Contains(text) for text in expect.text_contains),
     ]
@@ -161,6 +166,20 @@ async def _next_message(scenario: Scenario, scripted: Any, reply: Reply | None, 
 
 
 async def run_trial(scenario: Scenario, reply: Reply | None) -> LiveOutput:
+    """One trial, run again (fresh session and thread) while the gateway's write limit refuses its writes."""
+    for attempt in range(1, RATE_LIMIT_RETRIES + 2):
+        output = await run_attempt(scenario, reply)
+        output.attempts = attempt
+        if attempt > RATE_LIMIT_RETRIES or not any(c.outcome == RATE_LIMITED for c in output.calls):
+            return output
+        print(
+            f"  {scenario.id}: the gateway's write limit refused it; waiting {RATE_LIMIT_WAIT_SECONDS:g}s", flush=True
+        )
+        await asyncio.sleep(RATE_LIMIT_WAIT_SECONDS)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+async def run_attempt(scenario: Scenario, reply: Reply | None) -> LiveOutput:
     since = datetime.now(UTC)
     account = scenario.source_account
     async with bff_client() as http:
@@ -178,7 +197,7 @@ async def run_trial(scenario: Scenario, reply: Reply | None) -> LiveOutput:
         turns=journey.turns,
     )
     if scenario.handoffs or any(c.name.startswith(HANDOFF_PREFIX) for c in output.calls):
-        delegated = await read_delegated(session.thread_id, since, output.cards)
+        delegated = await read_delegated(session.thread_id, since, output.cards, runs=len(output.traces))
         output.delegated = delegated or []
         output.notes += [] if delegated is not None else ["no trace for the thread in Phoenix"]
     return output
@@ -197,6 +216,7 @@ class TrialResult:
     text: str
     calls: list[str]
     driver: str
+    attempts: int
     start_ns: int
     end_ns: int
 
@@ -218,6 +238,7 @@ def trial_result(case: ReportCase[LiveInput, LiveOutput, Meta], trial: int) -> T
         text=case.output.text[:300],
         calls=[f"{c.name}:{c.outcome}" for c in case.output.calls],
         driver=meta.get("driver", ""),
+        attempts=case.output.attempts,
         start_ns=now - int(case.total_duration * NANOS),
         end_ns=now,
     )
@@ -226,7 +247,7 @@ def trial_result(case: ReportCase[LiveInput, LiveOutput, Meta], trial: int) -> T
 def error_result(scenario: Scenario, trial: int, message: str) -> TrialResult:
     now = time.time_ns()
     return TrialResult(
-        scenario.id, scenario.group, trial, False, {"task": message}, 0.0, 0, "", "", [], scenario.driver, now, now
+        scenario.id, scenario.group, trial, False, {"task": message}, 0.0, 0, "", "", [], scenario.driver, 1, now, now
     )
 
 
@@ -263,7 +284,8 @@ def cuj_gates(results: list[TrialResult], thresholds: Thresholds) -> list[Gate]:
 def print_results(results: list[TrialResult]) -> None:
     for r in results:
         mark = "PASS" if r.passed else "FAIL"
-        print(f"{mark} {r.cuj_id} trial {r.trial} ({r.seconds}s, {r.turns} turns) calls: {r.calls}")
+        retried = f", {r.attempts} attempts" if r.attempts > 1 else ""
+        print(f"{mark} {r.cuj_id} trial {r.trial} ({r.seconds}s, {r.turns} turns{retried}) calls: {r.calls}")
         for name, reason in r.failed.items():
             print(f"     failed {name}: {reason}")
 

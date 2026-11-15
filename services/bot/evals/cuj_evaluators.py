@@ -1,7 +1,7 @@
 """Evaluators for critical user journeys: the trajectory with an outcome per call, interrupts, cards, ledger and
 step-up attempts. Each is deterministic; a journey passes a trial only when every one holds (ADR 022)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from pydantic_evals.evaluators import EvaluationReason, Evaluator
@@ -23,25 +23,44 @@ def _step_matches(step: Step, call: ObservedCall) -> bool:
     return all(values_match(v, call.args.get(k)) for k, v in step.args.items())
 
 
-def _forbidden(rule: str, call: ObservedCall) -> bool:
+def _rule_matches(rule: str, call: ObservedCall) -> bool:
+    """`tool` matches the call whatever its outcome; `tool:outcome` only that outcome."""
     tool, _, outcome = rule.partition(":")
     return call.name == tool and (not outcome or outcome == call.outcome)
 
 
-def trajectory_problems(calls: list[ObservedCall], steps: list[Step], allow: list[str], forbid: list[str]) -> list[str]:
+def _unmet_requirements(calls: list[ObservedCall], requires: list[str]) -> list[str]:
+    """For each `A <- B` rule, the A calls with no B call since the previous A."""
+    problems: list[str] = []
+    for rule in requires:
+        needing, _, needed = rule.partition(" <- ")
+        fresh = False
+        for call in calls:
+            if _rule_matches(needed, call):
+                fresh = True
+            elif _rule_matches(needing, call):
+                if not fresh:
+                    problems.append(f"{call.name} ({call.outcome}) without a new {needed} ({rule})")
+                fresh = False
+    return problems
+
+
+def trajectory_problems(
+    calls: list[ObservedCall], steps: list[Step], allow: list[str], forbid: list[str], requires: list[str] | None = None
+) -> list[str]:
     """Calls must follow `steps` in order. Others are fine only when listed in `allow`; a forbidden call fails even if
     it is also allowed. Steps never reached are missing."""
     problems: list[str] = []
     next_step = 0
     for call in calls:
-        if any(_forbidden(rule, call) for rule in forbid):
+        if any(_rule_matches(rule, call) for rule in forbid):
             problems.append(f"forbidden {call.name} ({call.outcome})")
         elif next_step < len(steps) and _step_matches(steps[next_step], call):
             next_step += 1
-        elif call.name not in allow:
+        elif not any(_rule_matches(rule, call) for rule in allow):
             problems.append(f"unexpected {call.name} ({call.outcome}) after {next_step} of {len(steps)} steps")
     problems += [f"missing {s.tool} ({s.outcome})" for s in steps[next_step:]]
-    return problems
+    return problems + _unmet_requirements(calls, requires or [])
 
 
 @dataclass
@@ -49,10 +68,11 @@ class Trajectory(Evaluator[LiveInput, LiveOutput, Meta]):
     steps: list[Step]
     allow: list[str]
     forbid: list[str]
+    requires: list[str] = field(default_factory=list)
 
     def evaluate(self, ctx: Ctx) -> EvaluationReason:
         calls = ctx.output.calls
-        problems = trajectory_problems(calls, self.steps, self.allow, self.forbid)
+        problems = trajectory_problems(calls, self.steps, self.allow, self.forbid, self.requires)
         seen = [f"{c.name}:{c.outcome}" for c in calls]
         return reason_for(not problems, f"{'; '.join(problems)}. Calls: {seen}")
 

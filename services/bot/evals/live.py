@@ -55,6 +55,7 @@ class LiveOutput:
     step_up_statuses: list[int] = field(default_factory=list)
     thread_id: str = ""
     turns: int = 0
+    attempts: int = 1  # A CUJ trial run again because the gateway refused its writes (rate limit).
 
     @property
     def text(self) -> str:

@@ -210,3 +210,36 @@ def test_the_balance_read_must_show_the_ledgers_balance() -> None:
     assert _ok(BalanceMatchesLedger().evaluate(_ctx(LiveOutput([balance], ledger_after=after))))
     stale = Ledger(Decimal("486750.25"), 0, 0)
     assert not _ok(BalanceMatchesLedger().evaluate(_ctx(LiveOutput([balance], ledger_after=stale))))
+
+
+EXPIRED_RETRY_RULE = ["execute_transfer:paused <- prepare_transfer"]
+
+
+def _paused_execute() -> ObservedCall:
+    return ObservedCall("execute_transfer", outcome=PAUSED)
+
+
+def test_a_second_approval_card_needs_a_new_prepare_transfer() -> None:
+    expired = ObservedCall("execute_transfer", outcome="error:draft_expired")
+    steps = [
+        Step(tool="prepare_transfer"),
+        Step(tool="execute_transfer", outcome="paused"),
+        Step(tool="execute_transfer", outcome="error:draft_expired"),
+    ]
+    allow = ["ask_payments", "prepare_transfer", "execute_transfer:paused"]
+    retry_without_prepare = [PREPARE, _paused_execute(), expired, ObservedCall("ask_payments"), _paused_execute()]
+    retry_with_prepare = [PREPARE, _paused_execute(), expired, ObservedCall("ask_payments"), PREPARE, _paused_execute()]
+
+    assert trajectory_problems(retry_with_prepare, steps, allow, [], EXPIRED_RETRY_RULE) == []
+    assert trajectory_problems(retry_without_prepare, steps, allow, [], EXPIRED_RETRY_RULE) == [
+        "execute_transfer (paused) without a new prepare_transfer (execute_transfer:paused <- prepare_transfer)"
+    ]
+
+
+def test_allow_can_name_an_outcome() -> None:
+    steps = [Step(tool="prepare_transfer")]
+
+    assert trajectory_problems([PREPARE, _paused_execute()], steps, ["execute_transfer:paused"], []) == []
+    assert trajectory_problems([PREPARE, ObservedCall("execute_transfer")], steps, ["execute_transfer:paused"], []) == [
+        "unexpected execute_transfer (result) after 1 of 1 steps"
+    ]

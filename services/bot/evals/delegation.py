@@ -18,6 +18,7 @@ TOOL_NAME = "gen_ai.tool.name"
 MCP_METHOD = "mcp.method.name"  # Set on the MCP transport's own span, which repeats the tool's `execute_tool` span.
 EXPORT_WAIT_SECONDS = 30.0  # The bot's BatchSpanProcessor exports every few seconds.
 POLL_SECONDS = 2.0
+UNKNOWN_ERROR = "unknown"
 
 
 def card_args(tool: str, cards: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -63,19 +64,22 @@ def _outcome(call: Span, trace_spans: Sequence[Span]) -> str:
     for span in sorted(trace_spans, key=lambda s: str(s.get("start_time"))):
         if span.get("parent_id") in family:
             family.add(span["context"]["span_id"])
-    for span in trace_spans:
-        if span["context"]["span_id"] in family and span.get("status_code") == "ERROR":
-            return f"{ERROR_PREFIX}{_error_code(str(span.get('status_message') or ''))}"
-    return RESULT
+    failed = [s for s in trace_spans if s["context"]["span_id"] in family and s.get("status_code") == "ERROR"]
+    if not failed:
+        return RESULT
+    # The tool's own span ends in ERROR with no message; the MCP transport span below it carries the code.
+    codes = [code for span in failed if (code := _error_code(str(span.get("status_message") or "")))]
+    return f"{ERROR_PREFIX}{codes[0] if codes else UNKNOWN_ERROR}"
 
 
 def _error_code(message: str) -> str:
+    """The `error` code of a tool failure's JSON message, or an empty string."""
     try:
         parsed = json.loads(message)
     except json.JSONDecodeError:
-        return "unknown"
+        return ""
     code = parsed.get("error") if isinstance(parsed, dict) else None
-    return code if isinstance(code, str) else "unknown"
+    return code if isinstance(code, str) else ""
 
 
 def _thread(span: Span) -> object:
@@ -87,8 +91,11 @@ def _tool(span: Span) -> str | None:
     return value if isinstance(value, str) else None
 
 
-async def read_delegated(thread_id: str, since: datetime, cards: Sequence[dict[str, Any]]) -> list[ObservedCall] | None:
-    """The thread's delegated calls since `since`, or None when its spans never reached Phoenix."""
+async def read_delegated(
+    thread_id: str, since: datetime, cards: Sequence[dict[str, Any]], runs: int = 1
+) -> list[ObservedCall] | None:
+    """The thread's delegated calls since `since`, once all of its `runs` runs reached Phoenix (a span is exported at
+    its run's end, children first), or None when they never did."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + EXPORT_WAIT_SECONDS
     while True:
@@ -96,7 +103,7 @@ async def read_delegated(thread_id: str, since: datetime, cards: Sequence[dict[s
         traces = {
             s["context"]["trace_id"] for s in streams if (s.get("attributes") or {}).get(THREAD_ATTRIBUTE) == thread_id
         }
-        if traces:
+        if len(traces) >= runs:
             every = await asyncio.to_thread(lambda: list(spans(since)))
             return delegated_calls([s for s in every if s["context"]["trace_id"] in traces], cards)
         if loop.time() > deadline:

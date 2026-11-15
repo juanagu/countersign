@@ -67,8 +67,10 @@ class Scenario(Strict):
     max_turns: int
     trials: int = DEFAULT_TRIALS
     trajectory: list[Step]
-    allow: list[str] = []  # Calls that may appear between steps without being listed.
+    allow: list[str] = []  # `tool` or `tool:outcome`: calls that may appear between steps without being listed.
     forbid: list[str] = []  # `tool` or `tool:outcome`; any matching call fails the trial.
+    # "A <- B": a call matching A needs a call to B since the previous A (a retry must start from a fresh draft).
+    requires: list[str] = []
     handoffs: list[str] = []  # Subagent domains the root must hand off to, read from the run's spans.
     expect: Expect = Expect()
 
@@ -79,6 +81,14 @@ class Scenario(Strict):
         if self.driver == "scripted" and 1 + len(self.then) > self.max_turns:
             raise ValueError(f"{self.id}: more scripted turns than max_turns")
         return self
+
+    @field_validator("requires")
+    @classmethod
+    def well_formed_rules(cls, rules: list[str]) -> list[str]:
+        for rule in rules:
+            if len(rule.split(" <- ")) != 2:
+                raise ValueError(f"requires rule {rule!r} is not 'call <- earlier call'")
+        return rules
 
     @property
     def source_account(self) -> str:

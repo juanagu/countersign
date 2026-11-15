@@ -63,3 +63,15 @@ def test_the_mcp_transport_span_does_not_count_as_a_second_call_and_carries_the_
         ("ask_payments", "result"),
         ("prepare_transfer", "error:insufficient_funds"),
     ]
+
+
+def test_the_error_code_comes_from_the_transport_span_when_the_tool_span_has_no_message() -> None:
+    transport = _span("rpc", "prep", "prepare_transfer", "3", status="ERROR", message='{"error":"insufficient_funds"}')
+    transport["attributes"]["mcp.method.name"] = "tools/call"
+    spans = [
+        _span("ask", None, "ask_payments", "1"),
+        _span("prep", "ask", "prepare_transfer", "2", status="ERROR"),  # Ends in ERROR, says nothing more.
+        transport,
+    ]
+
+    assert [c.outcome for c in delegated_calls(spans, [])] == ["result", "error:insufficient_funds"]
