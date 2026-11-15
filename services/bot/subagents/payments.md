@@ -4,6 +4,7 @@ description: Saved beneficiaries and preparing a transfer to one of them (a draf
 tools: [list_beneficiaries, prepare_transfer, list_accounts, get_balance]
 max_tier: T2
 scopes: [accounts:read, beneficiaries:read, transfers:prepare]
+hands_off: {tool: prepare_transfer, skill: transfers}
 ---
 # Payments
 

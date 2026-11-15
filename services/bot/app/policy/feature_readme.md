@@ -11,7 +11,11 @@ The single gate in front of every domain tool (security rules 2 and 6).
   results as `{"untrusted_data": ..., "note": UNTRUSTED_NOTE}`, and answers a denial with `{"error": "policy_denied"}`.
   `UNTRUSTED_NOTE` is exposed so a delegate tool wraps a subagent's answer the same way.
 - `FrequencyCaps`: per-conversation (user + AG-UI `threadId`) sliding-window caps, 5 T2 and 3 T3 calls per
-  10 minutes, in memory. `THIRD_PARTY_TEXT_TOOLS`: `list_transactions`, `search_knowledge`.
+  10 minutes, in memory; `.acquire_delegation(session, turn)` caps delegations at `DELEGATIONS_PER_TURN` (3) per
+  orchestrator run.
+- `DelegatePolicyToolset(wrapped, caps, names)` (`delegate_policy.py`): the gate in front of the delegate tools, which
+  no skill grants. A call is denied (`policy_denied`, via `denied()`) when the tool declares no tier, when the input
+  verdict blocked the message (above T0), or past the per-turn delegation cap; `names` are the delegate tool names. `THIRD_PARTY_TEXT_TOOLS`: `list_transactions`, `search_knowledge`.
 - `RiskTier`, `RISK_TIER_META_KEY` (`bank/riskTier` in the MCP tool `_meta`).
 - `tool_scopes`: `SCOPE_META_KEY` (`bank/scope`, needed to call), `read_scope`, `SCOPE_PATTERN` (`^[a-z]+:[a-z]+$`) and
   `APPROVAL_ONLY_SCOPES` (`transfers:execute`), which no skill may request. Used by `banking` and `skills`.
@@ -31,8 +35,11 @@ denied, and `spending_summary` needs a start date.
 
 `execute_transfer`'s `draft_id` must be a string naming the conversation's open draft: the latest draft a
 `prepare_transfer` result created, in the run's messages (stored history included) or in a delegate tool's evidence
-record when the payments subagent prepared it, that no `execute_transfer` result has decided yet (a receipt, a denial,
-or a result Pydantic AI synthesized for a cut-off call). A newer draft supersedes the older ones. An interrupt nobody
+record when the payments subagent prepared it, that no `execute_transfer` result has decided yet: a receipt, the
+customer's denial or cancel, the bank's answer about the draft (a failed result such as `draft_expired`), or a result
+Pydantic AI synthesized for a cut-off call. A refusal before anything was sent decides nothing (`UNSENT_ERRORS`:
+`policy_denied`, a cap or input verdict included, and the `service_unavailable` an approved call returns when its
+token or session can't be set up; also a `retried` call), so the customer can ask again. A newer draft supersedes the older ones. An interrupt nobody
 answered decides nothing, so the failed-resume recovery (ADR 013: ask again, approve again) still pauses on it. `PolicyToolset` reads it from
 `ctx.messages`; otherwise the call is denied before any interrupt, on the first call and on the resume alike. Each agent has its own `PolicyToolset` over its own skills; a subagent's stops at
 T2, and every agent shares the process's one `FrequencyCaps`.

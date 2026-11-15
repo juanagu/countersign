@@ -25,6 +25,7 @@ from app.chat.deps import BotDeps
 from app.config import Settings
 from app.core.clock import BankClock
 from app.main import build_agent_tree
+from app.policy.delegate_policy import DelegatePolicyToolset
 from app.policy.frequency_caps import FrequencyCaps
 from app.policy.policy_toolset import PolicyToolset
 from app.skills.registry import SkillRegistry, parse_skill
@@ -87,9 +88,11 @@ PAYMENTS_FILE = _SPEC.format(
     name="payments",
     tools="list_beneficiaries, prepare_transfer, list_accounts",
     tier="T2",
-    scopes="scopes: [accounts:read, beneficiaries:read, transfers:prepare]\n",
+    scopes="scopes: [accounts:read, beneficiaries:read, transfers:prepare]\n"
+    "hands_off: {tool: prepare_transfer, skill: transfers}\n",
 )
 PAYMENTS = parse_subagent(PAYMENTS_FILE)
+DRAFT_SKILL = "transfers"  # The root skill payments hands its drafts to.
 SKILLS = SkillRegistry([ACCOUNTS, TRANSFERS])
 SUBAGENTS = SubagentRegistry([PAYMENTS], skills=SKILLS)
 DELEGATES = SUBAGENTS.delegate_tools()
@@ -323,9 +326,9 @@ def build_tree(
     root = build_agent_tree(
         root_model, lambda _: sub_model, skills=SKILLS, subagents=SUBAGENTS, banking=banking, clock=BankClock()
     )
-    [delegates] = [t for t in root.toolsets if isinstance(t, FunctionToolset) and "ask_payments" in t.tools]
+    [gate] = [t for t in root.toolsets if isinstance(t, DelegatePolicyToolset)]
     # The delegate tool closes over its Subagent; tests reach the subagent's agent through it.
-    cells = delegates.tools["ask_payments"].function.__closure__ or ()
+    cells = gate.wrapped.tools["ask_payments"].function.__closure__ or ()
     sub = next(c.cell_contents for c in cells if isinstance(c.cell_contents, Subagent)).agent
     return Tree(root, sub, gateway, banks["root"], banks["sub"], _policies(root)[0].caps)
 

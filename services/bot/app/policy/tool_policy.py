@@ -13,6 +13,7 @@ MAX_PERIOD_DAYS = 400
 TRANSFER_CAPS = {"ARS": 2_000_000, "USD": 10_000}
 _ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
+NO_TIER = "the tool declares no risk tier"
 PREPARE_TRANSFER = "prepare_transfer"
 # Tools whose `draft_id` must name the conversation's open draft: the one value that crosses from a subagent's answer
 # into a T3 call is checked in code, not trusted.
@@ -123,7 +124,7 @@ class ToolPolicy:
     ) -> Decision:
         """`open_draft` is the conversation's one draft that no `execute_transfer` result decided yet."""
         if tier is None:
-            return Decision(False, "the tool declares no risk tier")
+            return Decision(False, NO_TIER)
         if not self._granted(tool, tier, loaded):
             return Decision(False, "no loaded skill grants this tool")
         if tool in DRAFT_BOUND_TOOLS and not _names_open_draft(args, open_draft):

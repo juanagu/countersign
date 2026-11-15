@@ -5,7 +5,7 @@ Domain behaviour as markdown files (`services/bot/skills/*.md`): YAML frontmatte
 skill's MCP tools need to be listed. A skill that lists an approval-only scope (`transfers:execute`) fails validation.
 The shipped root skills are `accounts` (T1), `knowledge` (T0) and `transfers` (T3, `execute_transfer` only, scope
 `transfers:prepare`, the list scope it needs). Payments runs as a subagent instead (`app/subagents`, ADR 021), whose
-files reuse `Skill` and `parse_skill`; a subagent may not share a skill's name.
+files extend `Skill` and reuse `split_frontmatter`; a subagent may not share a skill's name.
 
 ## Exposed interface
 

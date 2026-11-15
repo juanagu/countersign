@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
@@ -39,12 +39,20 @@ class Skill(BaseModel):
         return tier
 
 
-def parse_skill(text: str) -> Skill:
+def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """A skill file's YAML frontmatter and its stripped body."""
     if not text.startswith(_FRONTMATTER):
         raise ValueError("skill file must start with YAML frontmatter")
     _, frontmatter, body = text.split(_FRONTMATTER, 2)
     meta = yaml.safe_load(frontmatter)
-    return Skill(**meta, instructions=body.strip())
+    if not isinstance(meta, dict):
+        raise ValueError("skill frontmatter must be a mapping")
+    return meta, body.strip()
+
+
+def parse_skill(text: str) -> Skill:
+    meta, body = split_frontmatter(text)
+    return Skill(**meta, instructions=body)
 
 
 class SkillRegistry:

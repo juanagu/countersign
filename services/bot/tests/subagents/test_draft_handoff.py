@@ -28,12 +28,13 @@ from app.policy.drafts import open_draft
 from app.policy.tool_policy import DRAFT_BOUND_TOOLS
 from app.skills.history import skill_load_record, skills_loaded_in
 from app.skills.registry import SkillRegistry
-from app.subagents.delegate import DRAFT_NEXT_STEP, DRAFT_SKILL
+from app.subagents.delegate import draft_next_step
 from evals.agui_client import fold
 from tests.conftest import SigningKey, open_guard, open_guardrails
 from tests.subagents.fakes import (
     DELEGATES,
     DRAFT_ID,
+    DRAFT_SKILL,
     PAYMENTS_SCOPES,
     PAYMENTS_STEPS,
     ROOT_STEPS,
@@ -102,7 +103,8 @@ async def test_a_draft_from_payments_offers_execute_transfer_and_ends_in_the_int
     assert tree.root_bank.idp.scopes == [frozenset({"transfers:prepare"})]
     assert tree.gateway.called("execute_transfer") == []
     answer = _delegate_return(result.all_messages())
-    assert answer.content["next_step"] == DRAFT_NEXT_STEP and "next_step" not in answer.content["untrusted_data"]
+    assert answer.content["next_step"] == draft_next_step(DRAFT_SKILL)
+    assert "next_step" not in answer.content["untrusted_data"]
     assert skill_load_record(DRAFT_SKILL) in answer.metadata
     assert skills_loaded_in(result.all_messages(), delegates=DELEGATES) == {DRAFT_SKILL}
 

@@ -75,7 +75,7 @@ def build_agent_tree(
         domain_tools=[banking(skills.scopes_by_skill()), *root_tools],
         clock=clock,
         caps=caps,
-        delegates=delegate_toolset(delegates) if delegates else None,
+        delegates=delegate_toolset(delegates, caps=caps) if delegates else None,
         agent_index=subagents.index(),
     )
 

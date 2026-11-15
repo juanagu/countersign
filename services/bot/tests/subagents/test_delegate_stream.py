@@ -29,7 +29,9 @@ from tests.subagents.fakes import (
     DRAFT,
     DRAFT_ID,
     PAYMENTS_STEPS,
+    PREPARE_ARGS,
     ROOT_STEPS,
+    FakeGateway,
     Tree,
     build_tree,
     scripted,
@@ -100,6 +102,27 @@ async def test_the_confirm_card_is_forwarded_and_the_interrupt_names_its_draft(
         if m.get("activityType") == "bank-template"
     ]
     assert [c["content"]["data"]["draftId"] for c in cards] == [DRAFT_ID]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_two_prepares_in_one_delegation_show_one_confirm_card_for_the_draft_the_answer_binds(
+    signing_key: SigningKey, verifier: JwksTokenVerifier, tmp_path: Path
+) -> None:
+    gateway = FakeGateway(prepare_result={**DRAFT, "draft_id": "drf_a"})
+
+    def then_prepare_b(_: list[ModelMessage]) -> dict[str, Any]:
+        gateway.prepare_result = {**DRAFT, "draft_id": "drf_b"}
+        return PREPARE_ARGS
+
+    sub = scripted(*PAYMENTS_STEPS[:2], ("prepare_transfer", then_prepare_b), "Te preparé la transferencia.")
+    sse, _ = await _post(build_tree(scripted(*ROOT_STEPS), sub, gateway=gateway), signing_key, verifier, tmp_path)
+    events = _events(sse)
+
+    assert len(gateway.called("prepare_transfer")) == 2
+    [card] = _activities(events, "bank-template")
+    assert card["content"]["data"]["draftId"] == "drf_b"
+    [interrupt] = events[-1]["outcome"]["interrupts"]
+    assert interrupt["metadata"]["draft_id"] == "drf_b"
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")

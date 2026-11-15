@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pytest
-from pydantic_ai import ApprovalRequired, DeferredToolRequests
+from pydantic_ai import Agent, ApprovalRequired, DeferredToolRequests
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -22,14 +22,17 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.chat.deps import BotDeps
 from app.guardrails.run_guard import RunGuard
 from app.guardrails.verdict import ALLOW, Verdict, block
+from app.policy.delegate_policy import DelegatePolicyToolset
+from app.policy.frequency_caps import DELEGATIONS_PER_TURN
 from app.policy.policy_toolset import UNTRUSTED_NOTE
-from app.policy.risk_tier import RiskTier
+from app.policy.risk_tier import RISK_TIER_META_KEY, RiskTier
 from app.policy.tool_policy import ToolPolicy
 from app.skills.registry import SkillRegistry
-from app.subagents.delegate import DRAFT_NEXT_STEP, previous_reply, subagent_prompt
+from app.subagents.delegate import draft_next_step, previous_reply, subagent_prompt
 from tests.conftest import open_guard
 from tests.subagents.fakes import (
     DRAFT_ID,
+    DRAFT_SKILL,
     PAYMENTS,
     PAYMENTS_SCOPES,
     PAYMENTS_STEPS,
@@ -210,7 +213,7 @@ async def test_the_orchestrator_sees_the_subagents_reply_wrapped_as_untrusted_da
             "draft_id": DRAFT_ID,
         },
         "note": UNTRUSTED_NOTE,
-        "next_step": DRAFT_NEXT_STEP,  # Code's, outside the wrapper.
+        "next_step": draft_next_step(DRAFT_SKILL),  # Code's, outside the wrapper.
     }
 
 
@@ -296,6 +299,44 @@ async def test_the_conversations_sixth_t2_call_through_the_subagent_is_capped() 
 
     assert tree.gateway.called("prepare_transfer") == []
     assert _answer(result.all_messages()).content["untrusted_data"]["draft_id"] is None
+
+
+async def test_a_fourth_delegation_in_one_turn_is_refused_and_starts_no_subagent() -> None:
+    runs: list[AgentInfo] = []  # The subagent answers in one request, so one entry per run.
+    tree = build_tree(scripted(*[ROOT_STEPS[0]] * 4, "listo"), scripted("Nada que preparar.", seen=runs))
+    result = await tree.root.run(CUSTOMER, deps=_deps())
+
+    answers = [p.content for p in tool_returns(result.all_messages()) if p.tool_name == "ask_payments"]
+    assert len(runs) == 3 and len(answers) == 4
+    assert answers[3] == {"error": "policy_denied", "reason": f"at most {DELEGATIONS_PER_TURN} delegations per turn"}
+    await tree.root.run(CUSTOMER, deps=_deps())  # A new turn has its own count of three.
+    assert len(runs) == 6
+
+
+async def test_each_delegate_tool_declares_its_subagents_ceiling_as_its_tier() -> None:
+    seen: list[AgentInfo] = []
+    tree = build_tree(scripted("hola", seen=seen), scripted("x"))
+    await tree.root.run(CUSTOMER, deps=_deps())
+
+    [delegate] = [tool for tool in seen[0].function_tools if tool.name == "ask_payments"]
+    assert RiskTier.parse((delegate.metadata or {})["meta"][RISK_TIER_META_KEY]) is PAYMENTS.max_tier is RiskTier.T2
+
+
+async def test_a_delegate_tool_without_a_tier_is_refused_before_it_runs() -> None:
+    ran: list[str] = []
+    untiered: FunctionToolset[BotDeps] = FunctionToolset()
+
+    @untiered.tool_plain
+    def ask_loans(request: str) -> str:
+        ran.append(request)
+        return "ok"
+
+    gate = DelegatePolicyToolset(wrapped=untiered, names=frozenset({"ask_loans"}))
+    agent = Agent(scripted(("ask_loans", {"request": "r"}), "listo"), deps_type=BotDeps, toolsets=[gate])
+    result = await agent.run(CUSTOMER, deps=_deps())
+
+    [denied] = [p.content for p in tool_returns(result.all_messages()) if p.tool_name == "ask_loans"]
+    assert denied == {"error": "policy_denied", "reason": "the tool declares no risk tier"} and ran == []
 
 
 # The subagent's own previous reply, read by code from the thread, resolves an answer to its own question.
