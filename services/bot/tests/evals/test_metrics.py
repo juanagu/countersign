@@ -12,6 +12,7 @@ from evals.metrics import (
     guardrail_counts,
     latencies,
     percentile,
+    tokens_by_thread,
     tokens_per_run,
     ttft_by_served_model,
 )
@@ -47,6 +48,21 @@ def test_tokens_add_up_per_run_and_ignore_the_sdk_spans() -> None:
         _span("chat claude-sonnet-5-5", "b", **{"llm.token_count.total": 100}),
     ]
     assert tokens_per_run(runs, models) == [6500.0, 100.0]
+
+
+def test_a_threads_tokens_add_up_across_its_runs() -> None:
+    def stream(trace: str, thread: str) -> dict[str, object]:
+        return {"name": "bot.stream", "context": {"trace_id": trace}, "attributes": {"bot.thread_id": thread}}
+
+    runs = [stream("a", "t1"), stream("b", "t1"), stream("c", "t2")]
+    models = [
+        _span("chat claude-sonnet-5-5", "a", **{"llm.token_count.total": 100}),
+        _span("chat claude-sonnet-5-5", "b", **{"llm.token_count.total": 50}),
+        _span("chat claude-sonnet-5-5", "c", **{"llm.token_count.total": 7}),
+        _span("chat claude-sonnet-5-5", "other", **{"llm.token_count.total": 999}),
+    ]
+
+    assert tokens_by_thread(runs, models) == {"t1": 150.0, "t2": 7.0}
 
 
 def test_cache_share_counts_model_requests_only() -> None:

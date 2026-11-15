@@ -53,6 +53,8 @@ class LiveOutput:
     # A CUJ's extras: the ledger after the journey and each step-up request's HTTP status.
     ledger_after: Ledger | None = None
     step_up_statuses: list[int] = field(default_factory=list)
+    thread_id: str = ""
+    turns: int = 0
 
     @property
     def text(self) -> str:

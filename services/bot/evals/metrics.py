@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from app.guardrails.stream_timing import THREAD_ATTRIBUTE
 from evals.pii_scan import COMPOSE
 
 PHOENIX_SPANS = "http://localhost:6006/v1/projects/default/spans"
@@ -76,12 +77,28 @@ def latencies(stream_spans: list[Span]) -> dict[str, list[float]]:
     return found
 
 
-def tokens_per_run(stream_spans: list[Span], model_spans: list[Span]) -> list[float]:
+def _tokens_by_trace(model_spans: list[Span]) -> dict[str, float]:
     per_trace: dict[str, float] = defaultdict(float)
     for span in model_spans:
         if span["name"].startswith(MODEL_SPAN_PREFIX):
             per_trace[span["context"]["trace_id"]] += float(span["attributes"].get(TOKENS) or 0)
+    return per_trace
+
+
+def tokens_per_run(stream_spans: list[Span], model_spans: list[Span]) -> list[float]:
+    per_trace = _tokens_by_trace(model_spans)
     return [per_trace[s["context"]["trace_id"]] for s in stream_spans if s["context"]["trace_id"] in per_trace]
+
+
+def tokens_by_thread(stream_spans: list[Span], model_spans: list[Span]) -> dict[str, float]:
+    """Tokens of every run on a thread (a conversation's runs share the `bot.thread_id` attribute)."""
+    per_trace = _tokens_by_trace(model_spans)
+    totals: dict[str, float] = defaultdict(float)
+    for span in stream_spans:
+        thread = span["attributes"].get(THREAD_ATTRIBUTE)
+        if thread and span["context"]["trace_id"] in per_trace:
+            totals[thread] += per_trace[span["context"]["trace_id"]]
+    return dict(totals)
 
 
 def cache_read_share(model_spans: list[Span]) -> float | None:
