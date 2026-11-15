@@ -1,3 +1,23 @@
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Countersign: AI agents that take real actions, safely. The model proposes, code checks the policy, a person countersigns." width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/juanagu/countersign/actions/workflows/ci.yml"><img src="https://github.com/juanagu/countersign/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0e5a66" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/MCP-gateway%20%2B%202%20servers-0e5a66" alt="MCP">
+  <img src="https://img.shields.io/badge/Python-3.12-0e5a66" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/Node-22-0e5a66" alt="Node 22">
+</p>
+
+<p align="center">
+  <a href="architecture.pdf"><b>Slides</b></a> ·
+  <a href="docs/architecture.md"><b>Architecture</b></a> ·
+  <a href="docs/DEMO.md"><b>Demo script</b></a> ·
+  <a href="docs/decisions/"><b>Decisions (ADRs)</b></a> ·
+  <a href="docs/backlog.md"><b>Backlog</b></a>
+</p>
+
 # Countersign
 
 **A reference architecture for AI agents that take real actions, safely.** The model proposes; a person countersigns.
@@ -5,23 +25,54 @@
 The worked example is a banking assistant: a proof of concept that answers in Spanish, shows its sources and moves
 money only after the customer approves it.
 
-It proves one reference architecture end to end: answers streamed over SSE (AG-UI) that resume after a dropped
-connection; generative UI, with model-built A2UI cards validated against a catalog and server-built templates for
-anything transactional; RAG with citations over a knowledge base; an agent that calls domain tools over MCP through a
-gateway, with audience-bound tokens per server; guardrails at the input, the tool call and the output; transfers that
-need human approval plus a PIN step-up bound to the exact draft; and model failover with a backup per role.
+<p align="center">
+  <img src="docs/assets/demo-transfer.gif" alt="Juan types 'Mandale 50.000 a Ana'. The assistant prepares the transfer and shows a confirm card; he confirms, enters his PIN, and a receipt card appears." width="800">
+</p>
+
+<p align="center"><sub>"Send 50,000 to Ana": the model prepares a draft, a server-rendered card shows it, the customer approves with a
+PIN, and the payments server executes only that exact draft. Recorded from the local stack.</sub></p>
+
+## Why Countersign
+
+An agent that only talks can be kept in line by its prompt. An agent that can move money, change records or send
+messages can't: one injected sentence in a memo or a merchant name is enough to talk it into acting. Countersign moves
+every safety decision out of the prompt and into code the model can't argue with:
+
+- **The model never holds a credential.** Each hop exchanges the user's token for one bound to the next service, with
+  only the scopes it needs.
+- **Risk is declared, not prompted.** Every tool carries a tier, and a policy layer decides what runs, what needs
+  approval and what is refused.
+- **A person countersigns the exact action.** Money movement needs approval plus a PIN step-up whose token is bound to
+  the draft's amount, currency and payee, so nothing can change between "yes" and "done".
+- **The model can't draw what it can't verify.** Confirm and receipt cards are server templates filled from tool
+  results; model-built UI is validated against a catalog with no credential inputs.
+
+It proves one architecture end to end: answers streamed over SSE (AG-UI) that resume after a dropped connection;
+generative UI, with model-built A2UI cards validated against a catalog and server-built templates for anything
+transactional; RAG with citations over a knowledge base; an agent that calls domain tools over MCP through a gateway,
+with audience-bound tokens per server; guardrails at the input, the tool call and the output; transfers that need
+human approval plus a PIN step-up bound to the exact draft; and model failover with a backup per role.
 
 > **Disclaimer.** This is a proof of concept, not production software. All data is synthetic. The identity provider
 > is a mock that signs in whoever you pick and uses a fixed demo PIN. The project is not affiliated with, endorsed by
 > or built for any bank; "Banco Demo" is fictional.
 
-## Read more
+## Patterns you can reuse
 
-- [`architecture.pdf`](architecture.pdf): the slides.
-- [`docs/architecture.md`](docs/architecture.md): components, the token chain, request flows and the ADR index.
-- [`docs/DEMO.md`](docs/DEMO.md): a click-by-click script for the five demo scenarios.
-- [`docs/decisions/`](docs/decisions/): the architecture decision records.
-- [`docs/backlog.md`](docs/backlog.md): known gaps and follow-ups.
+Each pattern stands on its own; the ADR explains the alternatives and why this one won.
+
+| Pattern                                                  | What it stops                                                | Read                                                                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Risk tiers on every tool, enforced by a policy toolset   | A prompt talking the agent into a write it shouldn't make    | [`services/bot/app/policy`](services/bot/app/policy), [ADR 014](docs/decisions/014-guardrails.md)                                            |
+| Approval plus a step-up token bound to the exact draft   | The amount or payee changing after the person said yes       | [ADR 013](docs/decisions/013-transfer-approval-and-step-up.md)                                                                               |
+| Token exchange at every hop, no passthrough              | One leaked token reaching every backend                      | [ADR 008](docs/decisions/008-token-exchange-and-mcp-audiences.md), [ADR 017](docs/decisions/017-mcp-gateway.md)                              |
+| An MCP gateway: catalog, rate limits, breaker, audit     | Each backend reimplementing auth and limits, or failing open | [`services/mcp-gateway`](services/mcp-gateway), [ADR 017](docs/decisions/017-mcp-gateway.md)                                                 |
+| Server templates for transactional UI                    | A model-written receipt for a transfer that never happened   | [ADR 011](docs/decisions/011-server-templates-as-activity-messages.md)                                                                       |
+| Model-built UI validated against a catalog               | Generated forms that ask for a password or card number       | [ADR 012](docs/decisions/012-agent-side-a2ui-generation.md)                                                                                  |
+| Tool output treated as untrusted data                    | Indirect prompt injection through memos and merchant names   | [ADR 014](docs/decisions/014-guardrails.md)                                                                                                  |
+| Resumable streams over a Redis event log                 | Answers lost when the connection drops mid-turn              | [ADR 015](docs/decisions/015-resumable-streams.md)                                                                                           |
+| Model failover with its own quality gate                 | A provider incident taking the assistant down                | [ADR 018](docs/decisions/018-llm-model-failover.md)                                                                                          |
+| Evals and a red team as merge gates                      | Quality and safety regressions that unit tests can't see     | [`services/bot/evals`](services/bot/evals), [ADR 016](docs/decisions/016-evals.md)                                                           |
 
 ## Architecture at a glance
 
