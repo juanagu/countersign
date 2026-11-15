@@ -21,8 +21,8 @@ async function warm(stack: Stack) {
   stack.seen.length = 0;
 }
 
-describe('the gateway lists and calls by token scope (ADR 020)', () => {
-  it('lists every tool for a full-ceiling token, as today', async () => {
+describe('the gateway lists and calls by token scope', () => {
+  it('lists every tool for a token holding every pre-approval scope plus transfers:execute', async () => {
     const stack = await createStack();
     const names = (await (await stack.connect(await stack.gatewayToken('juan'))).listTools()).tools.map((t) => t.name);
     expect(names.sort()).toEqual(
@@ -128,12 +128,35 @@ describe('the gateway lists and calls by token scope (ADR 020)', () => {
     }
   });
 
-  it('does not exchange for a backend whose tools the token cannot list, once the catalog knows them', async () => {
+  it('still asks the IdP for a backend the token cannot list, and logs the refusal as invalid_scope', async () => {
+    const lines: string[] = [];
+    const logger = pino(
+      { level: 'info' },
+      new Writable({
+        write(chunk, _e, done) {
+          lines.push(String(chunk));
+          done();
+        },
+      }),
+    );
+    const stack = await createStack({ logger });
+    await warm(stack);
+    lines.length = 0;
+    await (await stack.connect(await stack.gatewayToken('juan', ACCOUNTS_ONLY))).listTools();
+
+    // A stale or empty last-good entry must be able to heal, so the catalog never skips the refresh.
+    expect(stack.seen.filter((r) => new URLSearchParams(r.body).get('audience') === 'mcp-payments')).not.toEqual([]);
+    expect(hostCalls(stack, 'payments.test')).toEqual([]);
+    expect(lines.map((l) => JSON.parse(l))).toContainEqual(
+      expect.objectContaining({ backend: 'payments', oauth_error: 'invalid_scope', msg: 'token exchange failed' }),
+    );
+  });
+
+  it('an execute-only token lists exactly execute_transfer', async () => {
     const stack = await createStack();
     await warm(stack);
-    await (await stack.connect(await stack.gatewayToken('juan', ACCOUNTS_ONLY))).listTools();
-    expect(hostCalls(stack, 'payments.test')).toEqual([]);
-    expect(stack.seen.filter((r) => new URLSearchParams(r.body).get('audience') === 'mcp-payments')).toEqual([]);
+    const client = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'));
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['execute_transfer']);
   });
 
   it('serves a first caller whose token matches no backend scope an empty list, not an error', async () => {

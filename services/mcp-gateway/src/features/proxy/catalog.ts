@@ -1,10 +1,11 @@
 import { readListScope, readScope, readTier, type RiskTier } from '@poc/mcp-kit';
 import { McpError, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Logger } from 'pino';
 import type { Backend } from './backends.js';
 import { BackendFailure, type BackendClient } from './backend-client.js';
 import type { CircuitBreaker } from './circuit-breaker.js';
 import type { CallerContext } from './request-context.js';
-import type { TokenExchanger } from './token-exchanger.js';
+import { logExchangeFailure, type TokenExchanger } from './token-exchanger.js';
 import { traceHeaders } from './trace-context.js';
 
 export interface Route {
@@ -20,6 +21,7 @@ export interface CatalogDeps {
   breakers: ReadonlyMap<string, CircuitBreaker>;
   client: BackendClient;
   exchanger: TokenExchanger;
+  logger: Logger;
 }
 
 /**
@@ -61,7 +63,6 @@ export class Catalog {
 
   private async refreshBackend(backend: Backend, caller: CallerContext): Promise<void> {
     const breaker = this.deps.breakers.get(backend.name);
-    if (!this.mayListSomething(backend, caller)) return; // Nothing here for this caller: no exchange, no breaker.
     if (!breaker?.tryAcquire()) return; // Open: the last good list stands.
     try {
       const token = await this.deps.exchanger.tokenFor(caller.principal, caller.token, backend.audience);
@@ -78,20 +79,19 @@ export class Catalog {
       if (error instanceof BackendFailure && error.kind === 'unavailable') breaker.recordFailure();
       else if (error instanceof BackendFailure || error instanceof McpError)
         breaker.recordSuccess(); // It answered.
-      else breaker.release(); // Never reached the backend, e.g. an exchange the IdP refused with invalid_scope.
+      else {
+        breaker.release(); // Never reached the backend, e.g. an exchange the IdP refused with invalid_scope.
+        logExchangeFailure(this.deps.logger, backend.name, error);
+      }
     }
-  }
-
-  /** False when the backend's last good list has no tool this caller may list; unknown backends are tried. */
-  private mayListSomething(backend: Backend, caller: CallerContext): boolean {
-    const known = this.lastGood.get(backend.name);
-    return known === undefined || known.some((tool) => isListable(tool, caller.principal.scopes));
   }
 }
 
+/** Listed to a token that may list it, or call it: an execute-only token is the approved call's own. */
 function isListable(tool: Tool, scopes: ReadonlySet<string>): boolean {
   const listScope = readListScope(tool._meta);
-  return listScope !== undefined && scopes.has(listScope);
+  const callScope = readScope(tool._meta);
+  return (listScope !== undefined && scopes.has(listScope)) || (callScope !== undefined && scopes.has(callScope));
 }
 
 function merge(backends: readonly Backend[], lastGood: ReadonlyMap<string, Tool[]>) {

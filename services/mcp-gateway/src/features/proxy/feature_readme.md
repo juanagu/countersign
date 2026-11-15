@@ -14,14 +14,15 @@ and an audit line per call. It holds no banking logic and never reads, checks or
   schemas are copied verbatim, a tool without a tier or a valid `bank/scope` is dropped (its calls answer
   `unknown_tool`), a name two backends serve is served by neither (health: `unhealthy`).
   Each backend's last good list is kept for when it is down. `toolsFor(scopes)` filters the one shared catalog per
-  request by each tool's list scope; the catalog is never filtered in place. A backend is skipped for a caller whose
-  scopes list none of its tools, or whose exchange the IdP refuses with `invalid_scope`, without touching its breaker.
+  request by each tool's list scope or call scope (an execute-only token lists `execute_transfer`); the catalog is
+  never filtered in place. Every `tools/list` refreshes every backend for the caller, so an empty or stale last-good
+  entry heals; an exchange the IdP refuses (`invalid_scope`) releases the breaker and is logged with its RFC 6749 code.
 - `RateLimiter` (T1 120/min, T2 20 and T3 10 per 10 min, per `sub`), `CircuitBreaker` (5 failures, open 30 s,
   one probe), `createAuditLog` (`metric: "mcp.tool_call"`).
 
 ## Data flow
 
-`tools/list` → the catalog's tools whose list scope the token holds (ADR 020).
+`tools/list` → the catalog's tools whose list scope or call scope the token holds (ADR 020).
 
 `tools/call` → find the tool's route in the catalog (unknown: `unknown_tool`) → the route's `bank/scope` must be in
 the token's scopes (else `insufficient_scope`, which is audited, never reaches the IdP or the backend and is not

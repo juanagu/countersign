@@ -20,9 +20,9 @@ export interface ClientPolicy {
   targets: readonly string[];
   /** Whether issued scopes are capped by the subject token's own (true once the subject holds banking scopes). */
   inheritSubjectScopes: boolean;
-  /** Whether a request without `scope` is refused instead of getting the whole ceiling (ADR 020). */
+  /** Whether a request without `scope` is refused instead of getting the whole ceiling. */
   scopeRequired: boolean;
-  /** Scopes that may only be requested alone, so a token that holds one can do nothing else (ADR 020). */
+  /** Scopes that may only be requested alone, so a token that holds one can do nothing else. */
   soloScopes: readonly string[];
 }
 

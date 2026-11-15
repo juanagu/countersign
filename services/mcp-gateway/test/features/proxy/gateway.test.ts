@@ -43,7 +43,7 @@ describe('gateway in front of the real mcp-accounts and mcp-payments', () => {
       beneficiary_id: 'ben-juan-ana',
     });
 
-    // The approved call holds a token with transfers:execute alone (ADR 020).
+    // The approved call holds a token with transfers:execute alone.
     const approved = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'));
     const result = await approved.callTool({
       name: 'execute_transfer',

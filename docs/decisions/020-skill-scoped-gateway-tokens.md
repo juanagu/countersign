@@ -46,7 +46,9 @@ Checked in the code on 2026-11-15:
 ### 1. Each MCP tool declares its scope in `_meta`
 `@poc/mcp-kit` replaces `tierMeta` with `toolMeta(tier, scope, { listScope? })` and adds `SCOPE_META_KEY =
 'bank/scope'`, `LIST_SCOPE_META_KEY = 'bank/listScope'`, `readScope(meta)` and `readListScope(meta)`. A valid
-scope matches `^[a-z]+:[a-z]+$`. `readListScope` returns `listScope ?? scope`. Each tool's handler checks the
+scope matches `^[a-z]+:[a-z]+$`. `readListScope` returns `listScope ?? scope`. The bot reads only `bank/scope`:
+list filtering is the gateway's job, so the bot has no `readListScope`. The scope pattern and `readScope` live in
+`services/bot/app/policy/tool_scopes.py`, because `banking` and `skills` both use them. Each tool's handler checks the
 same constant it declares.
 
 | Tool | Server | `bank/riskTier` | `bank/scope` (needed to call) | `bank/listScope` (needed to list) |
@@ -72,7 +74,8 @@ scopes: [accounts:read, beneficiaries:read, transfers:prepare]
 # knowledge.md: no field; search_knowledge is bot-local
 ```
 
-`Skill.scopes: frozenset[str]` is validated against the same pattern. `SkillRegistry.scopes_by_skill()` returns
+`Skill.scopes: frozenset[str]` is validated against the same pattern and refuses any approval-only scope
+(`APPROVAL_ONLY_SCOPES = {transfers:execute}`, in `app/policy/tool_scopes.py`), so a skill can't put it on a session token. `SkillRegistry.scopes_by_skill()` returns
 `{name: scopes}`, and `main.py` passes it to `banking_toolset`, so `banking` imports nothing from `skills`. A skill
 needs the gateway exactly when its `scopes` is non-empty. `GATEWAY_NEEDED_BY` is deleted, which closes the
 gateway half of F17.
@@ -82,8 +85,10 @@ gateway half of F17.
 exchanged token as static `auth`. `_exchanged_auth` goes.
 - **Wanted set** = the union of `scopes_by_skill[s]` over `ctx.deps.loaded_skills`. If it is empty, there are no
   tools and no exchange (as today).
-- **Session.** With no session, or when the wanted set is not a subset of the session's set, the toolset closes the
-  current session, exchanges for the wanted set and opens a new one. `loaded_skills` only grows within a run, so a
+- **Session.** With no session, or when the wanted set is not a subset of the session's set, the toolset exchanges for the
+  wanted set, opens the new session and only then closes the old one. If that growth fails, the old session stays
+  (the tools that worked keep working) and the failure is logged; only a first session that fails marks the server
+  unavailable. `loaded_skills` only grows within a run, so a
   run holds one session at a time and exchanges at most once per growth step. Today that is at most twice:
   accounts, then payments.
 - **`get_tools`** hides any tool without a valid `bank/scope` and logs its name once.
@@ -94,12 +99,14 @@ exchanged token as static `auth`. `_exchanged_auth` goes.
     cached or reused.
   - Otherwise the call goes through the session token unchanged, and the gateway refuses it. The toolset does not
     second-guess the policy, and the gateway is the lock.
-- **A failed approved exchange** returns the tool error `{"error": "service_unavailable", "service":
+- **A failed approved setup** (the exchange, or opening the one-call session, so anything before `tools/call` is
+  sent) returns the tool error `{"error": "service_unavailable", "service":
   "mcp-gateway"}` without calling the gateway. The step-up `jti` is still unspent, the model says nothing was sent,
   and the customer asks again (ADR 013's failed-resume path). The customer sees what they see today when
   mcp-payments is down at resume.
 - **`TokenExchanger.token_for(subject_token, audience, scopes)`** requires a non-empty set, sends it sorted and
-  space-joined, and raises `TokenExchangeError` if the response's `scope` isn't exactly that set.
+  space-joined, and raises `TokenExchangeError` if the response's `scope` isn't exactly that set. The error carries the IdP's RFC 6749 `error`
+  code when it is a known one, and the bot logs it beside the error type (never the body).
 
 ### 4. Token exchange contract
 The bot hop always sends `scope`. A pre-approval request, for example:
@@ -129,6 +136,10 @@ Rules for every client:
   issue less than was asked. Trimming would make a bot bug look like a working token until a tool call fails in
   the middle of a conversation. Refusing makes it fail at the exchange, where it is logged.
 - A `scope` that is present but blank: `400 {"error": "invalid_request"}`. It never falls back to the ceiling.
+- A `scope` parameter that is repeated: `400 {"error": "invalid_request"}` (RFC 6749 §3.1).
+- **Audit.** Whenever a token carrying a solo scope is issued, the IdP logs one structured line (`solo_scope_token_issued`)
+  with client, `sub`, audience, scope, `jti` and `exp`. Never the token, and no PII beyond `sub`, which the gateway
+  audit already logs. The `jti` ties it to the gateway's audit of the call.
 
 New in `ClientPolicy`, set for `bot` only:
 - `scopeRequired: true`. A missing `scope` gets `400 {"error": "invalid_request"}`.
@@ -141,13 +152,17 @@ scopes, so the customer's own consent per scope is not modelled. That is out of 
 ### 5. The gateway lists and calls by token scope
 - **Catalog.** It drops a tool without a valid `bank/scope`. Its calls then answer `unknown_tool`. `Route` gains
   `scope`.
-- **`tools/list`** returns the catalog's tools whose `readListScope` is in `principal.scopes`. The filter runs on
+- **`tools/list`** returns the catalog's tools whose `readListScope` or `bank/scope` is in `principal.scopes`. The
+  call scope counts so the execute-only token of an approved call lists `execute_transfer`; otherwise the MCP SDK's
+  re-list after the call, after money has moved, would see nothing. The filter runs on
   every request, over the shared unfiltered catalog. The F43 catalog cache must cache the unfiltered list and filter
   per request, never cache a filtered one.
-- **Refresh.** A backend is skipped for this caller when its last good list has no tool the caller may list. An
-  exchange refused with `invalid_scope` also skips the backend. Neither changes its breaker, and its last good list
-  stands. To support this, the gateway's `TokenExchangeError` gains `code`, read from the IdP body's `error` only
-  when it is one of the RFC 6749 codes.
+- **Refresh.** Every `tools/list` refreshes every backend for the caller; there is no skip. The catalog keeps only
+  tools with a tier and a scope, so a skip decided on that filtered list could never heal an empty or stale entry
+  (a backend that once listed scope-less tools, or later adds a tool with a new scope). An exchange the IdP refuses
+  releases the breaker and leaves the last good list. The gateway's `TokenExchangeError` carries `code`, read from the
+  IdP body's `error` only when it is one of the RFC 6749 codes, and the gateway logs it (`invalid_scope` at info,
+  anything else at warn) so a refusal can be told from the IdP being down.
 - **`tools/call` order:** route (`unknown_tool`), then scope, then rate limit, then breaker, then exchange, then
   forward. A call whose route's `bank/scope` is not in `principal.scopes` answers, as a JSON-RPC *result* like
   every other gateway tool error:
@@ -243,7 +258,7 @@ scopes, so the customer's own consent per scope is not modelled. That is out of 
 4. `feat(f42): request gateway scopes by loaded skill`:
    - `services/bot/skills/accounts.md`, `payments.md`;
    - `app/skills/registry.py`;
-   - `app/banking/mcp_toolsets.py` and a new `app/banking/tool_scopes.py` (the two `_meta` keys and readers);
+   - `app/banking/mcp_toolsets.py` and a new `app/policy/tool_scopes.py` (the `_meta` key, pattern and reader);
    - `app/banking/token_exchange.py`, `app/main.py`;
    - the bot's MCP fakes, which gain `bank/scope`.
 5. `feat(f42): require scope from the bot and keep transfers:execute alone`: `apps/bff/src/features/idp/client-policies.ts`,
@@ -264,6 +279,12 @@ scopes, so the customer's own consent per scope is not modelled. That is out of 
 - **Cost.** One more IdP round trip when a run loads a second banking skill, and one on every approved transfer,
   which is in the money path. If the IdP is down at that moment, the transfer fails without spending the step-up
   `jti`, and the customer asks again. Before, a run that already held a token survived an IdP outage later in the run.
+- **The extra IdP round trip on listing.** With no skip, a caller whose token matches no tool of a backend still
+  asks the IdP for that backend's token on every `tools/list` and is refused. That is cost for F43 (catalog caching)
+  to absorb, in exchange for a catalog that heals.
+- **A skill stays loaded for the thread.** `routes.py` rebuilds `loaded_skills` from every past `load_skill` in the
+  history, because an approval resume needs it. So "loaded skills" means "loaded in this thread": a later turn keeps
+  the wider token and its tools. Scoping them to the turn is backlog F59.
 - **Drift.** Frontmatter `scopes` repeats what the tools' `_meta` says. A mismatch hides a tool without any error.
   The cross-check test and the bot's one-time log for hidden tools are the guard. It also checks part of what F18
   asks for.

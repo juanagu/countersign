@@ -6,7 +6,7 @@ import { AUDIENCE_SCOPES, GATEWAY_AUDIENCE } from '../../../../../apps/bff/src/f
 import { createStack, GATEWAY_SECRET } from '../../support/stack.js';
 
 // Frontmatter `scopes` repeats what each tool's `_meta` says. A mismatch hides a tool with no error, so this
-// reads both from the real backends and the real skills (ADR 020, drift).
+// reads both from the real backends and the real skills (drift).
 const SKILLS_DIR = new URL('../../../../bot/skills/', import.meta.url);
 
 interface Skill {
@@ -56,7 +56,7 @@ async function servedTools(): Promise<ServedTool[]> {
   return served;
 }
 
-describe('skill scopes against the tools the real backends serve (ADR 020)', () => {
+describe('skill scopes against the tools the real backends serve', () => {
   const skills = loadSkills();
 
   it('reads the skills it checks', () => {

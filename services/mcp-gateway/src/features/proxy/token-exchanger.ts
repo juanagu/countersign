@@ -1,4 +1,5 @@
 import type { Principal } from '@poc/mcp-kit';
+import type { Logger } from 'pino';
 import { z } from 'zod';
 
 const GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
@@ -27,6 +28,14 @@ export class TokenExchangeError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Logs a refused or failed exchange: which backend and the RFC 6749 code when the IdP sent one, never a body. */
+export function logExchangeFailure(logger: Logger, backend: string, error: unknown): void {
+  if (!(error instanceof TokenExchangeError)) return;
+  // invalid_scope is the expected answer for a token that holds nothing this backend serves.
+  const level = error.code === 'invalid_scope' ? 'info' : 'warn';
+  logger[level]({ backend, oauth_error: error.code }, 'token exchange failed');
 }
 
 function oauthErrorCode(body: unknown): OAuthErrorCode | undefined {

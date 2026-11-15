@@ -7,8 +7,33 @@ GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange"
 ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"  # noqa: S105 (a token type URN)
 
 
+# RFC 6749 §5.2 error codes: the only IdP text that is ever kept, since it is a fixed vocabulary.
+OAUTH_ERROR_CODES = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+    }
+)
+
+
 class TokenExchangeError(Exception):
     """The IdP refused or failed the exchange; the tool call cannot proceed."""
+
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
+
+
+def _oauth_error_code(response: httpx.Response) -> str | None:
+    try:
+        value = response.json().get("error")
+    except (ValueError, AttributeError):
+        return None
+    return value if value in OAUTH_ERROR_CODES else None
 
 
 class _TokenResponse(BaseModel):
@@ -18,7 +43,7 @@ class _TokenResponse(BaseModel):
 
 
 class TokenExchanger:
-    """Exchanges the user's `aud=bot` token for an `aud=mcp-gateway` token (security rule 1, ADR 017, ADR 020).
+    """Exchanges the user's `aud=bot` token for an `aud=mcp-gateway` token (security rule 1).
 
     The gateway exchanges again for each backend. Nothing is cached: the BFF mints a fresh bot token per request.
     """
@@ -52,7 +77,7 @@ class TokenExchanger:
         except httpx.HTTPError as error:
             raise TokenExchangeError(f"token endpoint unreachable: {type(error).__name__}") from error
         if response.status_code != httpx.codes.OK:
-            raise TokenExchangeError(f"token exchange refused ({response.status_code})")
+            raise TokenExchangeError(f"token exchange refused ({response.status_code})", _oauth_error_code(response))
         try:
             body = _TokenResponse.model_validate_json(response.content)
         except ValidationError as error:

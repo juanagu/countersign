@@ -106,3 +106,19 @@ async def test_raises_when_the_idp_refuses_or_answers_garbage(response: httpx.Re
     exchanger = _exchanger(httpx.MockTransport(lambda _: response))
     with pytest.raises(TokenExchangeError):
         await exchanger.token_for("incoming", "mcp-gateway", frozenset({"accounts:read"}))
+
+
+@pytest.mark.parametrize(
+    ("response", "code"),
+    [
+        (httpx.Response(400, json={"error": "invalid_scope", "error_description": "secret"}), "invalid_scope"),
+        (httpx.Response(400, json={"error": "made_up"}), None),
+        (httpx.Response(503, content=b"<html>down</html>"), None),
+    ],
+)
+async def test_a_refusal_carries_only_a_known_rfc_6749_code(response: httpx.Response, code: str | None) -> None:
+    exchanger = _exchanger(httpx.MockTransport(lambda _: response))
+    with pytest.raises(TokenExchangeError) as raised:
+        await exchanger.token_for("incoming", "mcp-gateway", frozenset({"accounts:read"}))
+    assert raised.value.code == code
+    assert "secret" not in str(raised.value)

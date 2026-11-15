@@ -49,6 +49,11 @@ def test_rejects_malformed_scopes(scopes: str) -> None:
         parse_skill(_SKILL.format(extra=f"scopes: {scopes}\n"))
 
 
+def test_rejects_an_approval_only_scope() -> None:
+    with pytest.raises(ValidationError, match="approval-only"):
+        parse_skill(_SKILL.format(extra="scopes: [accounts:read, transfers:execute]\n"))
+
+
 def test_rejects_an_unknown_tier() -> None:
     with pytest.raises(ValidationError):
         parse_skill("---\nname: x\ndescription: d\ntools: [a]\nmax_tier: T9\n---\nbody")

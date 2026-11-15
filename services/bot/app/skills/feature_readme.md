@@ -2,7 +2,7 @@
 
 Domain behaviour as markdown files (`services/bot/skills/*.md`): YAML frontmatter (`name`, `description`,
 `tools` allow-list, `max_tier`, optional `scopes`) plus instructions. `scopes` lists the gateway scopes the
-skill's MCP tools need to be listed (ADR 020), never one only an approved call gets (`transfers:execute`).
+skill's MCP tools need to be listed. A skill that lists an approval-only scope (`transfers:execute`) fails validation.
 
 ## Exposed interface
 
@@ -14,4 +14,5 @@ skill's MCP tools need to be listed (ADR 020), never one only an approved call g
 ## Data flow
 
 Index in the instructions → model calls `load_skill` → `PolicyToolset` starts showing that skill's tools.
-Loaded skills last one run (one user turn); the model loads them again on the next turn.
+Loaded skills last the whole thread: `routes.py` rebuilds `loaded_skills` from every past `load_skill` in the
+history (an approval resume needs it), so a later turn keeps the wider token and tools (backlog F59).

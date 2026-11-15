@@ -49,6 +49,22 @@ describe('MCP gateway hop of the token exchange (ADR 017)', () => {
     expect(payload).toMatchObject({ sub: 'ana', act: { sub: 'bot' } });
   });
 
+  it('refuses a gateway request that repeats scope, not taking the last one or the whole ceiling (RFC 6749 §3.1)', async () => {
+    const env = await buildTestApp();
+    const gateway = await gatewayToken(env);
+    const form = new URLSearchParams({ grant_type: GRANT, subject_token: gateway, subject_token_type: ACCESS });
+    form.append('audience', 'mcp-accounts');
+    form.append('scope', 'accounts:read');
+    form.append('scope', 'accounts:read');
+    const res = await env.app.request('/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: GATEWAY },
+      body: form,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_request' });
+  });
+
   it.each(['mcp-accounts', 'mcp-payments'])(
     'refuses the bot a token for %s: only the gateway may ask (rule 1)',
     async (audience) => {

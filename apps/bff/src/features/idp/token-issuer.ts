@@ -55,6 +55,14 @@ export interface ExchangedTokenRequest {
   notAfter: number;
 }
 
+export interface ExchangedToken {
+  token: string;
+  expiresIn: number;
+  jti: string;
+  /** Seconds since epoch. */
+  exp: number;
+}
+
 /** RAR-shaped (RFC 9396) grant for one transfer: exactly the draft the customer confirmed. */
 export interface TransferAuthorization {
   type: 'transfer';
@@ -101,12 +109,13 @@ export class TokenIssuer {
    * Mints an audience-bound token for one downstream resource server. Returns it with its lifetime, or
    * undefined when the subject token has less than MIN_EXCHANGED_TOKEN_TTL_SECONDS left.
    */
-  async issueExchanged(req: ExchangedTokenRequest): Promise<{ token: string; expiresIn: number } | undefined> {
+  async issueExchanged(req: ExchangedTokenRequest): Promise<ExchangedToken | undefined> {
     const now = Math.floor(Date.now() / 1000);
     const expiresIn = Math.min(EXCHANGED_TOKEN_TTL_SECONDS, req.notAfter - now);
     if (expiresIn < MIN_EXCHANGED_TOKEN_TTL_SECONDS) return undefined;
-    const token = await this.sign({ scope: req.scopes.join(' '), act: req.act }, req.sub, req.audience, expiresIn);
-    return { token, expiresIn };
+    const jti = randomUUID();
+    const token = await this.sign({ scope: req.scopes.join(' '), act: req.act }, req.sub, req.audience, expiresIn, jti);
+    return { token, expiresIn, jti, exp: now + expiresIn };
   }
 
   /** Short-lived, single-use (by `jti`) token that authorises executing exactly one transfer draft. */
@@ -142,7 +151,13 @@ export class TokenIssuer {
     return { sub: payload.sub, name: payload.name };
   }
 
-  private sign(claims: JWTPayload, sub: string, audience: string, ttlSeconds: number): Promise<string> {
+  private sign(
+    claims: JWTPayload,
+    sub: string,
+    audience: string,
+    ttlSeconds: number,
+    jti: string = randomUUID(),
+  ): Promise<string> {
     return new SignJWT(claims)
       .setProtectedHeader({ alg: ALG, kid: this.kid, typ: 'JWT' })
       .setIssuer(this.issuer)
@@ -150,7 +165,7 @@ export class TokenIssuer {
       .setAudience(audience)
       .setIssuedAt()
       .setExpirationTime(`${ttlSeconds}s`)
-      .setJti(randomUUID())
+      .setJti(jti)
       .sign(this.privateKey);
   }
 }

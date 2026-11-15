@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Hono, type Context } from 'hono';
+import type { Logger } from 'pino';
 import { AUDIENCE_SCOPES, CLIENT_POLICIES, type ClientPolicy } from './client-policies.js';
 import type { ExchangeSubject, TokenIssuer } from './token-issuer.js';
 
@@ -11,6 +12,7 @@ export interface TokenExchangeOptions {
   issuer: TokenIssuer;
   /** client_id → secret. Only confidential clients may exchange tokens. */
   clients: Readonly<Record<string, string>>;
+  logger: Logger;
 }
 
 type OAuthError =
@@ -86,7 +88,7 @@ function sameChain(subject: ExchangeSubject, expected: readonly string[]): boole
  * RFC 8693-shaped token exchange: a subject token for an audience-bound downstream token. Each client
  * presents one kind of subject token and asks for a fixed set of audiences (`CLIENT_POLICIES`).
  */
-export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): Hono {
+export function tokenExchangeRoutes({ issuer, clients, logger }: TokenExchangeOptions): Hono {
   const app = new Hono();
 
   app.post('/token', async (c) => {
@@ -97,7 +99,7 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
     const policy = client && Object.hasOwn(CLIENT_POLICIES, client) ? CLIENT_POLICIES[client] : undefined;
     if (!client || !policy) return oauthError(c, 'invalid_client', 401);
 
-    const form = await c.req.parseBody();
+    const form = await c.req.parseBody({ all: true });
     const field = (name: string) => (typeof form[name] === 'string' ? (form[name] as string) : undefined);
     if (field('grant_type') !== GRANT_TYPE) return oauthError(c, 'unsupported_grant_type');
     const subjectToken = field('subject_token');
@@ -109,6 +111,8 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
       return oauthError(c, 'invalid_target');
     }
 
+    // RFC 6749 §3.1: a parameter must not repeat. Taking the last would let two scopes disagree about the request.
+    if (Array.isArray(form['scope'])) return oauthError(c, 'invalid_request');
     // Present but blank is a malformed request, never a fallback to the whole ceiling.
     const requestedScope = field('scope');
     if (requestedScope !== undefined && requestedScope.trim() === '') return oauthError(c, 'invalid_request');
@@ -127,6 +131,21 @@ export function tokenExchangeRoutes({ issuer, clients }: TokenExchangeOptions): 
       notAfter: subject.exp,
     });
     if (!exchanged) return oauthError(c, 'invalid_grant'); // The subject token is about to expire.
+    if (scopes.some((scope) => policy.soloScopes.includes(scope))) {
+      // The token itself never goes in the log; the `jti` ties this line to the gateway's audit of the call.
+      logger.info(
+        {
+          event: 'solo_scope_token_issued',
+          client,
+          sub: subject.sub,
+          audience,
+          scope: scopes.join(' '),
+          jti: exchanged.jti,
+          exp: exchanged.exp,
+        },
+        'token with a solo scope issued',
+      );
+    }
     return c.json({
       access_token: exchanged.token,
       issued_token_type: ACCESS_TOKEN_TYPE,

@@ -64,7 +64,11 @@ export async function createStack(options: StackOptions = {}) {
   const keys = createLocalJWKSet(await issuer.jwks());
   const idp = new Hono().route(
     '/',
-    tokenExchangeRoutes({ issuer, clients: { bot: BOT_SECRET, 'mcp-gateway': GATEWAY_SECRET } }),
+    tokenExchangeRoutes({
+      issuer,
+      clients: { bot: BOT_SECRET, 'mcp-gateway': GATEWAY_SECRET },
+      logger: pino({ level: 'silent' }),
+    }),
   );
   const accountsRepo = new InMemoryAccountsRepository();
   const transfersRepo = new InMemoryTransfersRepository();

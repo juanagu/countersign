@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import Callable, Mapping
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -9,9 +10,9 @@ from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 
 from app.banking.token_exchange import TokenExchangeError, TokenExchanger
-from app.banking.tool_scopes import read_scope
 from app.chat.deps import BotDeps
 from app.policy.risk_tier import RISK_TIER_META_KEY, RiskTier
+from app.policy.tool_scopes import read_scope
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,12 @@ SessionFactory = Callable[[str], MCPToolset[BotDeps]]
 """Builds an unopened MCP session on the gateway that authenticates with the given bearer token."""
 
 
+def _error_fields(error: Exception) -> dict[str, str]:
+    """What a failure may log: its type and, for a refused exchange, the RFC 6749 code. Never a message or body."""
+    code = error.code if isinstance(error, TokenExchangeError) else None
+    return {"error": type(error).__name__, **({"oauth_error": code} if code else {})}
+
+
 def _meta(tool: ToolsetTool[BotDeps]) -> Mapping[str, object]:
     meta = (tool.tool_def.metadata or {}).get("meta")
     return meta if isinstance(meta, Mapping) else {}
@@ -28,7 +35,7 @@ def _meta(tool: ToolsetTool[BotDeps]) -> Mapping[str, object]:
 
 @dataclass
 class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
-    """The MCP gateway, connected with a token scoped to the loaded skills (ADR 020).
+    """The MCP gateway, connected with a token scoped to the loaded skills.
 
     No skill that needs the gateway, no exchange and no session: otherwise every run, even "hola", would open one,
     and the gateway or the IdP being down would fail all chats. `transfers:execute` is never in a session's token;
@@ -93,10 +100,17 @@ class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
             return None
         if self._session is not None and wanted <= self._session_scopes:
             return self._session
-        await self._close_session(None, None, None)
-        token = await self.exchanger.token_for(ctx.deps.access_token, self.audience, wanted)
-        session = self.open_session(token)
-        await session.__aenter__()
+        try:
+            token = await self.exchanger.token_for(ctx.deps.access_token, self.audience, wanted)
+            session = self.open_session(token)
+            await session.__aenter__()
+        except Exception as error:
+            # Growing failed, but the session that works stays: the customer keeps the tools already loaded.
+            if self._session is None:
+                raise
+            logger.warning("mcp session growth failed", extra={"server": self.audience, **_error_fields(error)})
+            return self._session
+        await self._close_session(None, None, None)  # Only after the new one is up.
         self._session, self._session_scopes = session, wanted
         return session
 
@@ -104,15 +118,16 @@ class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
         self, scope: str, name: str, tool_args: dict[str, Any], ctx: RunContext[BotDeps], tool: ToolsetTool[BotDeps]
     ) -> Any:
         """One call on a token that holds only this tool's scope, through a session closed right after."""
-        try:
-            token = await self.exchanger.token_for(ctx.deps.access_token, self.audience, frozenset({scope}))
-        except TokenExchangeError as error:
-            # The step-up token was never sent, so it is unspent and the customer can ask again (ADR 013).
-            logger.warning("approved call exchange failed", extra={"tool": name, "error": type(error).__name__})
-            raise ToolFailed(
-                json.dumps({"error": "service_unavailable", "service": self.audience}, separators=(",", ":"))
-            ) from error
-        async with self.open_session(token) as session:
+        async with AsyncExitStack() as stack:
+            try:
+                token = await self.exchanger.token_for(ctx.deps.access_token, self.audience, frozenset({scope}))
+                session = await stack.enter_async_context(self.open_session(token))
+            except Exception as error:
+                # Nothing was sent, so the step-up token is unspent and the customer can ask again.
+                logger.warning("approved call setup failed", extra={"tool": name, **_error_fields(error)})
+                raise ToolFailed(
+                    json.dumps({"error": "service_unavailable", "service": self.audience}, separators=(",", ":"))
+                ) from error
             return await session.call_tool(name, tool_args, ctx, tool)
 
     async def _close_session(self, *args: Any) -> bool | None:
@@ -135,13 +150,13 @@ class SkillGatedMCPToolset(AbstractToolset[BotDeps]):
         self._unavailable = True
         ctx.deps.unavailable_servers.add(self.audience)
         # Only the type: an error message could echo a URL or a token.
-        logger.warning("mcp server unavailable", extra={"server": self.audience, "error": type(error).__name__})
+        logger.warning("mcp server unavailable", extra={"server": self.audience, **_error_fields(error)})
 
 
 def banking_toolset(
     exchanger: TokenExchanger, *, gateway_url: str, scopes_by_skill: Mapping[str, frozenset[str]]
 ) -> AbstractToolset[BotDeps]:
-    """Every banking tool, through the MCP gateway (ADR 017), which fronts mcp-accounts and mcp-payments.
+    """Every banking tool, through the MCP gateway, which fronts mcp-accounts and mcp-payments.
 
     `scopes_by_skill` holds the gateway scopes each skill requests (its frontmatter `scopes`).
     """

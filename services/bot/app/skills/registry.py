@@ -4,8 +4,8 @@ from typing import Annotated
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-from app.banking.tool_scopes import SCOPE_PATTERN
 from app.policy.risk_tier import RiskTier
+from app.policy.tool_scopes import APPROVAL_ONLY_SCOPES, SCOPE_PATTERN
 
 _FRONTMATTER = "---"
 
@@ -19,9 +19,16 @@ class Skill(BaseModel):
     description: str
     tools: frozenset[str]
     max_tier: RiskTier
-    # Gateway scopes the skill's MCP tools need to be listed, never one only an approved call gets (ADR 020).
+    # Gateway scopes the skill's MCP tools need to be listed, never one only an approved call gets.
     scopes: frozenset[Annotated[str, StringConstraints(pattern=SCOPE_PATTERN)]] = frozenset()
     instructions: str
+
+    @field_validator("scopes")
+    @classmethod
+    def _no_approval_only_scopes(cls, value: frozenset[str]) -> frozenset[str]:
+        if refused := value & APPROVAL_ONLY_SCOPES:
+            raise ValueError(f"approval-only scopes cannot be requested by a skill: {sorted(refused)}")
+        return value
 
     @field_validator("max_tier", mode="before")
     @classmethod

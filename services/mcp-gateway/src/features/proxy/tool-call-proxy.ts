@@ -1,12 +1,13 @@
 import { McpError, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { SpanStatusCode, trace, type Span } from '@opentelemetry/api';
+import type { Logger } from 'pino';
 import type { AuditLog, CallOutcome } from './audit.js';
 import { BackendFailure, type BackendClient } from './backend-client.js';
 import type { Catalog, Route } from './catalog.js';
 import type { CircuitBreaker } from './circuit-breaker.js';
 import type { RateLimiter } from './rate-limiter.js';
 import type { CallerContext } from './request-context.js';
-import type { TokenExchanger } from './token-exchanger.js';
+import { logExchangeFailure, type TokenExchanger } from './token-exchanger.js';
 import { currentTraceId, traceHeaders } from './trace-context.js';
 
 const tracer = trace.getTracer('mcp-gateway');
@@ -18,6 +19,7 @@ export interface ToolCallProxyDeps {
   exchanger: TokenExchanger;
   client: BackendClient;
   audit: AuditLog;
+  logger: Logger;
   now?: () => number;
 }
 
@@ -66,7 +68,7 @@ export class ToolCallProxy {
     const route = this.deps.catalog.route(name);
     if (!route) return { result: errorResult({ error: 'unknown_tool' }), outcome: 'unknown_tool' };
 
-    // Before the limiter: a refusal that is never forwarded is not charged (F44).
+    // Before the limiter: a refusal that is never forwarded is not charged.
     if (!caller.principal.scopes.has(route.scope)) {
       const body = { error: 'insufficient_scope', scope: route.scope };
       return { result: errorResult(body), outcome: 'insufficient_scope', route };
@@ -109,7 +111,10 @@ export class ToolCallProxy {
       }
       if (error instanceof BackendFailure && error.kind === 'unavailable') breaker.recordFailure();
       else if (error instanceof BackendFailure) breaker.recordSuccess();
-      else breaker.release();
+      else {
+        breaker.release();
+        logExchangeFailure(this.deps.logger, route.backend.name, error);
+      }
       return { result: this.unavailable(route, 'upstream_error'), outcome: 'upstream_error', route };
     }
   }

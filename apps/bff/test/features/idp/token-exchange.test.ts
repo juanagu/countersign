@@ -1,4 +1,5 @@
-import { createLocalJWKSet, jwtVerify } from 'jose';
+import { createLocalJWKSet, decodeJwt as joseDecodeJwt, jwtVerify } from 'jose';
+import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { TokenIssuer } from '../../../src/features/idp/token-issuer.js';
@@ -7,6 +8,7 @@ import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER, testDeps } from '../../supp
 const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS = 'urn:ietf:params:oauth:token-type:access_token';
 const PRE_APPROVAL = 'accounts:read beneficiaries:read transfers:prepare';
+const decodeJwt = (token: string) => ({ payload: joseDecodeJwt(token) });
 const basic = (id: string, secret: string) => `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
 
 // The bot must always send a scope, so the helper does by default; `scope: undefined` leaves it out.
@@ -57,6 +59,64 @@ describe('POST /token (token exchange)', () => {
   it('issues a repeated scope once', async () => {
     const { res } = await exchange({ scope: 'accounts:read accounts:read  beneficiaries:read accounts:read' });
     expect(((await res.json()) as { scope: string }).scope).toBe('accounts:read beneficiaries:read');
+  });
+
+  it('refuses a scope parameter that is repeated (RFC 6749 §3.1)', async () => {
+    const { app, issuer } = await buildTestApp();
+    const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+    const form = new URLSearchParams({ grant_type: GRANT, subject_token: botToken, subject_token_type: ACCESS });
+    form.append('audience', 'mcp-gateway');
+    form.append('scope', 'accounts:read');
+    form.append('scope', 'transfers:execute');
+    const res = await app.request('/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
+      body: form,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_request' });
+  });
+
+  describe('audit of a token with a solo scope', () => {
+    async function exchangeLogged(scope: string) {
+      const lines: Record<string, unknown>[] = [];
+      const logger = pino({ level: 'info' }, { write: (line: string) => lines.push(JSON.parse(line)) });
+      const { app, issuer } = await buildTestApp(undefined, { logger });
+      const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+      const res = await app.request('/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
+        body: new URLSearchParams({
+          grant_type: GRANT,
+          subject_token: botToken,
+          subject_token_type: ACCESS,
+          audience: 'mcp-gateway',
+          scope,
+        }),
+      });
+      return { lines, issued: (await res.json()) as { access_token: string } };
+    }
+
+    it('logs client, sub, audience, scope, jti and exp, and no token', async () => {
+      const { lines, issued } = await exchangeLogged('transfers:execute');
+      const { payload } = decodeJwt(issued.access_token);
+      expect(lines.filter((line) => line['event'] === 'solo_scope_token_issued')).toEqual([
+        expect.objectContaining({
+          client: 'bot',
+          sub: 'ana',
+          audience: 'mcp-gateway',
+          scope: 'transfers:execute',
+          jti: payload.jti,
+          exp: payload.exp,
+        }),
+      ]);
+      expect(JSON.stringify(lines)).not.toContain(issued.access_token);
+    });
+
+    it('logs nothing for a token without a solo scope', async () => {
+      const { lines } = await exchangeLogged(PRE_APPROVAL);
+      expect(lines.filter((line) => line['event'] === 'solo_scope_token_issued')).toEqual([]);
+    });
   });
 
   it.each([
