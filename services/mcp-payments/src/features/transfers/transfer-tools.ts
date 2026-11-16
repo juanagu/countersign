@@ -1,11 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { fail, ok, requireScope, toolMeta, type Principal } from '@poc/mcp-kit';
+import type { Logger } from 'pino';
 import { z } from 'zod';
-import { executeTransfer } from './execute-transfer.js';
+import { Deadline } from './deadline.js';
+import { EXECUTE_CALL_BUDGET_MS, executeTransfer } from './execute-transfer.js';
 import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
 import { STEP_UP_SCOPE, type VerifyStepUp } from './step-up-verifier.js';
 import { TRANSFER_LIMITS } from './transfer-rules.js';
-import type { Beneficiary, TransferDraft, TransferReceipt, TransfersRepository } from './transfers-repository.js';
+import type { Beneficiary, TransferReceipt, TransfersRepository } from './transfers-repository.js';
 
 export const SCOPES = {
   readBeneficiaries: 'beneficiaries:read',
@@ -25,7 +27,13 @@ const amount = z
 // Bullets, not asterisks: the model quotes this in markdown, where `**` would open bold.
 const mask = (value: string) => `••••${value.slice(-4)}`;
 
-function publicBeneficiary({ id, fullName, bankName, accountRef, currency }: Beneficiary) {
+function publicBeneficiary({
+  id,
+  fullName,
+  bankName,
+  accountRef,
+  currency,
+}: Pick<Beneficiary, 'id' | 'fullName' | 'bankName' | 'accountRef' | 'currency'>) {
   return { id, name: fullName, bank: bankName, account: mask(accountRef), currency };
 }
 
@@ -43,33 +51,45 @@ function draftView({ draft, total, account, beneficiary }: PreparedTransfer) {
   };
 }
 
-async function receiptView(repo: TransfersRepository, draft: TransferDraft, receipt: TransferReceipt) {
-  const [account, beneficiary] = await Promise.all([
-    repo.findAccount(draft.sourceAccountId),
-    repo.findBeneficiary(draft.beneficiaryId),
-  ]);
+function receiptView(receipt: TransferReceipt) {
+  const { sourceAccount, beneficiary } = receipt;
   return {
     transfer_id: receipt.transferId,
     draft_id: receipt.draftId,
     reference: receipt.reference,
     executed_at: receipt.executedAt,
-    amount: draft.amount,
-    fee: draft.fee,
-    currency: draft.currency,
-    source_account: account && { id: account.id, alias: account.alias, number: mask(account.number) },
-    beneficiary: beneficiary && publicBeneficiary(beneficiary),
+    amount: receipt.amount,
+    fee: receipt.fee,
+    currency: receipt.currency,
+    source_account: { id: sourceAccount.id, alias: sourceAccount.alias, number: mask(sourceAccount.number) },
+    beneficiary: publicBeneficiary(beneficiary),
   };
 }
+
+/**
+ * What the model sees when `execute_transfer` throws: a fixed message, never the error's text (a driver's
+ * message can carry SQL and row values). The execution may or may not have committed, so it says so.
+ */
+export const INTERNAL_ERROR_CODE = 'internal_error';
+const INTERNAL_ERROR_MESSAGE =
+  'No pude confirmar si la transferencia se realizó. Confirmá de nuevo con tu PIN en unos segundos: si ya se hizo, vas a recibir el mismo comprobante.';
 
 export interface TransferToolsDeps {
   repo: TransfersRepository;
   verifyStepUp: VerifyStepUp;
   now?: () => Date;
+  logger?: Logger;
+}
+
+/** Only the error's type and a driver code: its message can echo SQL, ids or amounts. */
+function errorFields(error: unknown): Record<string, string> {
+  const code = (error as { code?: unknown } | null)?.code;
+  return { errorType: error instanceof Error ? error.name : typeof error, ...(typeof code === 'string' && { code }) };
 }
 
 export function buildPaymentsServer(
   principal: Principal,
-  { repo, verifyStepUp, now = () => new Date() }: TransferToolsDeps,
+  { repo, verifyStepUp, now = () => new Date(), logger }: TransferToolsDeps,
 ): McpServer {
   const server = new McpServer({ name: 'mcp-payments', version: '0.1.0' });
 
@@ -125,9 +145,24 @@ export function buildPaymentsServer(
       // Checked before the step-up token, so a caller without the scope can't spend its jti.
       const scopeError = requireScope(principal.scopes, SCOPES.execute);
       if (scopeError) return scopeError;
-      const result = await executeTransfer({ repo, verifyStepUp, now }, principal.sub, draft_id, step_up_token);
-      if (!result.ok) return fail(result.error.code, result.error.message);
-      return ok(await receiptView(repo, result.value.draft, result.value.receipt));
+      try {
+        const deadline = Deadline.after(EXECUTE_CALL_BUDGET_MS);
+        const result = await executeTransfer(
+          { repo, verifyStepUp, now },
+          principal.sub,
+          draft_id,
+          step_up_token,
+          deadline,
+        );
+        if (!result.ok) {
+          if (result.error.code === 'not_executed') logger?.warn('execute_transfer ran nothing: no answer in time');
+          return fail(result.error.code, result.error.message);
+        }
+        return ok(receiptView(result.value.receipt));
+      } catch (error) {
+        logger?.error(errorFields(error), 'execute_transfer failed');
+        return fail(INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE);
+      }
     },
   );
 

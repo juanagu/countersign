@@ -168,6 +168,70 @@ Eight rules shape the design, and each one needs a negative test. The full text 
 
 To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 
+## FAQ
+
+### How do I teach the bot something new?
+
+The bot isn't trained or fine-tuned. It answers from a knowledge base it searches at run time (RAG), so you teach it by adding documents.
+
+1. Add or edit a Markdown file in [`data/kb/`](data/kb), in Spanish like the rest. Start it with front matter:
+
+   ```markdown
+   ---
+   id: seguros-de-hogar
+   title: Seguros de hogar de Banco Demo
+   audience: public        # public, or customer for signed-in-only content
+   ---
+   ```
+
+   Split it with `##` headings. Each section becomes a chunk, and the heading is what an answer cites.
+2. Run `make ingest`. It re-chunks and re-embeds the whole folder and replaces the `kb` schema in Postgres. The bot
+   reads `data/kb` from a mounted volume, so no rebuild is needed.
+3. Add a case to the KB grounding group in [`services/bot/evals/golden.py`](services/bot/evals/golden.py), then run
+   `make eval` to check that the bot finds and cites the new passage.
+
+If a question isn't covered, the bot says it doesn't have that information rather than guessing. That honest answer
+has its own eval cases.
+
+### How do I change how the bot behaves in a domain?
+
+Each domain's instructions and tool allow-list live in a skill: a Markdown file in
+[`services/bot/skills/`](services/bot/skills) with front matter for its `tools`, `max_tier` and `scopes`. The bot
+loads a skill only when a conversation needs it. Skills are baked into the bot image, so rebuild after editing:
+`make up` rebuilds what changed. A new tool also needs an MCP server to expose it, and a tier in its metadata.
+[`docs/architecture.md`](docs/architecture.md) shows how skills, subagents and the gateway fit together.
+
+### What checks run, and when?
+
+| Check | What it covers | When it runs |
+| --- | --- | --- |
+| `make lint`, `make contracts-check` | eslint, prettier, tsc, ruff, mypy; generated contract types up to date | CI and the pre-push hook |
+| `make test` | vitest and pytest: unit tests, plus Postgres-backed tests when the stack is up | CI and the pre-push hook |
+| `make eval` | Live golden scenarios, KB grounding, tool selection, LLM judge and red team, gated by [`thresholds.yaml`](services/bot/evals/thresholds.yaml) | Locally; needs the stack and an API key |
+| `make cuj` | Critical user journeys: multi-turn customer goals such as a transfer, a wrong PIN or an expired approval, run three times each | Locally; needs the stack and an API key |
+| `make redteam` | Only the red-team prompts, through the live BFF | Locally |
+| `make pii-scan` | Fails if synthetic PII appears in container logs or Phoenix traces | Locally |
+| `make metrics` | Time to first token and first card, tokens per run, guardrail blocks | Locally |
+| `pnpm --dir apps/web test:e2e` | Playwright at 1280 and 390 px | Locally |
+
+The live checks spend paid model tokens, which is why they stay out of CI. `make eval` and `make cuj` reseed the
+mock bank first.
+
+### Why did a live eval fail when nothing changed?
+
+Usually it's one of these:
+- **The mock bank's balances have run out:** run `make seed`.
+- **The gateway's per-customer write limit has been hit by back-to-back runs:** wait about 10 minutes.
+- **A container is still running old code:** run `make up`, since a healthy container can still be serving the code it was built from.
+
+The money journeys must pass every trial, because a transfer is either right or wrong. The KB and tool-selection
+groups pass at 80%, because model wording varies.
+
+### Where do I see what the bot did?
+
+Phoenix at <http://localhost:6006> holds a trace for every run: the model calls, tool calls, guardrail decisions and
+timings. Content in traces is redacted before export.
+
 ## License
 
 [MIT](LICENSE).

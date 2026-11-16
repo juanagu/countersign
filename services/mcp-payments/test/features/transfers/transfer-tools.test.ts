@@ -1,7 +1,10 @@
 import { createJwtVerifier, readListScope, readScope } from '@poc/mcp-kit';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import type { Logger } from 'pino';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIENCE, createApp } from '../../../src/app.js';
+import { EXECUTE_CALL_BUDGET_MS } from '../../../src/features/transfers/execute-transfer.js';
 import { createStepUpVerifier } from '../../../src/features/transfers/step-up-verifier.js';
 import { InMemoryTransfersRepository } from '../../support/in-memory-transfers.js';
 import { connectClient, parseText } from '../../support/mcp-client.js';
@@ -184,6 +187,200 @@ describe('mcp-payments tools', () => {
       arguments: { draft_id: 'drf_1', step_up_token: 'x' },
     });
     expect(parseText(result).error).toBe('not_authorised');
+  });
+
+  describe('when the execution throws', () => {
+    const DRIVER_TEXT = 'duplicate key value violates unique constraint "used_jtis_pkey" Key (jti)=(secret-jti)';
+
+    async function executeWithFailingRepo() {
+      const error = Object.assign(new Error(DRIVER_TEXT), { code: '23505' });
+      const logger = { error: vi.fn() } as unknown as Logger & { error: ReturnType<typeof vi.fn> };
+      const failing = createApp({
+        verify: createJwtVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, allowedActors: ['bot'], keys: keys.keys }),
+        transfers: repo,
+        verifyStepUp: createStepUpVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, keys: keys.keys }),
+        now: () => NOW,
+        logger,
+      });
+      const client = await connectClient(failing, await keys.sign({ aud: AUDIENCE, sub: 'juan', scope: SCOPE }));
+      const draft = parseText(await client.callTool({ name: 'prepare_transfer', arguments: juanToAna }));
+      const stepUpToken = await keys.sign({
+        aud: AUDIENCE,
+        sub: 'juan',
+        act: undefined,
+        token_use: 'step_up',
+        scope: 'transfers:execute',
+        authorization_details: [
+          {
+            type: 'transfer',
+            draft_id: draft.draft_id,
+            amount: '50000.00',
+            currency: 'ARS',
+            beneficiary_id: 'ben-juan-ana',
+          },
+        ],
+      });
+      repo.failWith = error;
+      const result = await client.callTool({
+        name: 'execute_transfer',
+        arguments: { draft_id: draft.draft_id, step_up_token: stepUpToken },
+      });
+      return { result, logger, stepUpToken };
+    }
+
+    it('answers a generic internal_error that carries none of the error text', async () => {
+      const { result } = await executeWithFailingRepo();
+      expect(result.isError).toBe(true);
+      const body = parseText(result);
+      expect(body.error).toBe('internal_error');
+      expect(JSON.stringify(result)).not.toMatch(/duplicate key|used_jtis|secret-jti|23505/);
+    });
+
+    it('logs the error type and driver code only, never its message', async () => {
+      const { logger, stepUpToken } = await executeWithFailingRepo();
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      const [fields, message] = logger.error.mock.calls[0] as [Record<string, unknown>, string];
+      expect(fields).toEqual({ errorType: 'Error', code: '23505' });
+      expect(JSON.stringify([fields, message])).not.toContain(stepUpToken);
+      expect(JSON.stringify([fields, message])).not.toMatch(/duplicate key|secret-jti/);
+    });
+  });
+
+  describe('around the execution', () => {
+    /** Prepares a draft, runs `breakIt` (what to make fail afterwards), then executes it with a fresh step-up token. */
+    const executed = async (breakIt: () => void = () => undefined) => {
+      const client = await clientFor('juan');
+      const draft = parseText(await client.callTool({ name: 'prepare_transfer', arguments: juanToAna }));
+      const stepUpToken = await keys.sign({
+        aud: AUDIENCE,
+        sub: 'juan',
+        act: undefined,
+        token_use: 'step_up',
+        scope: 'transfers:execute',
+        authorization_details: [
+          {
+            type: 'transfer',
+            draft_id: draft.draft_id,
+            amount: '50000.00',
+            currency: 'ARS',
+            beneficiary_id: 'ben-juan-ana',
+          },
+        ],
+      });
+      breakIt();
+      return client.callTool({
+        name: 'execute_transfer',
+        arguments: { draft_id: draft.draft_id, step_up_token: stepUpToken },
+      });
+    };
+
+    /** The bot's receipt card needs these (`TransferReceiptData` in the contracts package), in the tool's snake_case. */
+    function receiptFieldsTheContractRequires() {
+      const schema = JSON.parse(
+        readFileSync(new URL('../../../../../packages/contracts/schemas/bank-templates.json', import.meta.url), 'utf8'),
+      ) as {
+        $defs: { TransferReceiptData: { required: string[]; properties: Record<string, { required?: string[] }> } };
+      };
+      const { required, properties } = schema.$defs.TransferReceiptData;
+      const snake = (name: string) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+      const nested = (name: string) => properties[name]?.required ?? [];
+      return { top: required.map(snake), sourceAccount: nested('sourceAccount'), beneficiary: nested('beneficiary') };
+    }
+
+    function expectCompleteReceipt(receipt: Record<string, unknown>) {
+      const required = receiptFieldsTheContractRequires();
+      expect(Object.keys(receipt)).toEqual(expect.arrayContaining(required.top));
+      expect(Object.keys(receipt.source_account as object)).toEqual(expect.arrayContaining(required.sourceAccount));
+      expect(Object.keys(receipt.beneficiary as object)).toEqual(expect.arrayContaining(required.beneficiary));
+      expect(receipt).toMatchObject({
+        amount: '50000.00',
+        fee: '0.00',
+        currency: 'ARS',
+        reference: 'BD-TEST',
+        source_account: { alias: 'Pesos', number: '••••7810' },
+        beneficiary: { name: 'Ana Gómez', bank: 'Banco Demo', account: '••••5211' },
+      });
+    }
+
+    it('returns every field the receipt card needs, from the execution itself, for a fresh run and a replay', async () => {
+      const client = await clientFor('juan');
+      const draft = parseText(await client.callTool({ name: 'prepare_transfer', arguments: juanToAna }));
+      const call = async () => {
+        const token = await keys.sign({
+          aud: AUDIENCE,
+          sub: 'juan',
+          act: undefined,
+          token_use: 'step_up',
+          scope: 'transfers:execute',
+          authorization_details: [
+            {
+              type: 'transfer',
+              draft_id: draft.draft_id,
+              amount: '50000.00',
+              currency: 'ARS',
+              beneficiary_id: 'ben-juan-ana',
+            },
+          ],
+        });
+        return parseText(
+          await client.callTool({
+            name: 'execute_transfer',
+            arguments: { draft_id: draft.draft_id, step_up_token: token },
+          }),
+        );
+      };
+      const fresh = await call();
+      const replay = await call();
+      expectCompleteReceipt(fresh);
+      expectCompleteReceipt(replay);
+      expect(replay).toEqual(fresh);
+      expect(repo.debits).toHaveLength(1);
+    });
+
+    it('needs no lookup after the commit: the receipt is whole when the account and beneficiary lookups fail', async () => {
+      const result = await executed(() => {
+        repo.findAccount = () => Promise.reject(new Error('connection terminated'));
+        repo.findBeneficiary = () => Promise.reject(new Error('connection terminated'));
+      });
+      expect(result.isError).toBeFalsy();
+      expectCompleteReceipt(parseText(result));
+      expect(repo.debits).toHaveLength(1);
+    });
+
+    it('answers not_executed, a definite code, when the IdP keys cannot be read before anything ran', async () => {
+      const unreachable = createApp({
+        verify: createJwtVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, allowedActors: ['bot'], keys: keys.keys }),
+        transfers: repo,
+        verifyStepUp: () => Promise.reject(new TypeError('fetch failed')),
+        now: () => NOW,
+      });
+      const client = await connectClient(unreachable, await keys.sign({ aud: AUDIENCE, sub: 'juan', scope: SCOPE }));
+      const result = await client.callTool({
+        name: 'execute_transfer',
+        arguments: { draft_id: 'drf_1', step_up_token: 'x' },
+      });
+      expect(result.isError).toBe(true);
+      expect(parseText(result).error).toBe('not_executed');
+      expect(repo.debits).toEqual([]);
+      expect(repo.usedJtis.size).toBe(0);
+    });
+
+    it('answers not_executed within the call budget when the step-up check hangs', async () => {
+      const hanging = createApp({
+        verify: createJwtVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, allowedActors: ['bot'], keys: keys.keys }),
+        transfers: repo,
+        verifyStepUp: () => new Promise<never>(() => undefined),
+        now: () => NOW,
+      });
+      const client = await connectClient(hanging, await keys.sign({ aud: AUDIENCE, sub: 'juan', scope: SCOPE }));
+      const started = performance.now();
+      const result = await client.callTool({
+        name: 'execute_transfer',
+        arguments: { draft_id: 'drf_1', step_up_token: 'x' },
+      });
+      expect(parseText(result).error).toBe('not_executed');
+      expect(performance.now() - started).toBeLessThan(EXECUTE_CALL_BUDGET_MS);
+    });
   });
 
   it('rejects a token minted for mcp-accounts', async () => {

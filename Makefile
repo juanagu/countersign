@@ -53,7 +53,7 @@ BOT_ENV := cd services/bot && set -a && . ../../.env && set +a &&
 eval: seed ## Live golden scenarios, KB grounding, tool selection, LLM judge and red team, gated by evals/thresholds.yaml (needs ANTHROPIC_API_KEY, make up, make ingest)
 	$(BOT_ENV) uv run python -m evals.run $(EVAL_ARGS)
 
-cuj: seed ## Critical user journeys (ADR 022) through the BFF, trials per journey, gated by evals/thresholds.yaml (needs ANTHROPIC_API_KEY, make up)
+cuj: seed ## Critical user journeys (ADR 022) through the BFF, trials per journey, gated by evals/thresholds.yaml; CUJ_ARGS="--group cuj_safety --only cuj-09 --trials 1" (needs ANTHROPIC_API_KEY, make up)
 	$(BOT_ENV) uv run python -m evals.cuj_runner $(CUJ_ARGS)
 
 # ADR 018. The fault reaches the container through the bot's `LLM_FAULT_INJECTION` in infra/docker-compose.yml.

@@ -5,7 +5,7 @@ Phoenix 21 has no dashboard API, so this script is the dashboard:
 - tokens per run: the pydantic-ai model spans (`chat <model>`) in that run's trace, orchestrator and guard together;
 - guardrail blocks: the `guardrail.*` metric log lines in `docker compose logs bot`, by kind;
 - critical user journeys (ADR 022): the `cuj.trial` spans `make cuj` exports, per journey, with the tokens of the
-  trial's thread;
+  trial's thread and of its discarded attempts;
 - model failover (ADR 018): runs by the orchestrator model that served them (`bot.models_served` on `bot.stream`)
   with their time to first token, and the `llm.failover` log lines by role and reason.
 """
@@ -16,20 +16,21 @@ import math
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 
-from app.guardrails.stream_timing import THREAD_ATTRIBUTE
+from app.guardrails.stream_timing import STREAM_SPAN, THREAD_ATTRIBUTE
 from evals.pii_scan import COMPOSE
 
 PHOENIX_SPANS = "http://localhost:6006/v1/projects/default/spans"
 PAGE_SIZE = 1000
 MAX_PAGES = 200
-STREAM_SPAN = "bot.stream"
 CUJ_SPAN = "cuj.trial"  # Exported by `evals/cuj_spans.py`.
+SCORE_PREFIX = "cuj.score."  # + the judge's score name (judge_quality): a trial's extra scores.
+DISCARDED_THREADS = "cuj.discarded_threads"  # The threads of the trial's discarded attempts: their tokens are its.
 TTFT = "bot.time_to_first_token_ms"
 FIRST_SURFACE = "bot.time_to_first_surface_ms"
 MODEL_SPAN_PREFIX = "chat "  # pydantic-ai's model-request spans; the SDK's own spans would count tokens twice
@@ -104,6 +105,28 @@ def tokens_by_thread(stream_spans: list[Span], model_spans: list[Span]) -> dict[
     return dict(totals)
 
 
+def trial_tokens(thread_id: str, discarded_threads: Iterable[str], thread_tokens: Mapping[str, float]) -> float:
+    """A trial's tokens: its own thread and the threads of its discarded attempts, which it also paid for."""
+    return sum(thread_tokens.get(thread, 0.0) for thread in [thread_id, *discarded_threads])
+
+
+def discarded_threads(value: object) -> list[str]:
+    """The attribute as a list of thread ids: Phoenix can hand a list back as its JSON text."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    return [str(thread) for thread in value] if isinstance(value, list) else []
+
+
+def _score_means(trials: list[dict[str, Any]]) -> str:
+    """`  judge_quality 0.90 ...` over the trials that carry the score; empty when none does."""
+    names = sorted({k for t in trials for k in t if k.startswith(SCORE_PREFIX)})
+    means = {n: [float(t[n]) for t in trials if t.get(n) is not None] for n in names}
+    return "".join(f"  {n.removeprefix(SCORE_PREFIX)} {sum(v) / len(v):.2f}" for n, v in means.items() if v)
+
+
 def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[str]:
     """One line per journey: trials, pass rate, the median turns and tokens, and the total policy-refused attempts."""
     by_cuj: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -114,10 +137,17 @@ def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[s
         passed = sum(bool(t.get("cuj.passed")) for t in trials)
         turns = percentile([float(t.get("cuj.turns") or 0) for t in trials], 0.5)
         refused = sum(int(t.get("cuj.policy_refused") or 0) for t in trials)
-        tokens = percentile([thread_tokens.get(str(t.get("cuj.thread_id")), 0.0) for t in trials], 0.5)
+        tokens = percentile(
+            [
+                trial_tokens(str(t.get("cuj.thread_id")), discarded_threads(t.get(DISCARDED_THREADS)), thread_tokens)
+                for t in trials
+            ],
+            0.5,
+        )
         rows.append(
             f"  {cuj_id:30} {len(trials):3} trials  pass {passed / len(trials):4.0%}  "
             f"turns p50 {turns or 0:.0f}  tokens p50 {tokens or 0:,.0f}  policy-refused {refused}"
+            f"{_score_means(trials)}"
         )
     return rows
 
@@ -187,7 +217,9 @@ def bot_logs(hours: float) -> str:
 
 def print_cuj_block(since: datetime, stream_spans: list[Span], model_spans: list[Span]) -> None:
     rows = cuj_rows(list(spans(since, name=CUJ_SPAN)), tokens_by_thread(stream_spans, model_spans))
-    print(f"Critical user journeys (cuj.trial spans, tokens of each trial's thread): {len(rows)} journeys")
+    print(
+        f"Critical user journeys (cuj.trial spans, tokens of each trial's threads and discarded attempts): {len(rows)}"
+    )
     for row in rows:
         print(row)
 

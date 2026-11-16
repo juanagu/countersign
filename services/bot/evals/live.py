@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from evals.agui_client import BffSession, Event, RunTrace, bff_client
 from evals.bank_db import Ledger, read_ledger
-from evals.calls import POLICY_DENIED, ObservedCall, client_calls, with_delegated
+from evals.calls import POLICY_DENIED, RESULT, ObservedCall, client_calls, with_delegated
 from evals.delegation import CONFIRM_TEMPLATE, read_delegated
 
 STEP_UP_PIN = "123456"  # The mock IdP's synthetic PIN (AGENTS.md, rule 3).
@@ -30,6 +30,22 @@ class LiveInput(BaseModel):
     source_account: str | None = None  # transfer: the account whose ledger is read before and after
     # A subagent domain: its calls are read from the run's Phoenix spans, since its arguments never reach the client.
     reads_trace: bool = False
+
+
+OUT_OF_TURNS = "out_of_turns"
+# The kinds of note a stalled journey produces by itself: the plan did not end because the gateway refused writes.
+STALL_NOTE_KINDS = frozenset({OUT_OF_TURNS})
+
+
+@dataclass(frozen=True)
+class Note:
+    """A harness note: its text, and the kind a retry decision reads instead of matching the text."""
+
+    text: str
+    kind: str = ""
+
+    def __str__(self) -> str:
+        return self.text
 
 
 @dataclass
@@ -57,8 +73,9 @@ class LiveOutput:
     traces: list[RunTrace]
     ledger_change: Ledger | None = None
     resume: ResumeCheck | None = None
-    notes: list[str] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
     trace_gap: str = ""  # Runs whose spans never reached Phoenix: the delegated calls may be incomplete.
+    pairing_failed: bool = False  # A trace arrived whose run id matches no run: a harness fault, never rerun.
     delegated: list[ObservedCall] = field(default_factory=list)  # From the trace, not the client.
     # A CUJ's extras: the ledger after the journey and each step-up request's HTTP status.
     ledger_after: Ledger | None = None
@@ -69,6 +86,16 @@ class LiveOutput:
     discarded: list["DiscardedAttempt"] = field(default_factory=list)  # The attempts that came before this one.
     start_ns: int = 0  # A CUJ trial's wall-clock span, first attempt's start to last attempt's end.
     end_ns: int = 0
+    calls: list[ObservedCall] = field(init=False, default_factory=list)  # Every call in order, see `refresh_calls`.
+
+    def __post_init__(self) -> None:
+        self.refresh_calls()
+
+    def refresh_calls(self) -> None:
+        """Every call in order with its outcome, the subagent's included. Computed once, when the traces are in and
+        again when the delegated calls are attached."""
+        cancelled = frozenset().union(*(t.cancelled for t in self.traces))
+        self.calls = with_delegated(client_calls(self.traces, cancelled), self.delegated)
 
     @property
     def text(self) -> str:
@@ -85,15 +112,9 @@ class LiveOutput:
         return [call for trace in self.traces for call in trace.tool_args] + [(c.name, c.args) for c in self.delegated]
 
     @property
-    def calls(self) -> list[ObservedCall]:
-        """Every call in order with its outcome, the subagent's included."""
-        return with_delegated(
-            client_calls(self.traces, frozenset().union(*(t.cancelled for t in self.traces))), self.delegated
-        )
-
-    @property
     def handoffs(self) -> set[str]:
-        return {c.name for c in self.delegated if c.is_handoff}
+        """The domains handed off to, whose handoff returned a result: a refused or failed one is no handoff."""
+        return {c.name for c in self.delegated if c.is_handoff and c.outcome == RESULT}
 
     @property
     def components(self) -> list[dict[str, Any]]:
@@ -139,7 +160,7 @@ async def _transfer(session: BffSession, case: LiveInput) -> LiveOutput:
     first = await session.say(case.turns[0])
     confirm = [c for c in first.cards if c.get("template") == CONFIRM_TEMPLATE]
     if not (first.interrupts and confirm):
-        return LiveOutput([first], notes=["no interrupt or confirm card"])
+        return LiveOutput([first], notes=[Note("no interrupt or confirm card")])
     token = await session.step_up(confirm[0], STEP_UP_PIN)
     payload = {"approved": True, "editedArgs": {"draft_id": confirm[0]["data"]["draftId"], "step_up_token": token}}
     resumed = await session.resume(first.interrupts[0], payload)
@@ -151,13 +172,18 @@ def _first_text(events: list[Event]) -> bool:
     return any(e.get("type") == "TEXT_MESSAGE_CONTENT" for e in events)
 
 
-async def _resume(session: BffSession, case: LiveInput) -> LiveOutput:
-    before = await session.say_until(case.turns[0], _first_text)
+async def resume_cut(session: BffSession, question: str) -> ResumeCheck:
+    """Cuts the answer to `question` once its text starts, then reconnects the thread twice."""
+    before = await session.say_until(question, _first_text)
     cut_mid_run = bool(before) and before[-1].get("type") != "RUN_FINISHED"
     replay = await session.connect()
     second = await session.connect()
-    check = ResumeCheck(cut_mid_run, RunTrace(before).text, replay, second)
-    return LiveOutput([replay], resume=check)
+    return ResumeCheck(cut_mid_run, RunTrace(before).text, replay, second)
+
+
+async def _resume(session: BffSession, case: LiveInput) -> LiveOutput:
+    check = await resume_cut(session, case.turns[0])
+    return LiveOutput([check.replay], resume=check)
 
 
 FLOWS = {"chat": _chat, "transfer": _transfer, "resume": _resume}
@@ -165,9 +191,11 @@ FLOWS = {"chat": _chat, "transfer": _transfer, "resume": _resume}
 
 async def attach_delegated(output: LiveOutput, thread_id: str, since: datetime) -> None:
     """Reads the subagents' calls from the thread's Phoenix spans into `output`, noting any run with no trace."""
-    delegated = await read_delegated(thread_id, since, output.cards, runs=len(output.traces))
+    delegated = await read_delegated(thread_id, since, output.traces)
     output.delegated = delegated.calls
     output.trace_gap = delegated.note
+    output.pairing_failed = delegated.pairing_failed
+    output.refresh_calls()
 
 
 async def run_live(case: LiveInput) -> LiveOutput:

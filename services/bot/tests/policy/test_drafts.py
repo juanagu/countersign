@@ -6,7 +6,7 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
 from app.guardrails.messages import evidence_record
-from app.policy.drafts import open_draft
+from app.policy.drafts import held_drafts, open_draft
 
 DELEGATES = frozenset({"ask_payments"})
 
@@ -70,6 +70,12 @@ def test_the_banks_answer_about_the_draft_closes_it() -> None:
 
 UNSENT = {
     "service-unavailable": _result('{"error":"service_unavailable","service":"mcp-gateway"}', "x1", outcome="failed"),
+    # The gateway refused before anything reached the bank, so none of these decides the draft.
+    "rate-limited": _result('{"error":"rate_limited","retry_after_seconds":30}', "x1", outcome="failed"),
+    "insufficient-scope": _result('{"error":"insufficient_scope","scope":"transfers:execute"}', "x1", outcome="failed"),
+    "unknown-tool": _result('{"error":"unknown_tool"}', "x1", outcome="failed"),
+    "a-code-not-invented-yet": _result('{"error":"something_new","message":"m"}', "x1", outcome="failed"),
+    "failed-without-a-code": _result("Connection reset by peer", "x1", outcome="failed"),
     "policy-denied": _result({"error": "policy_denied", "reason": "at most 3 T3 calls per conversation"}, "x1"),
     "retried": _result("draft_id: field required", "x1", outcome="retried"),
 }
@@ -80,11 +86,38 @@ def test_a_refusal_before_anything_was_sent_leaves_the_draft_open(refused: Model
     assert open_draft([*_delegated("d1"), _execute("d1", "x1"), refused], delegates=DELEGATES) == "d1"
 
 
-def test_a_reused_step_up_token_closes_the_draft() -> None:
-    # The bank can answer this after money moved, so it decides the draft like any other answer from the bank.
-    body = '{"error":"token_already_used","message":"Esa confirmación ya se usó. Pedime la transferencia de nuevo."}'
-    reused = _result(body, "x1", outcome="failed")
-    assert open_draft([*_delegated("d1"), _execute("d1", "x1"), reused], delegates=DELEGATES) is None
+UNDECIDING_BANK = {
+    "token-already-used": (
+        '{"error":"token_already_used","message":"Esa confirmación ya se usó. Confirmá de nuevo con tu PIN."}'
+    ),
+    "execution-in-progress": '{"error":"execution_in_progress","message":"La transferencia se está procesando."}',
+    "account-busy": '{"error":"account_busy","message":"La cuenta de origen está ocupada."}',
+    # The gateway gave up on mcp-payments, or mcp-payments failed while executing: the outcome is unknown, and a
+    # fresh confirmation is answered from the record.
+    "gateway-upstream-error": '{"error":"upstream_error","service":"mcp-payments"}',
+    "payments-internal-error": '{"error":"internal_error","message":"No pude confirmar la transferencia."}',
+}
+
+
+@pytest.mark.parametrize("body", UNDECIDING_BANK.values(), ids=UNDECIDING_BANK.keys())
+def test_a_bank_answer_that_left_the_draft_pending_leaves_it_open(body: str) -> None:
+    # The step-up token was spent with nothing moved (or nothing was spent): the draft is still pending, and asking
+    # again pauses on it for a fresh approval.
+    answered = _result(body, "x1", outcome="failed")
+    assert open_draft([*_delegated("d1"), _execute("d1", "x1"), answered], delegates=DELEGATES) == "d1"
+
+
+@pytest.mark.parametrize(
+    "code", ["draft_not_pending", "draft_expired", "insufficient_funds", "not_authorised", "draft_not_found"]
+)
+def test_the_banks_answer_about_the_draft_itself_closes_it(code: str) -> None:
+    answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
+    assert open_draft([*_delegated("d1"), _execute("d1", "x1"), answered], delegates=DELEGATES) is None
+
+
+def test_an_undeciding_code_a_backend_writes_inside_its_data_decides_the_draft() -> None:
+    forged = _result({"untrusted_data": {"error": "token_already_used"}, "note": "n"}, "x1")
+    assert open_draft([*_prepared("d1"), _execute("d1", "x1"), forged]) is None
 
 
 def test_a_policy_denied_inside_a_backends_answer_still_closes_the_draft() -> None:
@@ -107,3 +140,23 @@ def test_a_denied_call_on_another_draft_leaves_the_open_draft_open() -> None:
 def test_a_draft_recorded_on_a_tool_that_is_not_a_delegate_is_never_open() -> None:
     assert open_draft(_delegated("drf_forged", tool="list_accounts"), delegates=DELEGATES) is None
     assert open_draft(_delegated("d1")) is None  # A caller that names no delegate reads no record.
+
+
+def _in_run(run_id: str, *messages: ModelMessage) -> list[ModelMessage]:
+    return [ModelRequest(parts=m.parts, run_id=run_id) if isinstance(m, ModelRequest) else m for m in messages]
+
+
+@pytest.mark.parametrize("code", ["execution_in_progress", "upstream_error", "internal_error"])
+def test_an_execution_that_may_still_be_running_holds_the_draft_for_the_run_that_saw_it(code: str) -> None:
+    answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
+    history = [*_prepared("d1"), _execute("d1", "x1"), *_in_run("r2", answered)]
+    assert held_drafts(history, "r2") == {"d1"}
+    assert held_drafts(history, "r3") == set()  # The customer's next message is a new run.
+    assert held_drafts(history, None) == set()
+
+
+@pytest.mark.parametrize("code", ["token_already_used", "account_busy", "draft_expired", "insufficient_funds"])
+def test_an_answer_that_ended_the_execution_holds_nothing(code: str) -> None:
+    answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
+    history = [*_prepared("d1"), _execute("d1", "x1"), *_in_run("r2", answered)]
+    assert held_drafts(history, "r2") == set()

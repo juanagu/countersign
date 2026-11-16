@@ -23,7 +23,7 @@ def _step_matches(step: Step, call: ObservedCall) -> bool:
     return all(values_match(v, call.args.get(k)) for k, v in step.args.items())
 
 
-def _rule_matches(rule: str, call: ObservedCall) -> bool:
+def rule_matches(rule: str, call: ObservedCall) -> bool:
     """`tool` matches the call whatever its outcome; `tool:outcome` only that outcome."""
     tool, _, outcome = rule.partition(":")
     return call.name == tool and (not outcome or outcome == call.outcome)
@@ -34,7 +34,7 @@ def _is_counted_refusal(call: ObservedCall, forbid: list[str]) -> bool:
     A refused call is skipped by the trajectory, the steps and `requires` (it is never a draft, a pause or a
     result). Only a `forbid` rule that names `policy_denied` itself fails it, not a bare tool or another outcome."""
     explicit = [rule for rule in forbid if rule.partition(":")[2] == POLICY_DENIED]
-    return call.outcome == POLICY_DENIED and not any(_rule_matches(rule, call) for rule in explicit)
+    return call.outcome == POLICY_DENIED and not any(rule_matches(rule, call) for rule in explicit)
 
 
 FORBIDDEN, UNEXPECTED, MISSING, UNMET = "forbidden", "unexpected", "missing", "unmet"
@@ -70,9 +70,9 @@ def _unmet_requirements(calls: list[ObservedCall], requires: list[str]) -> list[
         for call in calls:
             if call.outcome == POLICY_DENIED:
                 continue
-            if _rule_matches(needed, call):
+            if rule_matches(needed, call):
                 fresh = True
-            elif _rule_matches(needing, call):
+            elif rule_matches(needing, call):
                 if not fresh:
                     problems.append(Problem(UNMET, _label(call), f"without a new {needed} ({rule})"))
                 fresh = False
@@ -89,11 +89,11 @@ def trajectory_problems(
     for call in calls:
         if _is_counted_refusal(call, forbid):
             continue
-        if any(_rule_matches(rule, call) for rule in forbid):
+        if any(rule_matches(rule, call) for rule in forbid):
             problems.append(Problem(FORBIDDEN, _label(call)))
         elif next_step < len(steps) and _step_matches(steps[next_step], call):
             next_step += 1
-        elif not any(_rule_matches(rule, call) for rule in allow):
+        elif not any(rule_matches(rule, call) for rule in allow):
             problems.append(Problem(UNEXPECTED, _label(call), f"after {next_step} of {len(steps)} steps"))
     problems += [Problem(MISSING, f"{s.tool} ({s.outcome})") for s in steps[next_step:]]
     return problems + _unmet_requirements(calls, requires or [])
@@ -119,14 +119,17 @@ def visible_problems(
 ) -> list[Problem]:
     """What can be judged without the missing traces: each observed call on its own, in any order. It fails when a
     `forbid` rule matches it, or when no step and no `allow` rule names it. Missing steps and `requires` need the
-    whole trajectory, so they are not judged here."""
+    whole trajectory, so they are not judged here. An unpaired call has unknown arguments, so a step's arguments never
+    judge it: a step naming its tool accepts it."""
     problems: list[Problem] = []
     for call in calls:
         if _is_counted_refusal(call, forbid):
             continue
-        if any(_rule_matches(rule, call) for rule in forbid):
+        if any(rule_matches(rule, call) for rule in forbid):
             problems.append(Problem(FORBIDDEN, _label(call)))
-        elif not any(_step_matches(s, call) for s in steps) and not any(_rule_matches(r, call) for r in allow):
+        elif call.unpaired and any(s.tool == call.name for s in steps):
+            continue
+        elif not any(_step_matches(s, call) for s in steps) and not any(rule_matches(r, call) for r in allow):
             problems.append(Problem(UNEXPECTED, _label(call)))
     return problems
 

@@ -14,7 +14,7 @@ from evals.live_evaluators import Ctx, reason_for
 class NoRunErrors(Evaluator[LiveInput, LiveOutput, Meta]):
     def evaluate(self, ctx: Ctx) -> EvaluationReason:
         gap = [f"traces missing: {ctx.output.trace_gap}"] if ctx.output.trace_gap else []
-        problems = ctx.output.errors + ctx.output.notes + gap
+        problems = [*ctx.output.errors, *(n.text for n in ctx.output.notes), *gap]
         return reason_for(not problems, "; ".join(problems))
 
 

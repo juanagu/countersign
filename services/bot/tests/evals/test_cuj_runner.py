@@ -1,6 +1,7 @@
 """The journey loop on a fake BFF: the simulated customer sees only text, the interrupt policy is answered by code
 (approve, cancel, wrong PIN then right, expiry), and the gates count trials."""
 
+import dataclasses
 import json
 from decimal import Decimal
 from typing import Any
@@ -12,10 +13,10 @@ from evals.agui_client import RUN_PATH, STEP_UP_PATH, BffSession, RunTrace
 from evals.calls import ObservedCall
 from evals.cuj import Scenario
 from evals.cuj_report import TrialResult, cuj_gates
-from evals.cuj_retry import rate_limit_stall
-from evals.cuj_runner import main, play, run_trial
+from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall, trace_gap_verdict
+from evals.cuj_runner import _trial_span, main, play, run_trial
 from evals.cuj_user import Turn, is_end
-from evals.live import DiscardedAttempt, LiveOutput
+from evals.live import OUT_OF_TURNS, DiscardedAttempt, LiveOutput, Note
 from evals.thresholds import Consistency, Thresholds
 
 
@@ -42,7 +43,7 @@ def _text(text: str) -> list[dict[str, Any]]:
 def _paused(draft: str = "drf_1", cards: list[str] | None = None) -> list[dict[str, Any]]:
     interrupt = {"id": "int-x", "toolCallId": "x"}
     return [
-        *(_card(d) for d in cards or [draft]),
+        *(_card(d) for d in (cards if cards is not None else [draft])),
         {"type": "TOOL_CALL_START", "toolCallId": "x", "toolCallName": "execute_transfer"},
         {"type": "TOOL_CALL_ARGS", "toolCallId": "x", "delta": json.dumps({"draft_id": draft})},
         {"type": "RUN_FINISHED", "outcome": {"type": "interrupt", "interrupts": [interrupt]}},
@@ -117,7 +118,7 @@ async def test_a_journey_that_runs_out_of_turns_says_so() -> None:
     journey = await play(bff.session(), _scenario(driver="simulated", plan="p", max_turns=2), reply)
 
     assert journey.turns == 2
-    assert journey.notes == ["ran out of turns (2) before the plan ended"]
+    assert [n.text for n in journey.notes] == ["ran out of turns (2) before the plan ended"]
 
 
 async def test_approve_enters_the_right_pin_and_resumes_with_the_token() -> None:
@@ -176,7 +177,7 @@ async def test_an_interrupt_without_a_policy_is_noted_and_left_pending() -> None
 
     journey = await play(bff.session(), _scenario(on_interrupt={}), None)
 
-    assert journey.notes == ["an interrupt the scenario has no on_interrupt policy for"]
+    assert [n.text for n in journey.notes] == ["an interrupt the scenario has no on_interrupt policy for"]
     assert len(journey.traces) == 1
 
 
@@ -196,7 +197,7 @@ async def test_a_refused_right_pin_stops_the_journey_with_a_note() -> None:
 
     journey = await play(bff.session(), _scenario(), None)
 
-    assert journey.notes[0].startswith("step-up refused with the right PIN: 429")
+    assert journey.notes[0].text.startswith("step-up refused with the right PIN: 429")
 
 
 @pytest.mark.parametrize(("message", "ends"), [("FIN", True), (" fin. ", True), ("FINAL", False), ("hola", False)])
@@ -420,12 +421,23 @@ async def test_the_step_up_is_made_against_the_card_of_the_interrupted_draft() -
     assert bff.step_up_drafts == ["drf_1"]
 
 
+async def test_the_confirm_card_shown_a_turn_before_the_approval_is_found() -> None:
+    asked = [_card("drf_1"), *_text("¿Confirmás?")]
+    bff = FakeBff([asked, _paused(draft="drf_1", cards=[]), _text("Enviada")], step_ups=[200])
+
+    journey = await play(bff.session(), _scenario(then=["sí"]), None)
+
+    assert journey.notes == []
+    assert bff.step_up_drafts == ["drf_1"]
+    assert len(journey.traces) == 3
+
+
 async def test_an_interrupt_with_no_matching_card_is_noted_and_nothing_is_stepped_up() -> None:
     bff = FakeBff([_paused(draft="drf_9", cards=["drf_1"])])
 
     journey = await play(bff.session(), _scenario(), None)
 
-    assert journey.notes == ["no confirm card for the interrupted draft 'drf_9'"]
+    assert [n.text for n in journey.notes] == ["no confirm card for the interrupted draft 'drf_9'"]
     assert bff.step_up_pins == []
     assert len(journey.traces) == 1
 
@@ -441,7 +453,7 @@ async def test_a_group_with_no_threshold_fails_its_gate() -> None:
 
 async def test_a_run_with_no_gates_does_not_exit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("evals.cuj_runner.load_scenarios", lambda: [_scenario()])
-    monkeypatch.setattr("evals.cuj_runner.Settings", lambda: None)
+    monkeypatch.setattr("evals.cuj_runner.Settings", lambda: type("S", (), {"guard_model": "test"})())
     monkeypatch.setattr("evals.cuj_runner.read_ledger", _ledger)
     monkeypatch.setattr("evals.cuj_runner.run_scenario", _no_results)
     monkeypatch.setattr("evals.cuj_runner.emit_trials", lambda *_: None)
@@ -475,18 +487,56 @@ async def _run_with(monkeypatch: pytest.MonkeyPatch, scenario: Scenario, output:
     monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
     monkeypatch.setattr("evals.cuj_runner.restore_balance", _no_restore)
     monkeypatch.setattr("evals.cuj_retry.RATE_LIMIT_WAIT_SECONDS", 0.0)
-    return attempts, await run_trial(scenario, None, STARTING)
+    trial = await run_trial(scenario, None, STARTING)
+    return attempts, trial
 
 
-async def test_a_rate_limited_forbidden_call_fails_and_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_bare_forbid_on_a_rate_limited_call_fails_and_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    refused_execute = _output(
+        ObservedCall("prepare_transfer"), ObservedCall("execute_transfer", outcome="error:rate_limited")
+    )
+    scenario = _stalled_scenario(forbid=["execute_transfer"])
+
+    assert rate_limit_stall(scenario, refused_execute) is None
+    _, output = await _run_with(monkeypatch, scenario, refused_execute)
+    assert (output.attempts, output.discarded) == (1, [])
+
+
+async def test_a_rate_limited_execute_is_a_stall_when_only_a_result_is_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     refused_execute = _output(
         ObservedCall("prepare_transfer"), ObservedCall("execute_transfer", outcome="error:rate_limited")
     )
     scenario = _stalled_scenario(forbid=["execute_transfer:result"])
 
-    assert rate_limit_stall(scenario, refused_execute) is None
-    _, output = await _run_with(monkeypatch, scenario, refused_execute)
-    assert (output.attempts, output.discarded) == (1, [])
+    assert rate_limit_stall(scenario, refused_execute) is not None
+    attempts, _ = await _run_with(monkeypatch, scenario, refused_execute)
+    assert attempts == RATE_LIMIT_RETRIES + 1  # Retried until the budget ran out, never counted as a verdict.
+
+
+def test_a_harness_note_beside_a_rate_limit_keeps_the_attempt_as_the_verdict() -> None:
+    attempt = _refused()
+    attempt.notes = [Note("no confirm card for the interrupted draft 'drf_1'")]
+
+    assert rate_limit_stall(_stalled_scenario(), attempt) is None
+
+
+def test_running_out_of_turns_beside_a_rate_limit_is_still_a_stall() -> None:
+    attempt = _refused()
+    attempt.notes = [Note("ran out of turns (6) before the plan ended", OUT_OF_TURNS)]
+
+    assert rate_limit_stall(_stalled_scenario(), attempt) is not None
+
+
+def test_a_note_a_stall_does_not_cause_beside_out_of_turns_keeps_the_attempt_as_the_verdict() -> None:
+    attempt = _refused()
+    attempt.notes = [
+        Note("ran out of turns (6) before the plan ended", OUT_OF_TURNS),
+        Note("step-up refused with the right PIN: 429 {}", "step_up_refused"),
+    ]
+
+    assert rate_limit_stall(_stalled_scenario(), attempt) is None
 
 
 async def test_a_forbidden_call_after_a_rate_limited_prepare_fails_and_is_not_retried(
@@ -519,3 +569,54 @@ def test_fewer_trials_than_the_consistency_minimum_clamp_it_and_say_so() -> None
     assert "WEAKENED" in consistency.detail
     _, failing = cuj_gates([_trial("a", "cuj_money", 1, False)], thresholds)
     assert not failing.ok
+
+
+def test_the_trial_span_carries_the_threads_of_its_discarded_attempts() -> None:
+    result = TrialResult("cuj-t", "cuj_money", 1, True, {}, 1.0, 2, "kept", "", [], "scripted", 3, 0, 1, 2)
+    result = dataclasses.replace(result, discarded=[DiscardedAttempt("a", "v", []), DiscardedAttempt("b", "v", [])])
+
+    assert _trial_span(result).discarded_threads == ("a", "b")
+
+
+def test_the_calls_are_computed_with_the_delegated_calls_attached() -> None:
+    output = _output(ObservedCall("prepare_transfer"))
+    assert [c.name for c in output.calls] == ["ask_payments", "prepare_transfer"]
+
+    output.delegated = [ObservedCall("ask_payments", delegated=True)]
+    output.refresh_calls()
+
+    assert [c.name for c in output.calls] == ["ask_payments"]
+
+
+def _unpaired_prepare_output() -> LiveOutput:
+    return _output(
+        ObservedCall("prepare_transfer", unpaired=True), thread="a", trace_gap="1 traces could not be paired"
+    )
+
+
+def test_an_unpaired_prepare_is_not_judged_on_its_arguments() -> None:
+    scenario = _scenario(
+        trajectory=[{"tool": "ask_payments"}, {"tool": "prepare_transfer", "args": {"amount": "1.00"}}]
+    )
+
+    assert trace_gap_verdict(scenario, _unpaired_prepare_output()) == "inconclusive: 1 traces could not be paired"
+
+
+def test_a_paired_prepare_with_other_arguments_is_still_unexpected() -> None:
+    scenario = _scenario(
+        trajectory=[{"tool": "ask_payments"}, {"tool": "prepare_transfer", "args": {"amount": "1.00"}}]
+    )
+    wrong = _output(ObservedCall("prepare_transfer", {"amount": "9.00"}), trace_gap=GAP)
+
+    assert trace_gap_verdict(scenario, wrong) is None
+
+
+async def test_a_pairing_failure_fails_the_trial_without_a_rerun(monkeypatch: pytest.MonkeyPatch) -> None:
+    note = "run-id mismatch: traces carry bot.run_id ['x'], runs have ['y']"
+    failed = _output(thread="a", trace_gap=note)
+    failed.pairing_failed = True
+    ran = _patch_attempts(monkeypatch, [failed])
+
+    output = await run_trial(_stalled_scenario(), None, STARTING)
+
+    assert (len(ran), output.attempts, output.discarded, output.trace_gap) == (1, 1, [], note)

@@ -51,8 +51,29 @@ class Cards(Strict):
     absent: list[str] = []
 
 
+JudgeName = Literal["quality", "citation"]  # The scenario evaluators' rubrics, scored as `judge_<name>`.
+
+
+class Attack(Strict):
+    """What a journey that replays an attack checks, as `redteam.yaml` does: the deterministic red-team checks (no
+    write not asked for, no other customer's data, no credential request, no ungrounded figure, `must_not_contain`)
+    and, when `judge` is set, a judge's verdict on whether the assistant complied with it."""
+
+    must_not_contain: list[str] = []
+    judge: str | None = None
+
+
 class Expect(Strict):
     cards: Cards = Cards()
+    attack: Attack | None = None
+    final_turn_contains: list[str] = []  # In the last run's text or surfaces: the customer's last question worked.
+    cites: list[str] = []  # A Citation surface names at least one of these document ids.
+    grounded: bool = False  # Every figure the customer read is in a tool result.
+    no_amounts: bool = False  # An honest "no tengo esa información" slips in no money figure.
+    answers_in_text: bool = False  # The text answers; it never points at a card.
+    spending_months: list[int] = []  # `spending_summary` was called for each month this many months back.
+    spending_chart_each_turn: bool = False  # Each turn's BarChart bars are that turn's `spending_summary` totals.
+    resumed_intact: bool = False  # `driver: reconnect`: the replay is the whole run, twice the same.
     text_contains: list[str] = []
     text_contains_any: list[str] = []
     ledger: Literal["none", "once"] | None = None  # No movement, or the draft's amount + fee debited exactly once.
@@ -67,7 +88,8 @@ class Scenario(Strict):
     group: str  # The threshold it counts toward.
     rules: list[int] = []
     user: Literal["ana", "juan"]
-    driver: Literal["scripted", "simulated"] = "scripted"
+    # reconnect: the opening's answer is cut mid-run, then the thread is reconnected twice (`expect.resumed_intact`).
+    driver: Literal["scripted", "simulated", "reconnect"] = "scripted"
     opening: str
     then: list[str] = []  # Scripted: the turns after the opening.
     plan: str | None = None  # Simulated: what the customer wants, in the customer's voice.
@@ -79,6 +101,7 @@ class Scenario(Strict):
     forbid: list[str] = []  # `tool` or `tool:outcome`; any matching call fails the trial.
     # "A <- B": a call matching A needs a call to B since the previous A (a retry must start from a fresh draft).
     requires: list[str] = []
+    judges: list[JudgeName] = []  # Extra scores from the LLM judge on GUARD_MODEL; they never decide the trial.
     handoffs: list[str] = []  # Subagent domains the root must hand off to, read from the run's spans.
     expect: Expect = Expect()
 
@@ -86,8 +109,12 @@ class Scenario(Strict):
     def coherent(self) -> "Scenario":
         if self.driver == "simulated" and not self.plan:
             raise ValueError(f"{self.id}: a simulated journey needs a plan")
-        if self.driver == "scripted" and 1 + len(self.then) > self.max_turns:
+        if self.driver != "simulated" and 1 + len(self.then) > self.max_turns:
             raise ValueError(f"{self.id}: more scripted turns than max_turns")
+        if self.driver == "reconnect" and self.then:
+            raise ValueError(f"{self.id}: a reconnect journey has one turn")
+        if self.expect.resumed_intact and self.driver != "reconnect":
+            raise ValueError(f"{self.id}: resumed_intact needs driver: reconnect")
         return self
 
     @field_validator("allow", "forbid")
@@ -107,6 +134,11 @@ class Scenario(Strict):
             for side in sides:
                 _check_rule_outcome(side)
         return rules
+
+    @property
+    def customer_turns(self) -> list[str]:
+        """The turns the customer's side is known to say up front (a simulated customer's later turns are not)."""
+        return [self.opening, *self.then]
 
     @property
     def source_account(self) -> str:
