@@ -39,9 +39,12 @@ record when the payments subagent prepared it, that no `execute_transfer` result
 customer's denial or cancel, the bank's answer about the draft (a failed result such as `draft_expired`), or a result
 Pydantic AI synthesized for a cut-off call. An error in `UNSENT_ERRORS` decides nothing: a refusal the bot raised before anything was sent
 (`policy_denied`, a cap or input verdict included, and the `service_unavailable` an approved call returns when its
-token or session can't be set up). Every answer from the bank decides the draft, `token_already_used` included, because
-`mcp-payments` can answer it after money moved (a double click, an executed draft with no receipt row); the customer
-prepares again. A `retried` call decides nothing either, so the customer can ask again. A newer
+token or session can't be set up). Nor do the two bank answers in `UNDECIDING_BANK_ERRORS` (ADR 023):
+`token_already_used`, which `mcp-payments` answers only for a token spent with nothing moved on a draft still pending,
+and `execution_in_progress`, when another call still holds the draft and nothing was spent. The draft stays open, so
+asking again raises a new interrupt and the approval sends a fresh step-up token, never the spent one. Every other
+answer from the bank decides the draft (`draft_expired`, `draft_not_pending`, `insufficient_funds`, a receipt).
+A `retried` call decides nothing either, so the customer can ask again. A newer
 draft supersedes the older ones. An interrupt nobody answered decides nothing, so the failed-resume recovery (ADR 013:
 ask again, approve again) still pauses on it. `PolicyToolset` reads it from `ctx.messages`; otherwise the call is denied
 before any interrupt, on the first call and on the resume alike. Each agent has its own `PolicyToolset` over its own
