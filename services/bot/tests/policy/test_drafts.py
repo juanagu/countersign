@@ -63,7 +63,8 @@ def test_a_draft_whose_call_got_a_synthesized_result_is_closed() -> None:
 
 
 def test_the_banks_answer_about_the_draft_closes_it() -> None:
-    expired = _result('{"code":"draft_expired","message":"La transferencia preparada venció."}', "x1", outcome="failed")
+    body = '{"error":"draft_expired","message":"La transferencia preparada venció. Preparala de nuevo."}'
+    expired = _result(body, "x1", outcome="failed")
     assert open_draft([*_prepared("d1"), _execute("d1", "x1"), expired]) is None
 
 
@@ -71,17 +72,21 @@ UNSENT = {
     "service-unavailable": _result('{"error":"service_unavailable","service":"mcp-gateway"}', "x1", outcome="failed"),
     "policy-denied": _result({"error": "policy_denied", "reason": "at most 3 T3 calls per conversation"}, "x1"),
     "retried": _result("draft_id: field required", "x1", outcome="retried"),
-    "token-already-used": _result(
-        '{"error":"token_already_used","message":"Esa confirmación ya se usó. Confirmá de nuevo."}',
-        "x1",
-        outcome="failed",
-    ),
 }
 
 
 @pytest.mark.parametrize("refused", UNSENT.values(), ids=UNSENT.keys())
 def test_a_refusal_before_anything_was_sent_leaves_the_draft_open(refused: ModelRequest) -> None:
     assert open_draft([*_delegated("d1"), _execute("d1", "x1"), refused], delegates=DELEGATES) == "d1"
+
+
+def test_a_reused_step_up_token_leaves_the_draft_open() -> None:
+    # The bank's answer when nothing moved: it asks the customer to confirm again, which needs a fresh token.
+    body = (
+        '{"error":"token_already_used","message":"Esa confirmación ya se usó. Confirmá de nuevo si querés reintentar."}'
+    )
+    reused = _result(body, "x1", outcome="failed")
+    assert open_draft([*_delegated("d1"), _execute("d1", "x1"), reused], delegates=DELEGATES) == "d1"
 
 
 def test_a_policy_denied_inside_a_backends_answer_still_closes_the_draft() -> None:

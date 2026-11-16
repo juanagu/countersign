@@ -37,6 +37,11 @@ function matchesDraft(draft: TransferDraft, auth: { amount: string; currency: st
   return draft.amount === auth.amount && draft.currency === auth.currency && draft.beneficiaryId === auth.beneficiaryId;
 }
 
+async function executedResult(repo: TransfersRepository, draft: TransferDraft): Promise<ExecuteTransferResult | null> {
+  const receipt = await repo.findReceipt(draft.id);
+  return receipt ? { ok: true, value: { draft, receipt } } : null;
+}
+
 const LOCKED_FAILURES = {
   not_pending: 'draft_not_pending',
   expired: 'draft_expired',
@@ -60,12 +65,19 @@ export async function executeTransfer(
   const draft = await repo.findDraft(draftId);
   if (draft?.customerId !== customerId) return failure('draft_not_found');
   // Claimed before anything else can fail, so a token is spent even by a rejected attempt.
-  if (!(await repo.claimTokenId(grant.jti))) return failure('token_already_used');
+  if (!(await repo.claimTokenId(grant.jti))) {
+    // A matching grant replayed on the draft it executed gets the idempotent receipt, so a client that reads
+    // `token_already_used` knows nothing moved and may ask the customer to confirm again.
+    const replay =
+      draft.status === 'executed' && matchesDraft(draft, grant.authorization)
+        ? await executedResult(repo, draft)
+        : null;
+    return replay ?? failure('token_already_used');
+  }
   if (!matchesDraft(draft, grant.authorization)) return failure('not_authorised');
 
   if (draft.status === 'executed') {
-    const receipt = await repo.findReceipt(draftId);
-    return receipt ? { ok: true, value: { draft, receipt } } : failure('draft_not_pending');
+    return (await executedResult(repo, draft)) ?? failure('draft_not_pending');
   }
   if (draft.status !== 'pending') return failure('draft_not_pending');
   if (new Date(draft.expiresAt).getTime() <= now().getTime()) return failure('draft_expired');

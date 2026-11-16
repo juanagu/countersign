@@ -15,15 +15,19 @@ UNSENT_ERRORS = frozenset({"policy_denied", "service_unavailable"})
 # The bank's answers that leave the draft pending: a reused step-up token moved nothing, and the bank asks the
 # customer to confirm again, which needs a fresh single-use token bound to the same draft.
 RETRYABLE_BANK_ERRORS = frozenset({"token_already_used"})
+# Results that leave the draft open: mcp-payments answers `token_already_used` only when nothing moved (a replay of
+# the token that executed the draft gets its receipt instead).
+UNDECIDING_ERRORS = UNSENT_ERRORS | RETRYABLE_BANK_ERRORS
 
 
 def open_draft(messages: Sequence[ModelMessage], *, delegates: Collection[str] = frozenset()) -> str | None:
     """The draft of the latest `prepare_transfer` result, unless an `execute_transfer` result already decided it:
     a receipt, the customer's denial or cancel, the bank's answer about it (expired, already executed), or a result
     Pydantic AI synthesized for a call a cut-off run left open. A newer draft supersedes every older one, so at most
-    one draft is open. A refusal before anything was sent (`UNSENT_ERRORS`, a retry) and an interrupt nobody
-    answered leave it open, so asking again pauses on it again. `delegates` names the delegate tools whose evidence
-    records hold a subagent's `prepare_transfer` results."""
+    one draft is open. An error in `UNDECIDING_ERRORS` (a refusal before anything was sent, or the bank's
+    `token_already_used`, which moved nothing), a retried call and an interrupt nobody answered leave it open, so
+    asking again pauses on it again. `delegates` names the delegate tools whose evidence records hold a subagent's
+    `prepare_transfer` results."""
     drafts = [
         draft
         for name, content in tool_returns_in(messages, delegates=delegates)
@@ -49,13 +53,16 @@ def _decided_drafts(messages: Sequence[ModelMessage]) -> set[str]:
 
 
 def _decides(result: ToolReturnPart) -> bool:
-    """A retried call never ran; anything else decides unless it is a refusal before sending."""
-    return result.outcome != "retried" and _error_code(result.content) not in UNSENT_ERRORS | RETRYABLE_BANK_ERRORS
+    """A retried call never ran; anything else decides unless its error is in `UNDECIDING_ERRORS`."""
+    return result.outcome != "retried" and _error_code(result.content) not in UNDECIDING_ERRORS
 
 
 def _error_code(content: Any) -> str | None:
-    """The `error` of a result as the bot itself wrote it: a policy denial is a dict, a failed call's `ToolFailed`
-    message a JSON string. Never read inside `untrusted_data`, which a backend fills."""
+    """The top-level `error` of a result: the bot's own policy denial (a dict), or the JSON string of a failed call,
+    which carries the bank's `isError` text (`{"error": ..., "message": ...}`) as well as the bot's own failures.
+    Never read inside `untrusted_data`, which a backend fills. A backend that writes a code in `UNDECIDING_ERRORS`
+    can at worst keep a draft open: every execution still needs the customer's fresh single-use step-up token bound
+    to that draft (rule 3)."""
     if isinstance(content, str):
         try:
             content = json.loads(content)

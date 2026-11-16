@@ -1,5 +1,6 @@
 """After the bank answers an approved `execute_transfer` with an error about its draft, that draft raises no second
-interrupt: not later in the resumed run, nor on the next turn (rule 3).
+interrupt: not later in the resumed run, nor on the next turn (rule 3). The one answer that leaves it open is
+`token_already_used`, where nothing moved: the same draft pauses on a fresh interrupt and needs a fresh step-up token.
 
 The most realistic path the tests allow: the real `/agent` route and agent tree, a JSON round-tripping conversation
 store, and the real `MCPToolset` over HTTP to a fake gateway that answers as mcp-payments does (`isError` with
@@ -35,8 +36,8 @@ from tests.conftest import SigningKey, open_guardrails
 from tests.subagents.fakes import DRAFT, DRAFT_ID, PAYMENTS_STEPS, SKILLS, SUBAGENTS, per_turn, scripted, tree_settings
 
 CUSTOMER, AGAIN = "Mandale 50.000 a Ana", "Enviala de nuevo"
-STEP_UP = "step-up-from-the-app"
-APPROVED = {"approved": True, "editedArgs": {"draft_id": DRAFT_ID, "step_up_token": STEP_UP}}
+STEP_UP, FRESH_STEP_UP = "step-up-from-the-app", "a-fresh-step-up-from-the-app"
+SERVER_START_TIMEOUT = 10.0
 EXECUTE = ("execute_transfer", {"draft_id": DRAFT_ID})
 ASK = ("ask_payments", {"request": "Preparar la transferencia a Ana"})
 DENIAL = {"error": "policy_denied", "reason": "the draft is not this conversation's open draft"}
@@ -45,6 +46,8 @@ BANK_ERRORS = {
     "draft_expired": "La transferencia preparada venció. Preparala de nuevo.",
     "draft_not_pending": "Esa transferencia ya no está pendiente.",
 }
+REUSED_TOKEN = {"token_already_used": "Esa confirmación ya se usó. Confirmá de nuevo si querés reintentar."}
+MESSAGES = {**BANK_ERRORS, **REUSED_TOKEN}
 
 
 class SerializingStore(InMemoryConversationStore):
@@ -71,6 +74,7 @@ class Gateway:
     url: str
     error: str  # What the bank answers every execute_transfer with.
     executed: list[str] = field(default_factory=list)
+    step_up_tokens: list[str] = field(default_factory=list)
 
 
 def _bank(error: str) -> FastMCP:
@@ -90,31 +94,39 @@ def _bank(error: str) -> FastMCP:
     @mcp.tool(meta=meta("T3", "transfers:execute", **{"bank/listScope": "transfers:prepare"}))
     def execute_transfer(draft_id: str, step_up_token: str = "") -> CallToolResult:
         mcp.executed.append(draft_id)  # type: ignore[attr-defined]
-        body = json.dumps({"error": error, "message": BANK_ERRORS[error]})
+        mcp.step_up_tokens.append(step_up_token)  # type: ignore[attr-defined]
+        body = json.dumps({"error": error, "message": MESSAGES[error]})
         return CallToolResult(isError=True, content=[TextContent(type="text", text=body)])
 
-    mcp.executed = []  # type: ignore[attr-defined]
+    mcp.executed, mcp.step_up_tokens = [], []  # type: ignore[attr-defined]
     return mcp
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
-@pytest.fixture(params=sorted(BANK_ERRORS))
-async def gateway(request: pytest.FixtureRequest) -> AsyncIterator[Gateway]:
-    bank = _bank(request.param)
-    port = _free_port()
-    app = bank.http_app(path="/mcp", stateless_http=True, json_response=True)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    task = asyncio.create_task(server.serve())
-    while not server.started:  # noqa: ASYNC110 (uvicorn exposes no started event)
+async def _started(server: uvicorn.Server, task: "asyncio.Task[None]") -> None:
+    while not server.started:
+        if task.done():  # A failed start ends the task (uvicorn exits the process on a bind error).
+            raise RuntimeError(f"the fake gateway stopped before it started: {task.exception()!r}")
         await asyncio.sleep(0.01)
-    yield Gateway(f"http://127.0.0.1:{port}/mcp", request.param, bank.executed)  # type: ignore[attr-defined]
-    server.should_exit = True
-    await task
+
+
+@pytest.fixture
+async def gateway(request: pytest.FixtureRequest) -> AsyncIterator[Gateway]:
+    """The fake bank answering every execute_transfer with the error code the test parametrizes (indirect)."""
+    bank = _bank(request.param)
+    app = bank.http_app(path="/mcp", stateless_http=True, json_response=True)
+    # The listening socket is handed to uvicorn, so no other process can take the port between choosing and binding.
+    sock = socket.create_server(("127.0.0.1", 0))
+    server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+    task = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        await asyncio.wait_for(_started(server, task), SERVER_START_TIMEOUT)
+        url = f"http://127.0.0.1:{sock.getsockname()[1]}/mcp"
+        yield Gateway(url, request.param, bank.executed, bank.step_up_tokens)  # type: ignore[attr-defined]
+    finally:
+        server.should_exit = True
+        await asyncio.wait({task}, timeout=SERVER_START_TIMEOUT)
+        task.cancel()
+        sock.close()
 
 
 def _exchanger() -> TokenExchanger:
@@ -179,10 +191,34 @@ def _execute_results(started: list[dict[str, Any]], run: list[dict[str, Any]]) -
     ]
 
 
-@pytest.mark.filterwarnings("ignore::UserWarning")
-async def test_a_draft_the_bank_refused_after_approval_raises_no_second_interrupt(
+@dataclass
+class Chat:
+    """One customer's conversation over the real route: each post folds the streamed events into its messages."""
+
+    http: AsyncClient
+    headers: dict[str, str]
+    messages: list[dict[str, Any]] = field(default_factory=lambda: [{"id": "u", "role": "user", "content": CUSTOMER}])
+
+    async def post(self, run_id: str, **extra: Any) -> list[dict[str, Any]]:
+        base = {"threadId": "t", "tools": [], "context": [], "state": {}, "forwardedProps": {}}
+        body = {**base, "runId": run_id, "messages": self.messages, **extra}
+        events = _events((await self.http.post("/agent", json=body, headers=self.headers)).text)
+        fold(events, self.messages)
+        return events
+
+    async def approve(self, run_id: str, interrupt: dict[str, Any], step_up_token: str) -> list[dict[str, Any]]:
+        """As CopilotKit resumes: its answer to the paused call, and the `resume` entry with the step-up token."""
+        approved = {"approved": True, "editedArgs": {"draft_id": DRAFT_ID, "step_up_token": step_up_token}}
+        answer = {"id": f"ck-{run_id}", "role": "tool", "toolCallId": interrupt["toolCallId"]}
+        self.messages.append({**answer, "content": json.dumps(approved)})
+        resume = [{"interruptId": interrupt["id"], "status": "resolved", "payload": approved}]
+        return await self.post(run_id, resume=resume)
+
+
+@pytest.fixture
+async def chat(
     gateway: Gateway, signing_key: SigningKey, verifier: JwksTokenVerifier, tmp_path: Path
-) -> None:
+) -> AsyncIterator[Chat]:
     root = build_agent_tree(
         _root(),
         lambda _: _payments(),
@@ -199,26 +235,19 @@ async def test_a_draft_the_bank_refused_after_approval_raises_no_second_interrup
         conversation_store=SerializingStore(),
     )
     headers = {"accept": "text/event-stream", "authorization": f"Bearer {signing_key.token(sub='juan')}"}
-    base = {"threadId": "t", "tools": [], "context": [], "state": {}, "forwardedProps": {}}
-    messages: list[dict[str, Any]] = [{"id": "u", "role": "user", "content": CUSTOMER}]
-
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        yield Chat(http, headers)
 
-        async def post(run_id: str, **extra: Any) -> list[dict[str, Any]]:
-            body = {**base, "runId": run_id, "messages": messages, **extra}
-            events = _events((await http.post("/agent", json=body, headers=headers)).text)
-            fold(events, messages)
-            return events
 
-        first = await post("r1")
-        [interrupt] = _interrupts(first)
-        assert interrupt["metadata"]["draft_id"] == DRAFT_ID
-        # As CopilotKit resumes: its answer to the paused call, and the `resume` entry with the step-up token.
-        answer = {"id": "ck", "role": "tool", "toolCallId": interrupt["toolCallId"], "content": json.dumps(APPROVED)}
-        messages.append(answer)
-        resumed = await post("r2", resume=[{"interruptId": interrupt["id"], "status": "resolved", "payload": APPROVED}])
-        messages.append({"id": "u2", "role": "user", "content": AGAIN})
-        next_turn = await post("r3")
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.parametrize("gateway", sorted(BANK_ERRORS), indirect=True)
+async def test_a_draft_the_bank_refused_after_approval_raises_no_second_interrupt(gateway: Gateway, chat: Chat) -> None:
+    first = await chat.post("r1")
+    [interrupt] = _interrupts(first)
+    assert interrupt["metadata"]["draft_id"] == DRAFT_ID
+    resumed = await chat.approve("r2", interrupt, STEP_UP)
+    chat.messages.append({"id": "u2", "role": "user", "content": AGAIN})
+    next_turn = await chat.post("r3")
 
     assert gateway.executed == [DRAFT_ID]  # The bank was asked once, on the approval.
     started = [*first, *resumed]  # The resumed call's start event came in the run that paused on it.
@@ -229,3 +258,24 @@ async def test_a_draft_the_bank_refused_after_approval_raises_no_second_interrup
     assert _interrupts(resumed) == []
     assert _execute_results(next_turn, next_turn) == [DENIAL]
     assert _interrupts(next_turn) == []
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.parametrize("gateway", sorted(REUSED_TOKEN), indirect=True)
+async def test_a_reused_step_up_token_leaves_the_draft_open_for_a_fresh_interrupt(gateway: Gateway, chat: Chat) -> None:
+    first = await chat.post("r1")
+    [interrupt] = _interrupts(first)
+    resumed = await chat.approve("r2", interrupt, STEP_UP)
+
+    [fresh] = _interrupts(resumed)  # The same draft pauses again, in the resumed run, instead of policy_denied.
+    assert fresh["id"] != interrupt["id"]
+    assert fresh["metadata"]["draft_id"] == DRAFT_ID
+    assert gateway.step_up_tokens == [STEP_UP]  # Nothing reached the bank on the pause: no token is reused.
+    started = [*first, *resumed]
+    refusal = {"error": "token_already_used", "message": REUSED_TOKEN["token_already_used"]}
+    assert _execute_results(started, resumed) == [refusal]
+
+    retried = await chat.approve("r3", fresh, FRESH_STEP_UP)
+    assert gateway.step_up_tokens == [STEP_UP, FRESH_STEP_UP]  # Only the customer's new approval sends a token.
+    assert _execute_results([*started, *retried], retried) == [refusal]
+    assert _interrupts(retried) == []
