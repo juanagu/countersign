@@ -10,6 +10,7 @@ from evals.metrics import (
     UNRECORDED,
     cache_read_share,
     cuj_rows,
+    discarded_threads,
     failover_counts,
     guardrail_counts,
     latencies,
@@ -157,3 +158,10 @@ def test_a_trials_tokens_include_its_discarded_attempts() -> None:
     [row] = cuj_rows(trials, {"kept": 100.0, "stalled-1": 20.0, "stalled-2": 5.0})
 
     assert "tokens p50 125" in row
+
+
+def test_discarded_threads_come_back_as_a_list_whether_phoenix_sends_a_list_or_its_json_text() -> None:
+    assert discarded_threads(["a", "b"]) == ["a", "b"]
+    assert discarded_threads('["a", "b"]') == ["a", "b"]
+    assert discarded_threads("not json") == []
+    assert discarded_threads(None) == []

@@ -1,5 +1,6 @@
 """A span-exporter wrapper that redacts PII and credentials from span attributes, events, links and status."""
 
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -11,14 +12,20 @@ from opentelemetry.util.types import Attributes
 from app.guardrails.pii import redact, redact_value
 from app.guardrails.stream_timing import RUN_ID_ATTRIBUTE, THREAD_ATTRIBUTE
 
-# Random uuids with no PII, which the evals match against the client's own ids; the phone pattern can read a uuid's
-# digit groups as a number and change them. Every other attribute is redacted.
-OPAQUE_ID_ATTRIBUTES = frozenset({RUN_ID_ATTRIBUTE, THREAD_ATTRIBUTE, "cuj.thread_id", "cuj.discarded_threads"})
+# The ids are client-supplied (the AG-UI threadId and runId), so only a value shaped like a uuid is kept as is: the
+# evals match it against the client's own, and the phone pattern would change its digit groups. Anything else in
+# these attributes, or any other attribute, is redacted.
+OPAQUE_ID_ATTRIBUTES = frozenset({RUN_ID_ATTRIBUTE, THREAD_ATTRIBUTE})
+UUID_SHAPE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _is_opaque_id(key: str, value: Any) -> bool:
+    return key in OPAQUE_ID_ATTRIBUTES and isinstance(value, str) and UUID_SHAPE.fullmatch(value) is not None
 
 
 def redact_attributes(attributes: Attributes) -> dict[str, Any]:
     return {
-        key: value if key in OPAQUE_ID_ATTRIBUTES else redact_value(value) for key, value in (attributes or {}).items()
+        key: value if _is_opaque_id(key, value) else redact_value(value) for key, value in (attributes or {}).items()
     }
 
 

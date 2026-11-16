@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from evals.calls import ObservedCall
 from evals.cuj import Scenario
 from evals.cuj_evaluators import MISSING, UNEXPECTED, Problem, rule_matches, trajectory_problems, visible_problems
-from evals.live import STALL_NOTE_KINDS, LiveOutput
+from evals.live import STALL_NOTE_KINDS, LiveOutput, Note
 
 # The gateway allows each customer 20 reversible writes per 10 minutes (ADR 017), and every trial prepares at least
 # one. A trial that was going right until the gateway refused a write says nothing about the bot, so it waits for the
@@ -39,9 +39,9 @@ def _attempted_a_forbidden_tool(scenario: Scenario, refusals: list[ObservedCall]
     return any(rule_matches(rule, c) for rule in scenario.forbid for c in refusals)
 
 
-def _notes_beyond_a_stall(output: LiveOutput) -> list[str]:
+def _notes_beyond_a_stall(output: LiveOutput) -> list[Note]:
     """The harness notes a stall does not explain: anything but a kind it causes by itself."""
-    return [n for n in output.notes if getattr(n, "kind", "") not in STALL_NOTE_KINDS]
+    return [n for n in output.notes if n.kind not in STALL_NOTE_KINDS]
 
 
 def rate_limit_stall(scenario: Scenario, output: LiveOutput) -> Stall | None:

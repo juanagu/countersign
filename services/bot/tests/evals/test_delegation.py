@@ -201,7 +201,7 @@ def test_a_late_run_does_not_shift_the_cards_of_the_runs_that_arrived() -> None:
     runs = [_run("r1", "drf_1"), _run("r2", "drf_2"), _run("r3", "drf_3")]
     arrived = [_stream("t1", "1", "r1"), _stream("t3", "3", "r3")]  # r2's spans are late.
 
-    by_trace = cards_by_trace(arrived, runs)
+    by_trace = cards_by_trace(arrived, runs).cards
 
     assert {t: [c["draftId"] for c in cards] for t, cards in by_trace.items()} == {"t1": ["drf_1"], "t3": ["drf_3"]}
 
@@ -210,22 +210,52 @@ def test_a_stream_without_an_id_and_a_late_run_leave_out_only_themselves() -> No
     runs = [_run("r1", "drf_1"), _run("r2", "drf_2"), _run("r3", "drf_3"), _run("r4", "drf_4")]
     arrived = [_stream("t1", "1", "r1"), _stream("t2", "2"), _stream("t4", "4", "r4")]  # r2 has no id, r3 is late.
 
-    by_trace = cards_by_trace(arrived, runs)
+    by_trace = cards_by_trace(arrived, runs).cards
 
     assert {t: [c["draftId"] for c in cards] for t, cards in by_trace.items()} == {"t1": ["drf_1"], "t4": ["drf_4"]}
 
 
-def test_without_run_ids_a_missing_run_pairs_nothing_and_a_complete_set_pairs_by_order() -> None:
+def test_a_trace_no_run_matches_is_counted_never_paired_by_order() -> None:
     runs = [_run("r1", "drf_1"), _run("r2", "drf_2")]
+    restore = _stream("t0", "0", "restore-9")  # A BFF restore's RUN_STARTED id, which no client run carries.
 
-    assert cards_by_trace([_stream("t2", "2")], runs) == {}
-    paired = cards_by_trace([_stream("t1", "1"), _stream("t2", "2")], runs)
-    assert [c["draftId"] for c in paired["t2"]] == ["drf_2"]
+    paired = cards_by_trace([restore, _stream("t1", "1"), _stream("t2", "2", "r2")], runs)
+
+    assert {t: [c["draftId"] for c in cards] for t, cards in paired.cards.items()} == {"t2": ["drf_2"]}
+    assert paired.unpaired == 2
+
+
+async def test_unpaired_traces_make_the_trial_note_a_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    streams = [
+        {"context": {"trace_id": "t", "span_id": "s"}, "attributes": {delegation.THREAD_ATTRIBUTE: "thr"}},
+    ]
+    handoff = _span("ask", None, "ask_payments", "1")
+
+    def fake_spans(_since: object, **filters: object) -> list[dict[str, Any]]:
+        return streams if filters.get("name") == "bot.stream" else [handoff]
+
+    monkeypatch.setattr(delegation, "spans", fake_spans)
+
+    from datetime import UTC, datetime
+
+    result = await delegation.read_delegated("thr", datetime.now(UTC), [_run("r1")])
+
+    assert "1 traces could not be paired" in result.note
+
+
+def test_a_failed_handoff_reads_its_own_error_never_an_inner_tool_s() -> None:
+    inner = _span("prep", "ask", "prepare_transfer", "2", status="ERROR", message='{"error":"insufficient_funds"}')
+    spans = [_span("ask", None, "ask_payments", "1", status="ERROR"), inner]
+
+    [handoff, prepare] = delegated_calls(spans, {})
+
+    assert handoff.outcome == "error:unknown"
+    assert prepare.outcome == "error:insufficient_funds"
 
 
 def test_a_draft_belongs_to_the_first_run_that_showed_its_card() -> None:
     runs = [_run("r1", "drf_1"), _run("r2", "drf_1", "drf_2")]
 
-    by_trace = cards_by_trace([_stream("t1", "1", "r1"), _stream("t2", "2", "r2")], runs)
+    by_trace = cards_by_trace([_stream("t1", "1", "r1"), _stream("t2", "2", "r2")], runs).cards
 
     assert [c["draftId"] for c in by_trace["t2"]] == ["drf_2"]

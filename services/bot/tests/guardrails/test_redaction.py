@@ -3,6 +3,7 @@ import json
 import logging
 import sys
 
+import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -36,23 +37,33 @@ def test_log_messages_args_and_extra_fields_are_redacted() -> None:
     assert entry["detail"] == {"account": "[cuenta]", "amount": "1254300.50"}
 
 
-def test_opaque_id_attributes_keep_their_value_and_every_other_attribute_is_redacted() -> None:
-    uuid_the_phone_pattern_reads = "3f2a9c10-7b1e-4d2a-1234-5678abcdef01"
+def _export_attributes(attributes: dict[str, str]) -> dict[str, object]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(RedactingSpanExporter(exporter)))
     with provider.get_tracer("t").start_as_current_span("bot.stream") as span:
-        span.set_attribute("bot.run_id", uuid_the_phone_pattern_reads)
-        span.set_attribute("bot.thread_id", uuid_the_phone_pattern_reads)
-        span.set_attribute("cuj.thread_id", uuid_the_phone_pattern_reads)
-        span.set_attribute("cuj.discarded_threads", [uuid_the_phone_pattern_reads])
-        span.set_attribute("bot.note", uuid_the_phone_pattern_reads)
+        for key, value in attributes.items():
+            span.set_attribute(key, value)
+    return dict(exporter.get_finished_spans()[0].attributes or {})
 
-    attributes = exporter.get_finished_spans()[0].attributes or {}
-    assert attributes["bot.run_id"] == attributes["bot.thread_id"] == attributes["cuj.thread_id"]
-    assert attributes["bot.run_id"] == uuid_the_phone_pattern_reads
-    assert list(attributes["cuj.discarded_threads"]) == [uuid_the_phone_pattern_reads]  # type: ignore[arg-type]
+
+def test_a_uuid_in_an_id_attribute_is_kept_and_the_same_value_elsewhere_is_redacted() -> None:
+    uuid_the_phone_pattern_reads = "3f2a9c10-7b1e-4d2a-1234-5678abcdef01"
+    attributes = _export_attributes(
+        {"bot.run_id": uuid_the_phone_pattern_reads, "bot.thread_id": uuid_the_phone_pattern_reads,
+         "bot.note": uuid_the_phone_pattern_reads}
+    )  # fmt: skip
+    assert attributes["bot.run_id"] == attributes["bot.thread_id"] == uuid_the_phone_pattern_reads
     assert attributes["bot.note"] == "3f2a9c10-7b1e-4d2a-[teléfono]abcdef01"
+
+
+@pytest.mark.parametrize(
+    "client_value", ["ana@example.com", "dni 30123456", "3f2a9c10-7b1e-4d2a-1234-5678abcdef01 ana@example.com"]
+)
+def test_a_client_supplied_id_that_is_not_a_uuid_is_redacted(client_value: str) -> None:
+    attributes = _export_attributes({"bot.run_id": client_value, "bot.thread_id": client_value})
+    assert attributes["bot.run_id"] == attributes["bot.thread_id"] != client_value
+    assert "ana@example.com" not in str(attributes) and "30123456" not in str(attributes)
 
 
 def test_an_access_log_record_keeps_its_args_for_uvicorn_and_has_its_path_masked() -> None:

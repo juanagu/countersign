@@ -3,6 +3,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan
 from pydantic_ai import ApprovalRequired, RunContext, ToolReturn
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
@@ -44,8 +45,12 @@ def tool_tier(tool: ToolsetTool[BotDeps]) -> RiskTier | None:
 def _flag_tool_span(name: str) -> None:
     """Flags the current span only when it is this tool's own span, never a run or a delegate's."""
     span = trace.get_current_span()
-    attributes = getattr(span, "attributes", None) or {}
-    if attributes.get(TOOL_NAME_ATTRIBUTE) == name:
+    if not span.is_recording():
+        return
+    if not isinstance(span, ReadableSpan):
+        logger.warning("policy denial not flagged: the current span cannot be read", extra={"tool": name})
+        return
+    if (span.attributes or {}).get(TOOL_NAME_ATTRIBUTE) == name:
         span.set_attribute(POLICY_DENIED_ATTRIBUTE, True)
 
 

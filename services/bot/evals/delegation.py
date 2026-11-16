@@ -64,7 +64,7 @@ def delegated_calls(trace_spans: Sequence[Span], cards: Mapping[str, Sequence[di
         is_handoff = span["context"]["span_id"] in handoffs
         if not is_handoff and not under_handoff(span):
             continue
-        outcome, retry = _outcome(span, trace_spans)
+        outcome, retry = _outcome(span, trace_spans, is_handoff=is_handoff)
         data = None
         if name == PREPARE_TOOL and outcome == RESULT:
             data = next(confirms.get(span["context"]["trace_id"], iter(())), None)
@@ -73,23 +73,26 @@ def delegated_calls(trace_spans: Sequence[Span], cards: Mapping[str, Sequence[di
     return calls
 
 
-def cards_by_trace(streams: Sequence[Span], runs: Sequence[RunTrace]) -> dict[str, list[dict[str, Any]]]:
-    """The confirm cards of the run each arrived trace belongs to. A trace is matched to its run by the run id its
-    `bot.stream` span carries; one whose id is missing or matches no run is left out. Only when no trace carries an
-    id, by order, and only when every run's trace arrived: a late trace could otherwise take another run's cards."""
+@dataclass(frozen=True)
+class PairedCards:
+    """The confirm cards per trace id, and how many arrived traces no run could be matched to."""
+
+    cards: dict[str, list[dict[str, Any]]]
+    unpaired: int = 0
+
+
+def cards_by_trace(streams: Sequence[Span], runs: Sequence[RunTrace]) -> PairedCards:
+    """The confirm cards of the run each arrived trace belongs to, matched by the run id its `bot.stream` span
+    carries. A trace with no id, or one no run has (a BFF `restore-...` RUN_STARTED, say), is counted, never guessed
+    by order: a wrong pairing would give a prepare another run's arguments."""
     shown = _cards_per_run(runs)
-    ordered = sorted(streams, key=lambda s: str(s.get("start_time")))
-    run_ids = [(s.get("attributes") or {}).get(RUN_ID_ATTRIBUTE) for s in ordered]
     by_run_id = {run.run_id: run_cards for run, run_cards in zip(runs, shown, strict=True) if run.run_id}
-    if any(run_ids):
-        return {
-            s["context"]["trace_id"]: by_run_id[run_id]
-            for s, run_id in zip(ordered, run_ids, strict=True)
-            if run_id in by_run_id
-        }
-    if len(ordered) == len(runs):
-        return {s["context"]["trace_id"]: run_cards for s, run_cards in zip(ordered, shown, strict=True)}
-    return {}
+    cards: dict[str, list[dict[str, Any]]] = {}
+    for stream in streams:
+        run_id = (stream.get("attributes") or {}).get(RUN_ID_ATTRIBUTE)
+        if run_id in by_run_id:
+            cards[stream["context"]["trace_id"]] = by_run_id[run_id]
+    return PairedCards(cards, len(streams) - len(cards))
 
 
 def _cards_per_run(runs: Sequence[RunTrace]) -> list[list[dict[str, Any]]]:
@@ -103,15 +106,18 @@ def _cards_per_run(runs: Sequence[RunTrace]) -> list[list[dict[str, Any]]]:
     return per_run
 
 
-def _outcome(call: Span, trace_spans: Sequence[Span]) -> tuple[str, int | None]:
+def _outcome(call: Span, trace_spans: Sequence[Span], *, is_handoff: bool) -> tuple[str, int | None]:
     """The call's own span decides: `policy_denied` when the bot flagged it (a denial is a normal result, so the span
     ends OK), `result` unless it ended in ERROR. Then `error:<code>` (and the gateway's
     `retry_after_seconds`), the code read from the span's message or, when it has none, from the ERROR spans below it
-    (the MCP transport's). An ERROR in a descendant of a successful call changes nothing."""
+    (the MCP transport's). An ERROR in a descendant of a successful call changes nothing. A handoff reads only its own
+    span: an inner tool's failure is that tool's, not the handoff's."""
     if (call.get("attributes") or {}).get(POLICY_DENIED_ATTRIBUTE):
         return POLICY_DENIED, None
     if call.get("status_code") != "ERROR":
         return RESULT, None
+    if is_handoff:
+        return _own_error(call)
     family = {call["context"]["span_id"]}
     for span in sorted(trace_spans, key=lambda s: str(s.get("start_time"))):
         if span.get("parent_id") in family:
@@ -121,6 +127,13 @@ def _outcome(call: Span, trace_spans: Sequence[Span]) -> tuple[str, int | None]:
     if not errors:
         return f"{ERROR_PREFIX}{UNKNOWN_ERROR}", None
     return f"{ERROR_PREFIX}{errors[0]['error']}", retry_after(errors[0])
+
+
+def _own_error(call: Span) -> tuple[str, int | None]:
+    error = parse_error(str(call.get("status_message") or ""))
+    if not error:
+        return f"{ERROR_PREFIX}{UNKNOWN_ERROR}", None
+    return f"{ERROR_PREFIX}{error['error']}", retry_after(error)
 
 
 def _thread(span: Span) -> object:
@@ -154,6 +167,11 @@ async def read_delegated(thread_id: str, since: datetime, runs: Sequence[RunTrac
             break
         await asyncio.sleep(POLL_SECONDS)
     every = await asyncio.to_thread(lambda: list(spans(since))) if traces else []
-    calls = delegated_calls([s for s in every if s["context"]["trace_id"] in traces], cards_by_trace(streams, runs))
-    note = f"only {len(traces)} of {len(runs)} runs reached Phoenix for the thread" if len(traces) < len(runs) else ""
-    return Delegated(calls, note)
+    paired = cards_by_trace(streams, runs)
+    calls = delegated_calls([s for s in every if s["context"]["trace_id"] in traces], paired.cards)
+    gaps = []
+    if len(traces) < len(runs):
+        gaps.append(f"only {len(traces)} of {len(runs)} runs reached Phoenix for the thread")
+    if paired.unpaired:
+        gaps.append(f"{paired.unpaired} traces could not be paired with a run, so their cards are unread")
+    return Delegated(calls, "; ".join(gaps))

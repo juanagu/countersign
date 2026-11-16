@@ -118,7 +118,7 @@ async def test_a_journey_that_runs_out_of_turns_says_so() -> None:
     journey = await play(bff.session(), _scenario(driver="simulated", plan="p", max_turns=2), reply)
 
     assert journey.turns == 2
-    assert journey.notes == ["ran out of turns (2) before the plan ended"]
+    assert [n.text for n in journey.notes] == ["ran out of turns (2) before the plan ended"]
 
 
 async def test_approve_enters_the_right_pin_and_resumes_with_the_token() -> None:
@@ -177,7 +177,7 @@ async def test_an_interrupt_without_a_policy_is_noted_and_left_pending() -> None
 
     journey = await play(bff.session(), _scenario(on_interrupt={}), None)
 
-    assert journey.notes == ["an interrupt the scenario has no on_interrupt policy for"]
+    assert [n.text for n in journey.notes] == ["an interrupt the scenario has no on_interrupt policy for"]
     assert len(journey.traces) == 1
 
 
@@ -197,7 +197,7 @@ async def test_a_refused_right_pin_stops_the_journey_with_a_note() -> None:
 
     journey = await play(bff.session(), _scenario(), None)
 
-    assert journey.notes[0].startswith("step-up refused with the right PIN: 429")
+    assert journey.notes[0].text.startswith("step-up refused with the right PIN: 429")
 
 
 @pytest.mark.parametrize(("message", "ends"), [("FIN", True), (" fin. ", True), ("FINAL", False), ("hola", False)])
@@ -437,7 +437,7 @@ async def test_an_interrupt_with_no_matching_card_is_noted_and_nothing_is_steppe
 
     journey = await play(bff.session(), _scenario(), None)
 
-    assert journey.notes == ["no confirm card for the interrupted draft 'drf_9'"]
+    assert [n.text for n in journey.notes] == ["no confirm card for the interrupted draft 'drf_9'"]
     assert bff.step_up_pins == []
     assert len(journey.traces) == 1
 
@@ -517,7 +517,7 @@ async def test_a_rate_limited_execute_is_a_stall_when_only_a_result_is_forbidden
 
 def test_a_harness_note_beside_a_rate_limit_keeps_the_attempt_as_the_verdict() -> None:
     attempt = _refused()
-    attempt.notes = ["no confirm card for the interrupted draft 'drf_1'"]
+    attempt.notes = [Note("no confirm card for the interrupted draft 'drf_1'")]
 
     assert rate_limit_stall(_stalled_scenario(), attempt) is None
 
@@ -578,10 +578,11 @@ def test_the_trial_span_carries_the_threads_of_its_discarded_attempts() -> None:
     assert _trial_span(result).discarded_threads == ("a", "b")
 
 
-def test_the_calls_follow_the_delegated_calls_and_a_caller_s_copy_changes_nothing() -> None:
+def test_the_calls_are_computed_with_the_delegated_calls_attached() -> None:
     output = _output(ObservedCall("prepare_transfer"))
-
-    output.calls.clear()
     assert [c.name for c in output.calls] == ["ask_payments", "prepare_transfer"]
+
     output.delegated = [ObservedCall("ask_payments", delegated=True)]
+    output.refresh_calls()
+
     assert [c.name for c in output.calls] == ["ask_payments"]

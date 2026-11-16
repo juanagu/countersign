@@ -104,7 +104,7 @@ class Journey:
     """What a played journey left behind."""
 
     traces: list[RunTrace]
-    notes: list[str]
+    notes: list[Note]
     turns: int
 
 
@@ -153,15 +153,15 @@ async def answer_interrupt(
 
 
 async def follow_policy(
-    session: BffSession, scenario: Scenario, history: Sequence[RunTrace], paused: RunTrace, notes: list[str]
+    session: BffSession, scenario: Scenario, history: Sequence[RunTrace], paused: RunTrace, notes: list[Note]
 ) -> list[RunTrace]:
     """The resume that answers a run's approval, per the scenario's `on_interrupt`; none when it has no policy."""
     action = scenario.on_interrupt.get(CONFIRM_TEMPLATE)
     if action is None:
-        notes.append("an interrupt the scenario has no on_interrupt policy for")
+        notes.append(Note("an interrupt the scenario has no on_interrupt policy for"))
         return []
     resumed, note = await answer_interrupt(session, history, paused, action)
-    notes += [note] if note else []
+    notes += [Note(note)] if note else []
     return [resumed] if resumed else []
 
 
@@ -170,7 +170,7 @@ async def play(session: BffSession, scenario: Scenario, reply: Reply | None) -> 
 
     Only the first approval follows the policy; a later one (a re-prepared draft) is left pending."""
     traces: list[RunTrace] = []
-    notes: list[str] = []
+    notes: list[Note] = []
     conversation: list[Turn] = []
     scripted = iter(scenario.then)
     message: str | None = scenario.opening

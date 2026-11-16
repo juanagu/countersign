@@ -109,6 +109,16 @@ def trial_tokens(thread_id: str, discarded_threads: Iterable[str], thread_tokens
     return sum(thread_tokens.get(thread, 0.0) for thread in [thread_id, *discarded_threads])
 
 
+def discarded_threads(value: object) -> list[str]:
+    """The attribute as a list of thread ids: Phoenix can hand a list back as its JSON text."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    return [str(thread) for thread in value] if isinstance(value, list) else []
+
+
 def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[str]:
     """One line per journey: trials, pass rate, the median turns and tokens, and the total policy-refused attempts."""
     by_cuj: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -121,7 +131,7 @@ def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[s
         refused = sum(int(t.get("cuj.policy_refused") or 0) for t in trials)
         tokens = percentile(
             [
-                trial_tokens(str(t.get("cuj.thread_id")), map(str, t.get(DISCARDED_THREADS) or []), thread_tokens)
+                trial_tokens(str(t.get("cuj.thread_id")), discarded_threads(t.get(DISCARDED_THREADS)), thread_tokens)
                 for t in trials
             ],
             0.5,

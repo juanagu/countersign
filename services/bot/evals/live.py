@@ -37,15 +37,15 @@ OUT_OF_TURNS = "out_of_turns"
 STALL_NOTE_KINDS = frozenset({OUT_OF_TURNS})
 
 
-class Note(str):
+@dataclass(frozen=True)
+class Note:
     """A harness note: its text, and the kind a retry decision reads instead of matching the text."""
 
-    kind: str
+    text: str
+    kind: str = ""
 
-    def __new__(cls, text: str, kind: str = "") -> "Note":
-        note = super().__new__(cls, text)
-        note.kind = kind
-        return note
+    def __str__(self) -> str:
+        return self.text
 
 
 @dataclass
@@ -73,7 +73,7 @@ class LiveOutput:
     traces: list[RunTrace]
     ledger_change: Ledger | None = None
     resume: ResumeCheck | None = None
-    notes: list[str] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
     trace_gap: str = ""  # Runs whose spans never reached Phoenix: the delegated calls may be incomplete.
     delegated: list[ObservedCall] = field(default_factory=list)  # From the trace, not the client.
     # A CUJ's extras: the ledger after the journey and each step-up request's HTTP status.
@@ -85,6 +85,16 @@ class LiveOutput:
     discarded: list["DiscardedAttempt"] = field(default_factory=list)  # The attempts that came before this one.
     start_ns: int = 0  # A CUJ trial's wall-clock span, first attempt's start to last attempt's end.
     end_ns: int = 0
+    calls: list[ObservedCall] = field(init=False, default_factory=list)  # Every call in order, see `refresh_calls`.
+
+    def __post_init__(self) -> None:
+        self.refresh_calls()
+
+    def refresh_calls(self) -> None:
+        """Every call in order with its outcome, the subagent's included. Computed once, when the traces are in and
+        again when the delegated calls are attached."""
+        cancelled = frozenset().union(*(t.cancelled for t in self.traces))
+        self.calls = with_delegated(client_calls(self.traces, cancelled), self.delegated)
 
     @property
     def text(self) -> str:
@@ -99,12 +109,6 @@ class LiveOutput:
     @property
     def tools(self) -> list[tuple[str, dict[str, Any]]]:
         return [call for trace in self.traces for call in trace.tool_args] + [(c.name, c.args) for c in self.delegated]
-
-    @property
-    def calls(self) -> list[ObservedCall]:
-        """Every call in order with its outcome, the subagent's included. Built on each read, so it never goes stale."""
-        cancelled = frozenset().union(*(t.cancelled for t in self.traces))
-        return with_delegated(client_calls(self.traces, cancelled), self.delegated)
 
     @property
     def handoffs(self) -> set[str]:
@@ -155,7 +159,7 @@ async def _transfer(session: BffSession, case: LiveInput) -> LiveOutput:
     first = await session.say(case.turns[0])
     confirm = [c for c in first.cards if c.get("template") == CONFIRM_TEMPLATE]
     if not (first.interrupts and confirm):
-        return LiveOutput([first], notes=["no interrupt or confirm card"])
+        return LiveOutput([first], notes=[Note("no interrupt or confirm card")])
     token = await session.step_up(confirm[0], STEP_UP_PIN)
     payload = {"approved": True, "editedArgs": {"draft_id": confirm[0]["data"]["draftId"], "step_up_token": token}}
     resumed = await session.resume(first.interrupts[0], payload)
@@ -184,6 +188,7 @@ async def attach_delegated(output: LiveOutput, thread_id: str, since: datetime) 
     delegated = await read_delegated(thread_id, since, output.traces)
     output.delegated = delegated.calls
     output.trace_gap = delegated.note
+    output.refresh_calls()
 
 
 async def run_live(case: LiveInput) -> LiveOutput:

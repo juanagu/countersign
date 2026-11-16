@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -69,3 +71,16 @@ def test_a_denial_flags_only_the_tool_s_own_span() -> None:
         if s.attributes is not None
     }
     assert flagged == {"agent run": None, "execute_tool": True}
+
+
+def test_a_recording_span_the_sdk_cannot_read_is_reported_instead_of_silently_unflagged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class OpaqueSpan(trace.NonRecordingSpan):
+        def is_recording(self) -> bool:
+            return True
+
+    with caplog.at_level("WARNING"), trace.use_span(OpaqueSpan(trace.INVALID_SPAN_CONTEXT)):
+        denied(TOOL, "not allowed")
+
+    assert "policy denial not flagged" in caplog.text
