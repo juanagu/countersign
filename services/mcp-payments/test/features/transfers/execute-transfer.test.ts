@@ -116,6 +116,19 @@ describe('executeTransfer', () => {
       expect(repo.debits).toEqual([]);
     });
 
+    it('a token a rejected attempt already spent is used again on a pending draft', async () => {
+      const token = await stepUp();
+      const later = new Date('2026-11-13T12:06:00.000Z');
+      expect(await executeTransfer(deps(later), 'juan', DRAFT.id, token)).toMatchObject({
+        error: { code: 'draft_expired' },
+      });
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, token)).toMatchObject({
+        ok: false,
+        error: { code: 'token_already_used' },
+      });
+      expect(repo.debits).toEqual([]);
+    });
+
     it('the same token is used twice (the double click)', async () => {
       const token = await stepUp();
       expect((await executeTransfer(deps(), 'juan', DRAFT.id, token)).ok).toBe(true);

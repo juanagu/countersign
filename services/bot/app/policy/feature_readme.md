@@ -37,12 +37,15 @@ denied, and `spending_summary` needs a start date.
 `prepare_transfer` result created, in the run's messages (stored history included) or in a delegate tool's evidence
 record when the payments subagent prepared it, that no `execute_transfer` result has decided yet: a receipt, the
 customer's denial or cancel, the bank's answer about the draft (a failed result such as `draft_expired`), or a result
-Pydantic AI synthesized for a cut-off call. A refusal before anything was sent decides nothing (`UNSENT_ERRORS`:
-`policy_denied`, a cap or input verdict included, and the `service_unavailable` an approved call returns when its
-token or session can't be set up; also a `retried` call), so the customer can ask again. A newer draft supersedes the older ones. An interrupt nobody
-answered decides nothing, so the failed-resume recovery (ADR 013: ask again, approve again) still pauses on it. `PolicyToolset` reads it from
-`ctx.messages`; otherwise the call is denied before any interrupt, on the first call and on the resume alike. Each agent has its own `PolicyToolset` over its own skills; a subagent's stops at
-T2, and every agent shares the process's one `FrequencyCaps`.
+Pydantic AI synthesized for a cut-off call. An error in `UNSENT_ERRORS` decides nothing: a refusal the bot raised before anything was sent
+(`policy_denied`, a cap or input verdict included, and the `service_unavailable` an approved call returns when its
+token or session can't be set up). Every answer from the bank decides the draft, `token_already_used` included, because
+`mcp-payments` can answer it after money moved (a double click, an executed draft with no receipt row); the customer
+prepares again. A `retried` call decides nothing either, so the customer can ask again. A newer
+draft supersedes the older ones. An interrupt nobody answered decides nothing, so the failed-resume recovery (ADR 013:
+ask again, approve again) still pauses on it. `PolicyToolset` reads it from `ctx.messages`; otherwise the call is denied
+before any interrupt, on the first call and on the resume alike. Each agent has its own `PolicyToolset` over its own
+skills; a subagent's stops at T2, and every agent shares the process's one `FrequencyCaps`.
 
 T3 calls are `needs_approval`: without approval `PolicyToolset` raises `ApprovalRequired` (metadata
 `draft_id`), which ends the run as an AG-UI interrupt. `step_up_token` is hidden from the model's schema and

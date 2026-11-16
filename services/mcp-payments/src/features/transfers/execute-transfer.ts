@@ -21,7 +21,7 @@ export interface ExecuteTransferDeps {
 
 const MESSAGES: Record<ExecuteTransferErrorCode, string> = {
   not_authorised: 'La transferencia no está autorizada.',
-  token_already_used: 'Esa confirmación ya se usó. Confirmá de nuevo si querés reintentar.',
+  token_already_used: 'Esa confirmación ya se usó. Pedime la transferencia de nuevo.',
   draft_not_found: 'No encontré esa transferencia preparada.',
   draft_expired: 'La transferencia preparada venció. Preparala de nuevo.',
   draft_not_pending: 'Esa transferencia ya no está pendiente.',
@@ -35,6 +35,11 @@ const failure = (code: ExecuteTransferErrorCode): ExecuteTransferResult => ({
 
 function matchesDraft(draft: TransferDraft, auth: { amount: string; currency: string; beneficiaryId: string }) {
   return draft.amount === auth.amount && draft.currency === auth.currency && draft.beneficiaryId === auth.beneficiaryId;
+}
+
+async function executedResult(repo: TransfersRepository, draft: TransferDraft): Promise<ExecuteTransferResult | null> {
+  const receipt = await repo.findReceipt(draft.id);
+  return receipt ? { ok: true, value: { draft, receipt } } : null;
 }
 
 const LOCKED_FAILURES = {
@@ -64,8 +69,7 @@ export async function executeTransfer(
   if (!matchesDraft(draft, grant.authorization)) return failure('not_authorised');
 
   if (draft.status === 'executed') {
-    const receipt = await repo.findReceipt(draftId);
-    return receipt ? { ok: true, value: { draft, receipt } } : failure('draft_not_pending');
+    return (await executedResult(repo, draft)) ?? failure('draft_not_pending');
   }
   if (draft.status !== 'pending') return failure('draft_not_pending');
   if (new Date(draft.expiresAt).getTime() <= now().getTime()) return failure('draft_expired');
