@@ -144,20 +144,24 @@ def _spending_totals(output: LiveOutput) -> dict[str, list[Decimal]]:
     return totals
 
 
+def spending_chart_matches(output: LiveOutput) -> EvaluationReason:
+    totals = _spending_totals(output)
+    charts = [c for c in output.components if c.get("component") == "BarChart"]
+    lists = [c for c in output.components if c.get("component") == "List"]
+    if not totals or not charts:
+        return reason_for(False, f"totals {bool(totals)}, charts {len(charts)}")
+    chart = charts[0]
+    bars = sorted(Decimal(str(bar["value"])) for bar in chart.get("bars", []))
+    expected = sorted(totals.get(chart.get("currency", "ARS"), []))
+    return reason_for(bars == expected and not lists, f"bars {bars} vs totals {expected}; lists {len(lists)}")
+
+
 @dataclass
 class SpendingMatches(Evaluator[LiveInput, LiveOutput, Meta]):
     """The BarChart's bars are exactly the totals spending_summary returned, with no List repeating them (F31)."""
 
     def evaluate(self, ctx: Ctx) -> EvaluationReason:
-        totals = _spending_totals(ctx.output)
-        charts = [c for c in ctx.output.components if c.get("component") == "BarChart"]
-        lists = [c for c in ctx.output.components if c.get("component") == "List"]
-        if not totals or not charts:
-            return reason_for(False, f"totals {bool(totals)}, charts {len(charts)}")
-        chart = charts[0]
-        bars = sorted(Decimal(str(bar["value"])) for bar in chart.get("bars", []))
-        expected = sorted(totals.get(chart.get("currency", "ARS"), []))
-        return reason_for(bars == expected and not lists, f"bars {bars} vs totals {expected}; lists {len(lists)}")
+        return spending_chart_matches(ctx.output)
 
 
 # Phrases that send the customer to a card instead of answering (F28).

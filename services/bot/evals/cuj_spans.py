@@ -11,7 +11,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-from evals.metrics import CUJ_SPAN, DISCARDED_THREADS
+from evals.metrics import CUJ_SPAN, DISCARDED_THREADS, SCORE_PREFIX
 
 NANOS = 1_000_000_000
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ class Trial:
     start_ns: int
     end_ns: int
     discarded_threads: tuple[str, ...] = ()
+    scores: tuple[tuple[str, float], ...] = ()  # The judge's scores: a number per name, never content.
 
 
 def emit_trials(trials: Iterable[Trial], endpoint: str | None) -> None:
@@ -51,6 +52,7 @@ def emit_trials(trials: Iterable[Trial], endpoint: str | None) -> None:
                     "cuj.thread_id": t.thread_id,
                     "cuj.policy_refused": t.policy_refused,
                     DISCARDED_THREADS: list(t.discarded_threads),
+                    **{f"{SCORE_PREFIX}{name}": value for name, value in t.scores},
                 }
             )
             span.end(end_time=t.end_ns)
