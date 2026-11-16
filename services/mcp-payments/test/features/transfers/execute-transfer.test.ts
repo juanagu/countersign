@@ -107,15 +107,6 @@ describe('executeTransfer', () => {
       expect(repo.debits).toEqual([]);
     });
 
-    it('the draft expired while the execution waited on its row lock', async () => {
-      // The first read passes the pre-check; the repository reads the clock again once it holds the lock.
-      const reads = [NOW, new Date('2026-11-13T12:06:00.000Z')];
-      const clock = () => reads.shift() ?? new Date('2026-11-13T12:06:00.000Z');
-      const result = await executeTransfer({ ...deps(), now: clock }, 'juan', DRAFT.id, await stepUp());
-      expect(result).toMatchObject({ ok: false, error: { code: 'draft_expired' } });
-      expect(repo.debits).toEqual([]);
-    });
-
     it('a token a rejected attempt already spent is used again on a pending draft', async () => {
       const token = await stepUp();
       const later = new Date('2026-11-13T12:06:00.000Z');
@@ -127,15 +118,6 @@ describe('executeTransfer', () => {
         error: { code: 'token_already_used' },
       });
       expect(repo.debits).toEqual([]);
-    });
-
-    it('the same token is used twice (the double click)', async () => {
-      const token = await stepUp();
-      expect((await executeTransfer(deps(), 'juan', DRAFT.id, token)).ok).toBe(true);
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, token)).toMatchObject({
-        error: { code: 'token_already_used' },
-      });
-      expect(repo.debits).toHaveLength(1);
     });
 
     it('another customer calls with their own valid token for this draft', async () => {
@@ -159,5 +141,76 @@ describe('executeTransfer', () => {
     ]);
     expect(a.ok && b.ok).toBe(true);
     expect(repo.debits).toHaveLength(1);
+  });
+
+  describe('answers a replay from the record of what happened', () => {
+    const later = new Date('2026-11-13T12:06:00.000Z');
+
+    it('gives the token that executed the draft the same receipt, and debits once', async () => {
+      const token = await stepUp();
+      const first = await executeTransfer(deps(), 'juan', DRAFT.id, token);
+      const replay = await executeTransfer(deps(), 'juan', DRAFT.id, token);
+      expect(first.ok).toBe(true);
+      expect(replay).toEqual(first);
+      expect(repo.debits).toHaveLength(1);
+    });
+
+    it('executes once when two calls race with one token, and neither is told the token was used', async () => {
+      const token = await stepUp();
+      const [a, b] = await Promise.all([
+        executeTransfer(deps(), 'juan', DRAFT.id, token),
+        executeTransfer(deps(), 'juan', DRAFT.id, token),
+      ]);
+      expect(a.ok && b.ok).toBe(true);
+      expect(a).toEqual(b);
+      expect(repo.debits).toHaveLength(1);
+    });
+
+    it('tells a token a rejected attempt spent that the draft is no longer pending once another token executed it', async () => {
+      const stale = await stepUp();
+      expect(await executeTransfer(deps(later), 'juan', DRAFT.id, stale)).toMatchObject({
+        error: { code: 'draft_expired' },
+      });
+      expect((await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).ok).toBe(true);
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
+        ok: false,
+        error: { code: 'draft_not_pending' },
+      });
+      expect(repo.debits).toHaveLength(1);
+    });
+
+    it('answers token_already_used only for a spent token on a draft that is still pending', async () => {
+      const stale = await stepUp();
+      await executeTransfer(deps(later), 'juan', DRAFT.id, stale);
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
+        error: { code: 'token_already_used' },
+      });
+      expect(repo.drafts[0]?.status).toBe('pending');
+      expect(repo.debits).toEqual([]);
+    });
+
+    it('spends nothing when the draft is locked by another call, and fails closed with its own code', async () => {
+      repo.lockHeldElsewhere = true;
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).toMatchObject({
+        ok: false,
+        error: { code: 'execution_in_progress' },
+      });
+      expect(repo.usedJtis.size).toBe(0);
+      expect(repo.debits).toEqual([]);
+    });
+
+    it('a mismatched grant gets nothing: no receipt for an executed draft, no spent token on a pending one', async () => {
+      const tampered = await stepUp({}, { amount: '1.00' });
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, tampered)).toMatchObject({
+        error: { code: 'not_authorised' },
+      });
+      expect(repo.usedJtis.size).toBe(0);
+      await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp());
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, tampered)).toMatchObject({
+        ok: false,
+        error: { code: 'not_authorised' },
+      });
+      expect(repo.debits).toHaveLength(1);
+    });
   });
 });

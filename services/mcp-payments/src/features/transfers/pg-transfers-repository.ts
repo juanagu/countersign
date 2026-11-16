@@ -19,11 +19,18 @@ const RECEIPT_COLUMNS = `id AS "transferId", draft_id AS "draftId", reference,
 const BENEFICIARY_COLUMNS = `id, customer_id AS "customerId", full_name AS "fullName", bank_name AS "bankName",
   account_ref AS "accountRef", currency`;
 
+const LOCK_NOT_AVAILABLE = '55P03';
+/** How long an execution waits for the draft's row lock before failing closed as `in_progress`. */
+const DEFAULT_LOCK_WAIT_MS = 5000;
+
 const FEE_MERCHANT = 'Banco Demo';
 const FEE_MEMO = 'Comisión por transferencia';
 
 export class PgTransfersRepository implements TransfersRepository {
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly lockWaitMs = DEFAULT_LOCK_WAIT_MS,
+  ) {}
 
   async listBeneficiaries(customerId: string): Promise<Beneficiary[]> {
     const { rows } = await this.pool.query<Beneficiary>(
@@ -67,30 +74,19 @@ export class PgTransfersRepository implements TransfersRepository {
     return rows[0];
   }
 
-  async findReceipt(draftId: string): Promise<TransferReceipt | undefined> {
-    const { rows } = await this.pool.query<TransferReceipt>(
-      `SELECT ${RECEIPT_COLUMNS} FROM bank.transfers WHERE draft_id = $1`,
-      [draftId],
-    );
-    return rows[0];
-  }
-
-  async claimTokenId(jti: string): Promise<boolean> {
-    const { rowCount } = await this.pool.query('INSERT INTO bank.used_jtis (jti) VALUES ($1) ON CONFLICT DO NOTHING', [
-      jti,
-    ]);
-    return rowCount === 1;
-  }
-
-  async executeDraft(draftId: string, now: () => Date): Promise<ExecuteDraftOutcome> {
+  async executeDraft(draftId: string, jti: string, now: () => Date): Promise<ExecuteDraftOutcome> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const outcome = await this.executeLocked(client, draftId, now);
-      await client.query(outcome.status === 'executed' ? 'COMMIT' : 'ROLLBACK');
+      await client.query(`SELECT set_config('lock_timeout', $1, true)`, [`${this.lockWaitMs}ms`]);
+      const outcome = await this.executeLocked(client, draftId, jti, now);
+      // A refused attempt commits too: it wrote only the spent token, which is what makes a stale one answer
+      // `token_already_used`. `in_progress` rolled back before it wrote anything.
+      await client.query('COMMIT');
       return outcome;
     } catch (error) {
       await client.query('ROLLBACK');
+      if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE) return { status: 'in_progress' };
       throw error;
     } finally {
       client.release();
@@ -98,20 +94,20 @@ export class PgTransfersRepository implements TransfersRepository {
   }
 
   /** Runs inside a transaction holding the draft's row lock, so concurrent calls serialise per draft. */
-  private async executeLocked(client: pg.PoolClient, draftId: string, clock: () => Date): Promise<ExecuteDraftOutcome> {
+  private async executeLocked(
+    client: pg.PoolClient,
+    draftId: string,
+    jti: string,
+    clock: () => Date,
+  ): Promise<ExecuteDraftOutcome> {
     const { rows } = await client.query<TransferDraft>(
       `SELECT ${DRAFT_COLUMNS} FROM bank.transfer_drafts WHERE id = $1 FOR UPDATE`,
       [draftId],
     );
     const draft = rows[0];
-    if (draft?.status === 'executed') {
-      const existing = await client.query<TransferReceipt>(
-        `SELECT ${RECEIPT_COLUMNS} FROM bank.transfers WHERE draft_id = $1`,
-        [draftId],
-      );
-      if (existing.rows[0]) return { status: 'already_executed', receipt: existing.rows[0] };
-    }
+    if (draft?.status === 'executed') return this.replay(client, draftId, jti);
     if (draft?.status !== 'pending') return { status: 'not_pending' };
+    if (!(await this.spendToken(client, jti, draftId))) return { status: 'token_already_used' };
     const now = clock(); // After the lock: the wait for it may have outlived the draft.
     if (new Date(draft.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
     const debit = await client.query(
@@ -123,10 +119,37 @@ export class PgTransfersRepository implements TransfersRepository {
     await this.recordMovements(client, draft, now);
     await client.query(`UPDATE bank.transfer_drafts SET status = 'executed' WHERE id = $1`, [draftId]);
     const receipt = await client.query<TransferReceipt>(
-      `INSERT INTO bank.transfers (id, draft_id, reference, executed_at) VALUES ($1, $2, $3, $4) RETURNING ${RECEIPT_COLUMNS}`,
-      [`trf_${randomUUID()}`, draftId, `BD-${randomUUID().slice(0, 8).toUpperCase()}`, now],
+      `INSERT INTO bank.transfers (id, draft_id, step_up_jti, reference, executed_at) VALUES ($1, $2, $3, $4, $5)
+       RETURNING ${RECEIPT_COLUMNS}`,
+      [`trf_${randomUUID()}`, draftId, jti, `BD-${randomUUID().slice(0, 8).toUpperCase()}`, now],
     );
     return { status: 'executed', receipt: receipt.rows[0] as TransferReceipt };
+  }
+
+  /** False when the token was spent before: by an attempt that moved nothing, since the draft is still pending. */
+  private async spendToken(client: pg.PoolClient, jti: string, draftId: string): Promise<boolean> {
+    const { rowCount } = await client.query(
+      'INSERT INTO bank.used_jtis (jti, draft_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [jti, draftId],
+    );
+    return rowCount === 1;
+  }
+
+  /**
+   * Answers a call on an executed draft from the record of that execution. A token nothing has spent gets the
+   * receipt and stays unspent: it can authorise nothing on a draft that is done.
+   */
+  private async replay(client: pg.PoolClient, draftId: string, jti: string): Promise<ExecuteDraftOutcome> {
+    const { rows } = await client.query<TransferReceipt & { executedByThisToken: boolean; tokenSpent: boolean }>(
+      `SELECT ${RECEIPT_COLUMNS}, t.step_up_jti = $2 AS "executedByThisToken",
+              EXISTS (SELECT 1 FROM bank.used_jtis WHERE jti = $2) AS "tokenSpent"
+         FROM bank.transfers t WHERE t.draft_id = $1`,
+      [draftId, jti],
+    );
+    const row = rows[0];
+    if (!row || (row.tokenSpent && !row.executedByThisToken)) return { status: 'not_pending' };
+    const { transferId, draftId: executedDraftId, reference, executedAt } = row;
+    return { status: 'already_executed', receipt: { transferId, draftId: executedDraftId, reference, executedAt } };
   }
 
   /** One row per movement, so the account's history adds up to what was debited (amount + fee). */

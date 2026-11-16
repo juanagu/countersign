@@ -7,6 +7,9 @@ import type {
   TransfersRepository,
 } from '../../src/features/transfers/transfers-repository.js';
 
+/** A draft of this amount finds the balance too low when it is executed. */
+export const INSUFFICIENT_AMOUNT = '999999999.00';
+
 const ACCOUNTS: SourceAccount[] = [
   {
     id: 'acc-juan-ars',
@@ -80,36 +83,40 @@ export class InMemoryTransfersRepository implements TransfersRepository {
     this.drafts.push(draft);
   }
 
-  readonly usedJtis = new Set<string>();
-  readonly receipts = new Map<string, TransferReceipt>();
+  /** Spent step-up tokens and the draft each was spent on. */
+  readonly usedJtis = new Map<string, string>();
+  /** Each executed draft's receipt and the token that executed it. */
+  readonly executions = new Map<string, { receipt: TransferReceipt; jti: string }>();
   /** Every debit applied, so tests can assert a draft moved money exactly once. */
   readonly debits: { draftId: string; amount: string }[] = [];
+  /** Set while another call holds the draft's lock past the wait limit. */
+  lockHeldElsewhere = false;
 
   async findDraft(id: string) {
     return this.drafts.find((d) => d.id === id);
   }
 
-  async findReceipt(draftId: string) {
-    return this.receipts.get(draftId);
-  }
-
-  async claimTokenId(jti: string) {
-    if (this.usedJtis.has(jti)) return false;
-    this.usedJtis.add(jti);
-    return true;
-  }
-
-  async executeDraft(draftId: string, clock: () => Date): Promise<ExecuteDraftOutcome> {
+  /** The same contract as the Postgres repository; the body has no await, so a call is atomic like the locked transaction. */
+  async executeDraft(draftId: string, jti: string, clock: () => Date): Promise<ExecuteDraftOutcome> {
+    if (this.lockHeldElsewhere) return { status: 'in_progress' };
     const draft = this.drafts.find((d) => d.id === draftId);
-    const existing = this.receipts.get(draftId);
-    if (draft?.status === 'executed' && existing) return { status: 'already_executed', receipt: existing };
+    if (draft?.status === 'executed') return this.replay(draftId, jti);
     if (draft?.status !== 'pending') return { status: 'not_pending' };
+    if (this.usedJtis.has(jti)) return { status: 'token_already_used' };
+    this.usedJtis.set(jti, draftId);
     const now = clock();
     if (new Date(draft.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
+    if (draft.amount === INSUFFICIENT_AMOUNT) return { status: 'insufficient_funds' };
     draft.status = 'executed';
     this.debits.push({ draftId, amount: draft.amount });
     const receipt = { transferId: `trf_${draftId}`, draftId, reference: 'BD-TEST', executedAt: now.toISOString() };
-    this.receipts.set(draftId, receipt);
+    this.executions.set(draftId, { receipt, jti });
     return { status: 'executed', receipt };
+  }
+
+  private replay(draftId: string, jti: string): ExecuteDraftOutcome {
+    const execution = this.executions.get(draftId);
+    if (!execution || (this.usedJtis.has(jti) && execution.jti !== jti)) return { status: 'not_pending' };
+    return { status: 'already_executed', receipt: execution.receipt };
   }
 }
