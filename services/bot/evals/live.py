@@ -75,6 +75,7 @@ class LiveOutput:
     resume: ResumeCheck | None = None
     notes: list[Note] = field(default_factory=list)
     trace_gap: str = ""  # Runs whose spans never reached Phoenix: the delegated calls may be incomplete.
+    pairing_failed: bool = False  # A trace arrived whose run id matches no run: a harness fault, never rerun.
     delegated: list[ObservedCall] = field(default_factory=list)  # From the trace, not the client.
     # A CUJ's extras: the ledger after the journey and each step-up request's HTTP status.
     ledger_after: Ledger | None = None
@@ -188,6 +189,7 @@ async def attach_delegated(output: LiveOutput, thread_id: str, since: datetime) 
     delegated = await read_delegated(thread_id, since, output.traces)
     output.delegated = delegated.calls
     output.trace_gap = delegated.note
+    output.pairing_failed = delegated.pairing_failed
     output.refresh_calls()
 
 

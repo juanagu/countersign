@@ -28,6 +28,7 @@ class ObservedCall:
     outcome: str = RESULT
     delegated: bool = False  # Read from a span, not from the client's stream.
     retry_after_seconds: int | None = None  # The gateway's `retry_after_seconds`, on an `error:rate_limited`.
+    unpaired: bool = False  # Its trace matched no run, so `args` are unknown, not empty.
 
     @property
     def is_handoff(self) -> bool:

@@ -2,10 +2,11 @@
 the run's Phoenix spans by trace id: the handoff (the delegate tool's span) and the tool spans under it. Spans carry
 no arguments or results (rule 7), so a `prepare_transfer`'s arguments are read from the confirm card its own success
 made: within one run, the n-th successful prepare, in start order, owns the n-th distinct confirm card the run showed
-(a failed one has none). A refused call is told by the flag the bot sets on its span (`policy.denied`)."""
+(a failed one has none); a trace that cannot be paired leaves its prepares' arguments unknown (`unpaired`). A
+refused call is told by the flag the bot sets on its span (`policy.denied`)."""
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -41,9 +42,14 @@ def card_args(data: dict[str, Any]) -> dict[str, Any]:
     return {"beneficiary_id": data["beneficiaryId"], "amount": Decimal(data["amount"]), "currency": data["currency"]}
 
 
-def delegated_calls(trace_spans: Sequence[Span], cards: Mapping[str, Sequence[dict[str, Any]]]) -> list[ObservedCall]:
+def delegated_calls(
+    trace_spans: Sequence[Span],
+    cards: Mapping[str, Sequence[dict[str, Any]]],
+    unpaired_traces: Collection[str] = (),
+) -> list[ObservedCall]:
     """Each handoff and each tool call made under one, in start order, with the outcome its span recorded. `cards`
-    maps a trace id to the confirm cards of the run that trace is."""
+    maps a trace id to the confirm cards of the run that trace is; a successful `prepare_transfer` in one of the
+    `unpaired_traces` has no card to read, so it is marked `unpaired` and its arguments are left unknown."""
     by_id = {span["context"]["span_id"]: span for span in trace_spans}
     handoffs = {sid for sid, span in by_id.items() if str(_tool(span) or "").startswith(DELEGATE_PREFIX)}
 
@@ -65,20 +71,28 @@ def delegated_calls(trace_spans: Sequence[Span], cards: Mapping[str, Sequence[di
         if not is_handoff and not under_handoff(span):
             continue
         outcome, retry = _outcome(span, trace_spans, is_handoff=is_handoff)
+        trace_id = span["context"]["trace_id"]
+        unpaired = name == PREPARE_TOOL and outcome == RESULT and trace_id in unpaired_traces
         data = None
-        if name == PREPARE_TOOL and outcome == RESULT:
-            data = next(confirms.get(span["context"]["trace_id"], iter(())), None)
+        if name == PREPARE_TOOL and outcome == RESULT and not unpaired:
+            data = next(confirms.get(trace_id, iter(())), None)
         args = card_args(data) if data else {}
-        calls.append(ObservedCall(name, args, outcome, delegated=True, retry_after_seconds=retry))
+        calls.append(ObservedCall(name, args, outcome, delegated=True, retry_after_seconds=retry, unpaired=unpaired))
     return calls
 
 
 @dataclass(frozen=True)
 class PairedCards:
-    """The confirm cards per trace id, and how many arrived traces no run could be matched to."""
+    """The confirm cards per trace id, the arrived traces no run could be matched to, and the run ids among those
+    that name no run (a pairing failure: the trace arrived, so it is no export delay)."""
 
     cards: dict[str, list[dict[str, Any]]]
-    unpaired: int = 0
+    unpaired_traces: frozenset[str] = frozenset()
+    mismatched_run_ids: tuple[str, ...] = ()
+
+    @property
+    def unpaired(self) -> int:
+        return len(self.unpaired_traces)
 
 
 def cards_by_trace(streams: Sequence[Span], runs: Sequence[RunTrace]) -> PairedCards:
@@ -88,11 +102,18 @@ def cards_by_trace(streams: Sequence[Span], runs: Sequence[RunTrace]) -> PairedC
     shown = _cards_per_run(runs)
     by_run_id = {run.run_id: run_cards for run, run_cards in zip(runs, shown, strict=True) if run.run_id}
     cards: dict[str, list[dict[str, Any]]] = {}
+    unpaired: set[str] = set()
+    mismatched: list[str] = []
     for stream in streams:
         run_id = (stream.get("attributes") or {}).get(RUN_ID_ATTRIBUTE)
+        trace_id = stream["context"]["trace_id"]
         if run_id in by_run_id:
-            cards[stream["context"]["trace_id"]] = by_run_id[run_id]
-    return PairedCards(cards, len(streams) - len(cards))
+            cards[trace_id] = by_run_id[run_id]
+            continue
+        unpaired.add(trace_id)
+        if run_id:
+            mismatched.append(str(run_id))
+    return PairedCards(cards, frozenset(unpaired), tuple(mismatched))
 
 
 def _cards_per_run(runs: Sequence[RunTrace]) -> list[list[dict[str, Any]]]:
@@ -151,6 +172,7 @@ class Delegated:
 
     calls: list[ObservedCall]
     note: str = ""
+    pairing_failed: bool = False  # A trace arrived whose `bot.run_id` matches no run: not an export delay.
 
 
 async def read_delegated(thread_id: str, since: datetime, runs: Sequence[RunTrace]) -> Delegated:
@@ -168,10 +190,14 @@ async def read_delegated(thread_id: str, since: datetime, runs: Sequence[RunTrac
         await asyncio.sleep(POLL_SECONDS)
     every = await asyncio.to_thread(lambda: list(spans(since))) if traces else []
     paired = cards_by_trace(streams, runs)
-    calls = delegated_calls([s for s in every if s["context"]["trace_id"] in traces], paired.cards)
+    arrived = [s for s in every if s["context"]["trace_id"] in traces]
+    calls = delegated_calls(arrived, paired.cards, paired.unpaired_traces)
     gaps = []
     if len(traces) < len(runs):
         gaps.append(f"only {len(traces)} of {len(runs)} runs reached Phoenix for the thread")
     if paired.unpaired:
         gaps.append(f"{paired.unpaired} traces could not be paired with a run, so their cards are unread")
-    return Delegated(calls, "; ".join(gaps))
+    if paired.mismatched_run_ids:
+        known = [r.run_id for r in runs]
+        gaps.append(f"run-id mismatch: traces carry bot.run_id {sorted(paired.mismatched_run_ids)}, runs have {known}")
+    return Delegated(calls, "; ".join(gaps), pairing_failed=bool(paired.mismatched_run_ids))

@@ -259,3 +259,39 @@ def test_a_draft_belongs_to_the_first_run_that_showed_its_card() -> None:
     by_trace = cards_by_trace([_stream("t1", "1", "r1"), _stream("t2", "2", "r2")], runs).cards
 
     assert [c["draftId"] for c in by_trace["t2"]] == ["drf_2"]
+
+
+def test_a_prepare_in_an_unpaired_trace_is_marked_and_has_no_arguments() -> None:
+    spans = [_span("ask", None, "ask_payments", "1"), _span("prep", "ask", "prepare_transfer", "2")]
+
+    [_, prepare] = delegated_calls(spans, {}, unpaired_traces={"t"})
+
+    assert (prepare.unpaired, prepare.args) == (True, {})
+
+
+def test_a_prepare_in_a_paired_trace_is_not_unpaired() -> None:
+    spans = [_span("ask", None, "ask_payments", "1"), _span("prep", "ask", "prepare_transfer", "2")]
+    card = {"draftId": "d", "beneficiaryId": "b", "amount": "1.00", "currency": "ARS"}
+
+    [_, prepare] = delegated_calls(spans, {"t": [card]}, unpaired_traces=())
+
+    assert (prepare.unpaired, prepare.args["beneficiary_id"]) == (False, "b")
+
+
+async def test_a_trace_with_a_run_id_no_run_has_is_a_pairing_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime
+
+    streams = [_stream("t", "1", "bot-run-x")]
+    handoff = _span("ask", None, "ask_payments", "1")
+
+    def fake_spans(_since: object, **filters: object) -> list[dict[str, Any]]:
+        return streams if filters.get("name") == "bot.stream" else [handoff]
+
+    monkeypatch.setattr(delegation, "spans", fake_spans)
+    # The thread attribute is what filters streams to the thread.
+    streams[0]["attributes"][delegation.THREAD_ATTRIBUTE] = "thr"
+
+    mismatch = await delegation.read_delegated("thr", datetime.now(UTC), [_run("r1")])
+    assert mismatch.pairing_failed
+    assert "run-id mismatch" in mismatch.note
+    assert "bot-run-x" in mismatch.note

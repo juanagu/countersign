@@ -81,8 +81,9 @@ def _wait_seconds(refusals: list[ObservedCall]) -> float:
 def trace_gap_verdict(scenario: Scenario, output: LiveOutput) -> str | None:
     """An attempt whose spans did not all reach Phoenix, with nothing wrong in what is visible, is inconclusive: an
     export delay is not a bot verdict. Any run error, or any forbidden, unexpected or wrong call seen (in the chat
-    stream or in the traces that did arrive) fails the trial at once, so it is not rerun."""
-    if not output.trace_gap or output.errors or output.notes:
+    stream or in the traces that did arrive) fails the trial at once, so it is not rerun. So does a pairing failure (a
+    trace arrived but its run id matches no run): it repeats on a rerun, so none is spent on it."""
+    if not output.trace_gap or output.pairing_failed or output.errors or output.notes:
         return None
     if visible_problems(output.calls, scenario.trajectory, scenario.allow, scenario.forbid):
         return None

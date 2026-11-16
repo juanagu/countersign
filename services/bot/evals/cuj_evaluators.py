@@ -119,13 +119,16 @@ def visible_problems(
 ) -> list[Problem]:
     """What can be judged without the missing traces: each observed call on its own, in any order. It fails when a
     `forbid` rule matches it, or when no step and no `allow` rule names it. Missing steps and `requires` need the
-    whole trajectory, so they are not judged here."""
+    whole trajectory, so they are not judged here. An unpaired call has unknown arguments, so a step's arguments never
+    judge it: a step naming its tool accepts it."""
     problems: list[Problem] = []
     for call in calls:
         if _is_counted_refusal(call, forbid):
             continue
         if any(rule_matches(rule, call) for rule in forbid):
             problems.append(Problem(FORBIDDEN, _label(call)))
+        elif call.unpaired and any(s.tool == call.name for s in steps):
+            continue
         elif not any(_step_matches(s, call) for s in steps) and not any(rule_matches(r, call) for r in allow):
             problems.append(Problem(UNEXPECTED, _label(call)))
     return problems

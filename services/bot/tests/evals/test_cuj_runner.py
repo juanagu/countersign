@@ -13,7 +13,7 @@ from evals.agui_client import RUN_PATH, STEP_UP_PATH, BffSession, RunTrace
 from evals.calls import ObservedCall
 from evals.cuj import Scenario
 from evals.cuj_report import TrialResult, cuj_gates
-from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall
+from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall, trace_gap_verdict
 from evals.cuj_runner import _trial_span, main, play, run_trial
 from evals.cuj_user import Turn, is_end
 from evals.live import OUT_OF_TURNS, DiscardedAttempt, LiveOutput, Note
@@ -586,3 +586,37 @@ def test_the_calls_are_computed_with_the_delegated_calls_attached() -> None:
     output.refresh_calls()
 
     assert [c.name for c in output.calls] == ["ask_payments"]
+
+
+def _unpaired_prepare_output() -> LiveOutput:
+    return _output(
+        ObservedCall("prepare_transfer", unpaired=True), thread="a", trace_gap="1 traces could not be paired"
+    )
+
+
+def test_an_unpaired_prepare_is_not_judged_on_its_arguments() -> None:
+    scenario = _scenario(
+        trajectory=[{"tool": "ask_payments"}, {"tool": "prepare_transfer", "args": {"amount": "1.00"}}]
+    )
+
+    assert trace_gap_verdict(scenario, _unpaired_prepare_output()) == "inconclusive: 1 traces could not be paired"
+
+
+def test_a_paired_prepare_with_other_arguments_is_still_unexpected() -> None:
+    scenario = _scenario(
+        trajectory=[{"tool": "ask_payments"}, {"tool": "prepare_transfer", "args": {"amount": "1.00"}}]
+    )
+    wrong = _output(ObservedCall("prepare_transfer", {"amount": "9.00"}), trace_gap=GAP)
+
+    assert trace_gap_verdict(scenario, wrong) is None
+
+
+async def test_a_pairing_failure_fails_the_trial_without_a_rerun(monkeypatch: pytest.MonkeyPatch) -> None:
+    note = "run-id mismatch: traces carry bot.run_id ['x'], runs have ['y']"
+    failed = _output(thread="a", trace_gap=note)
+    failed.pairing_failed = True
+    ran = _patch_attempts(monkeypatch, [failed])
+
+    output = await run_trial(_stalled_scenario(), None, STARTING)
+
+    assert (len(ran), output.attempts, output.discarded, output.trace_gap) == (1, 1, [], note)

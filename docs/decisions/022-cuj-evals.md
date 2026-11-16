@@ -271,8 +271,8 @@ Written after ADR 021 was built, so trajectories are in what the client and the 
 - **The gateway's write limit decides how long a run takes.** The gateway allows 20 T2 calls per customer per
   10 minutes (ADR 017). Fifteen trials prepare at least fifteen drafts, and most journeys are Juan's (05 and 06 are Ana's since F70), so a run, or two
   runs in a row, hit `rate_limited` at `prepare_transfer`. The **whole attempt** is judged first (`evals/cuj_retry.py`),
-  every call counted, the refused ones too, because an attempted forbidden call is a violation: a refused call whose
-  tool a `forbid` rule names (any outcome) fails the trial, and so does any forbidden, unexpected or unmet-`requires`
+  every call counted, the refused ones too, because an attempted forbidden call is a violation: a refused call that a
+  `forbid` rule matches (a bare tool name matches any outcome, `tool:outcome` only that outcome) fails the trial, and so does any forbidden, unexpected or unmet-`requires`
   call before or after a refusal. Only when the sole problems are steps never reached (`Problem.kind == "missing"`; a
   refused call the journey names is not itself unexpected) is the attempt run again on a fresh thread. A run error also
   keeps the attempt as the verdict. Problems are structured (`kind`, `call`, `detail`; the printed text derives from
@@ -362,8 +362,10 @@ allowed is the user's call.
   tool result, so its span ends OK; the bot now sets `policy.denied` on the span of a refused call (a flag only: no
   reason, no content, rule 7) and `delegation.py` reads it as `error:policy_denied`, for handoffs too. A failed or
   refused handoff has its real outcome and does not count in `handoffs`. Card pairing is per run: a trace is matched to
-  its run by the new `bot.run_id` attribute on `bot.stream` (order only when every run's trace arrived, nothing paired
-  otherwise), and a draft belongs to the first run that showed its card. A harness note beside a rate limit keeps the
+  its run by the new `bot.run_id` attribute on `bot.stream` (never by order: a trace whose id matches no run is counted as
+  unpaired, its prepares' arguments are left unknown and not judged, so the trial is inconclusive and runs again once;
+  a trace that carries a run id no run has is a pairing failure, which fails the trial without a rerun), the run's id
+  skips the BFF's `restore-` snapshot ids, and a draft belongs to the first run that showed its card. A harness note beside a rate limit keeps the
   attempt as the verdict, and a `forbid` rule with an outcome (`execute_transfer:result`) no longer forbids a
   rate-limited execute. `make metrics` adds the tokens of a trial's discarded attempts through the
   `cuj.discarded_threads` span attribute.
