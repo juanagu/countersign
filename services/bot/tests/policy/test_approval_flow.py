@@ -190,6 +190,44 @@ async def test_a_pin_spent_on_an_answer_that_ended_the_execution_asks_again_at_o
     assert isinstance(resumed.output, DeferredToolRequests)
 
 
+async def test_two_executions_of_one_draft_in_one_response_raise_one_approval() -> None:
+    fake = FakePayments()
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart("load_skill", {"name": "payments"})])
+        if len(returns) == 1:
+            return ModelResponse(parts=[ToolCallPart("prepare_transfer", PREPARE_ARGS)])
+        if len(returns) == 2:
+            calls = [ToolCallPart("execute_transfer", {"draft_id": DRAFT_ID}, tool_call_id=f"exec-{n}") for n in (1, 2)]
+            return ModelResponse(parts=calls)
+        return ModelResponse(parts=[TextPart("listo")])
+
+    agent = build_agent(
+        FunctionModel(respond), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[fake.toolset]
+    )
+    paused = await agent.run("Mandale 50.000 a Ana", deps=_deps())
+
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert [approval.tool_call_id for approval in paused.output.approvals] == ["exec-1"]  # One PIN card, not two.
+    denials = [
+        p.content
+        for m in paused.all_messages()
+        for p in getattr(m, "parts", [])
+        if isinstance(p, ToolReturnPart) and p.tool_call_id == "exec-2"
+    ]
+    assert [d["error"] for d in denials] == ["policy_denied"]
+
+    approved = ToolApproved(override_args={"draft_id": DRAFT_ID, "step_up_token": "step-up-from-the-app"})
+    await agent.run(
+        message_history=paused.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={"exec-1": approved}),
+        deps=_deps("payments"),
+    )
+    assert fake.executed == [{"draft_id": DRAFT_ID, "step_up_token": "step-up-from-the-app"}]  # Once, with the token.
+
+
 async def test_a_denial_executes_nothing() -> None:
     fake, schemas = FakePayments(), []
     agent = _agent(fake, schemas)

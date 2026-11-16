@@ -70,6 +70,12 @@ def test_the_banks_answer_about_the_draft_closes_it() -> None:
 
 UNSENT = {
     "service-unavailable": _result('{"error":"service_unavailable","service":"mcp-gateway"}', "x1", outcome="failed"),
+    # The gateway refused before anything reached the bank, so none of these decides the draft.
+    "rate-limited": _result('{"error":"rate_limited","retry_after_seconds":30}', "x1", outcome="failed"),
+    "insufficient-scope": _result('{"error":"insufficient_scope","scope":"transfers:execute"}', "x1", outcome="failed"),
+    "unknown-tool": _result('{"error":"unknown_tool"}', "x1", outcome="failed"),
+    "a-code-not-invented-yet": _result('{"error":"something_new","message":"m"}', "x1", outcome="failed"),
+    "failed-without-a-code": _result("Connection reset by peer", "x1", outcome="failed"),
     "policy-denied": _result({"error": "policy_denied", "reason": "at most 3 T3 calls per conversation"}, "x1"),
     "retried": _result("draft_id: field required", "x1", outcome="retried"),
 }
@@ -101,8 +107,10 @@ def test_a_bank_answer_that_left_the_draft_pending_leaves_it_open(body: str) -> 
     assert open_draft([*_delegated("d1"), _execute("d1", "x1"), answered], delegates=DELEGATES) == "d1"
 
 
-@pytest.mark.parametrize("code", ["draft_not_pending", "draft_expired", "insufficient_funds", "not_authorised"])
-def test_every_other_answer_from_the_bank_closes_the_draft(code: str) -> None:
+@pytest.mark.parametrize(
+    "code", ["draft_not_pending", "draft_expired", "insufficient_funds", "not_authorised", "draft_not_found"]
+)
+def test_the_banks_answer_about_the_draft_itself_closes_it(code: str) -> None:
     answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
     assert open_draft([*_delegated("d1"), _execute("d1", "x1"), answered], delegates=DELEGATES) is None
 

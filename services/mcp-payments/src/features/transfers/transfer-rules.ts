@@ -1,4 +1,4 @@
-import type { Currency } from './transfers-repository.js';
+import type { Currency, TransferDraft } from './transfers-repository.js';
 
 export const DRAFT_TTL_MS = 5 * 60 * 1000;
 
@@ -18,4 +18,23 @@ export function fromCents(cents: bigint): string {
   const sign = cents < 0n ? '-' : '';
   const abs = cents < 0n ? -cents : cents;
   return `${sign}${abs / 100n}.${(abs % 100n).toString().padStart(2, '0')}`;
+}
+
+/** What a step-up token authorises: one transfer's amount, currency and beneficiary. */
+export interface AuthorisedTransfer {
+  amount: string;
+  currency: string;
+  beneficiaryId: string;
+}
+
+/** Whether the grant covers exactly this draft. Evaluated by the repository on the draft row it locked. */
+export function grantMatchesDraft(
+  draft: Pick<TransferDraft, 'amount' | 'currency' | 'beneficiaryId'>,
+  authorised: AuthorisedTransfer,
+): boolean {
+  return (
+    draft.amount === authorised.amount &&
+    draft.currency === authorised.currency &&
+    draft.beneficiaryId === authorised.beneficiaryId
+  );
 }

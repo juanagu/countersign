@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { randomUUID } from 'node:crypto';
+import type { Deadline } from './deadline.js';
 import type {
-  AuthorisedTransfer,
   Beneficiary,
   ExecuteDraftOutcome,
   ExecuteDraftRefusal,
@@ -22,25 +22,25 @@ const RECEIPT_COLUMNS = `id AS "transferId", draft_id AS "draftId", reference,
 const BENEFICIARY_COLUMNS = `id, customer_id AS "customerId", full_name AS "fullName", bank_name AS "bankName",
   account_ref AS "accountRef", currency`;
 
+/** What a lock wait that hit `lock_timeout` raises. A `statement_timeout` (57014) is never read as one. */
 const LOCK_NOT_AVAILABLE = '55P03';
-/** The budget's `statement_timeout` can fire a moment before the capped `lock_timeout` it equals. */
-const QUERY_CANCELED = '57014';
-const WAIT_TIMEOUT_CODES = new Set([LOCK_NOT_AVAILABLE, QUERY_CANCELED]);
-/** How long one lock wait lasts at most, and it never outlasts what is left of the execution's budget. */
+/** How long one lock wait lasts at most, and it never outlasts what is left of the call's deadline. */
 const DEFAULT_LOCK_WAIT_MS = 5000;
 /**
- * The whole execution, from asking the pool for a connection to the commit, bounded below the gateway's 10 s
- * backend timeout (ADR 023): the waits cannot add up past it, so the caller is not left guessing whether the
- * transfer committed after the gateway gave up.
+ * The statement timeout is armed this much above the lock timeout, so a lock wait always ends by `lock_timeout`
+ * (a lock refusal) and a 57014 only comes from a statement that is slow for another reason (an error).
  */
-export const DEFAULT_EXECUTION_BUDGET_MS = 7000;
+const STATEMENT_GRACE_MS = 250;
 
 const FEE_MERCHANT = 'Banco Demo';
 const FEE_MEMO = 'Comisión por transferencia';
 
 type LockedResource = 'draft' | 'account';
 
-/** A lock wait ran out; carries which row it was waiting on, so the answer can say so. */
+/**
+ * A lock wait ran out, or the deadline did before the wait could start; carries which row it was waiting on, so the
+ * answer can say so. Either way the transaction rolls back.
+ */
 class LockWaitTimeout extends Error {
   constructor(readonly resource: LockedResource) {
     super(`lock wait timed out on the ${resource} row`);
@@ -54,29 +54,18 @@ const REFUSED_ON_LOCK: Record<LockedResource, ExecuteDraftRefusal> = {
 
 const refused = (code: ExecuteDraftRefusal): ExecuteDraftOutcome => ({ status: 'refused', code });
 
-function matchesAuthorised(draft: TransferDraft, authorised: AuthorisedTransfer): boolean {
-  return (
-    draft.amount === authorised.amount &&
-    draft.currency === authorised.currency &&
-    draft.beneficiaryId === authorised.beneficiaryId
-  );
-}
-
 export interface PgTransfersOptions {
   lockWaitMs?: number;
-  executionBudgetMs?: number;
 }
 
 export class PgTransfersRepository implements TransfersRepository {
   private readonly lockWaitMs: number;
-  private readonly executionBudgetMs: number;
 
   constructor(
     private readonly pool: pg.Pool,
-    { lockWaitMs = DEFAULT_LOCK_WAIT_MS, executionBudgetMs = DEFAULT_EXECUTION_BUDGET_MS }: PgTransfersOptions = {},
+    { lockWaitMs = DEFAULT_LOCK_WAIT_MS }: PgTransfersOptions = {},
   ) {
     this.lockWaitMs = lockWaitMs;
-    this.executionBudgetMs = executionBudgetMs;
   }
 
   async listBeneficiaries(customerId: string): Promise<Beneficiary[]> {
@@ -121,44 +110,53 @@ export class PgTransfersRepository implements TransfersRepository {
     return rows[0];
   }
 
-  async executeDraft(request: ExecuteDraftRequest, now: () => Date): Promise<ExecuteDraftOutcome> {
-    const deadline = performance.now() + this.executionBudgetMs;
+  async executeDraft({ deadline, ...request }: ExecuteDraftRequest, now: () => Date): Promise<ExecuteDraftOutcome> {
+    if (deadline.remainingMs() < 1) return refused(REFUSED_ON_LOCK.draft);
     const client = await this.pool.connect();
+    let discard: Error | undefined;
     try {
       await client.query('BEGIN');
       const outcome = await this.executeLocked(client, request, now, deadline);
-      await this.limitWaits(client, deadline);
+      // No timeout on the commit: cancelling it would leave the outcome unknown for a transaction that was fine.
+      await client.query('SET LOCAL statement_timeout = 0');
       // A refused attempt commits too: `insufficient_funds` wrote the spent token, which is what makes a stale one
       // answer `token_already_used`; the other refusals wrote nothing.
       await client.query('COMMIT');
       return outcome;
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
+      const rollbackError = await client.query('ROLLBACK').then(
+        () => undefined,
+        (failure: Error) => failure,
+      );
+      // A lock refusal leaves a healthy connection; any other failure may not, so the pool drops it.
+      discard = rollbackError ?? (error instanceof LockWaitTimeout ? undefined : (error as Error));
       if (error instanceof LockWaitTimeout) return refused(REFUSED_ON_LOCK[error.resource]);
       throw error;
     } finally {
-      client.release();
+      client.release(discard);
     }
   }
 
   /**
-   * Caps the next lock wait and statement at what is left of the budget, so the waits of one execution add up to
-   * no more than the budget. Local to the transaction.
+   * Sets the lock wait and the statement timeout of what follows to what is left of the deadline, so the waits of
+   * one execution add up to no more than it. With nothing left the wait is not started: the caller rolls back.
+   * Local to the transaction, and set only before a lock wait, not before every statement.
    */
-  private async limitWaits(client: pg.PoolClient, deadline: number): Promise<void> {
-    const remaining = Math.max(1, Math.floor(deadline - performance.now()));
+  private async armWaits(client: pg.PoolClient, deadline: Deadline, resource: LockedResource): Promise<void> {
+    const remaining = deadline.remainingMs();
+    if (remaining < 1) throw new LockWaitTimeout(resource);
     await client.query(`SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)`, [
       `${Math.min(this.lockWaitMs, remaining)}ms`,
-      `${remaining}ms`,
+      `${remaining + STATEMENT_GRACE_MS}ms`,
     ]);
   }
 
-  /** Waits for a row lock inside `run`; either timeout means the wait ran out, and the caller rolls back. */
+  /** Waits for a row lock inside `run`; a `lock_timeout` means the wait ran out, and the caller rolls back. */
   private async waitingOn<T>(resource: LockedResource, run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (error) {
-      if (WAIT_TIMEOUT_CODES.has((error as { code?: string }).code ?? '')) throw new LockWaitTimeout(resource);
+      if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE) throw new LockWaitTimeout(resource);
       throw error;
     }
   }
@@ -166,11 +164,11 @@ export class PgTransfersRepository implements TransfersRepository {
   /** Runs inside a transaction holding the draft's row lock, so concurrent calls serialise per draft. */
   private async executeLocked(
     client: pg.PoolClient,
-    { draftId, jti, authorised }: ExecuteDraftRequest,
+    { draftId, jti, isAuthorised }: Omit<ExecuteDraftRequest, 'deadline'>,
     clock: () => Date,
-    deadline: number,
+    deadline: Deadline,
   ): Promise<ExecuteDraftOutcome> {
-    await this.limitWaits(client, deadline);
+    await this.armWaits(client, deadline, 'draft');
     const { rows } = await this.waitingOn('draft', () =>
       client.query<TransferDraft>(`SELECT ${DRAFT_COLUMNS} FROM bank.transfer_drafts WHERE id = $1 FOR UPDATE`, [
         draftId,
@@ -178,16 +176,15 @@ export class PgTransfersRepository implements TransfersRepository {
     );
     const draft = rows[0];
     if (!draft) return refused('draft_not_pending');
-    if (!matchesAuthorised(draft, authorised)) return refused('not_authorised');
+    if (!isAuthorised(draft)) return refused('not_authorised');
     if (draft.status === 'executed') return this.replay(client, draftId, jti);
     if (draft.status !== 'pending') return refused('draft_not_pending');
     const now = clock(); // After the lock: the wait for it may have outlived the draft.
     // Before the token is looked at: an expired draft can never execute, so a spent token on it answers
     // `draft_expired`, and a new one is not spent for nothing.
     if (new Date(draft.expiresAt).getTime() <= now.getTime()) return refused('draft_expired');
-    await this.limitWaits(client, deadline);
     if (!(await this.spendToken(client, jti, draftId))) return refused('token_already_used');
-    await this.limitWaits(client, deadline);
+    await this.armWaits(client, deadline, 'account');
     const debit = await this.waitingOn('account', () =>
       client.query(
         `UPDATE bank.accounts SET balance = balance - ($1::numeric + $2::numeric)
@@ -220,19 +217,16 @@ export class PgTransfersRepository implements TransfersRepository {
    * receipt and stays unspent: it can authorise nothing on a draft that is done.
    */
   private async replay(client: pg.PoolClient, draftId: string, jti: string): Promise<ExecuteDraftOutcome> {
-    const { rows: tokens } = await client.query<{ executedByThisToken: boolean; tokenSpent: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM bank.transfers WHERE draft_id = $1 AND step_up_jti = $2) AS "executedByThisToken",
-              EXISTS (SELECT 1 FROM bank.used_jtis WHERE jti = $2) AS "tokenSpent"`,
+    const { rows } = await client.query<TransferReceipt & { executedByThisToken: boolean; tokenSpent: boolean }>(
+      `SELECT ${RECEIPT_COLUMNS}, step_up_jti = $2 AS "executedByThisToken",
+              EXISTS (SELECT 1 FROM bank.used_jtis WHERE jti = $2) AS "tokenSpent"
+         FROM bank.transfers WHERE draft_id = $1`,
       [draftId, jti],
     );
-    const { rows: receipts } = await client.query<TransferReceipt>(
-      `SELECT ${RECEIPT_COLUMNS} FROM bank.transfers WHERE draft_id = $1`,
-      [draftId],
-    );
-    const receipt = receipts[0];
-    const token = tokens[0];
-    if (!receipt || !token || (token.tokenSpent && !token.executedByThisToken)) return refused('draft_not_pending');
-    return { status: 'already_executed', receipt };
+    const found = rows[0];
+    if (!found || (found.tokenSpent && !found.executedByThisToken)) return refused('draft_not_pending');
+    const { transferId, draftId: executedDraftId, reference, executedAt } = found;
+    return { status: 'already_executed', receipt: { transferId, draftId: executedDraftId, reference, executedAt } };
   }
 
   /** One row per movement, so the account's history adds up to what was debited (amount + fee). */

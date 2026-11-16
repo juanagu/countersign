@@ -1,3 +1,5 @@
+import type { Deadline } from './deadline.js';
+
 export type Currency = 'ARS' | 'USD';
 
 export interface SourceAccount {
@@ -52,18 +54,17 @@ export type ExecuteDraftRefusal =
   /** The source account's row stayed locked by another transfer past the wait limit. Everything rolled back. */
   | 'account_busy';
 
-/** What the step-up token authorises; the repository compares it with the draft it reads under the lock. */
-export interface AuthorisedTransfer {
-  amount: string;
-  currency: string;
-  beneficiaryId: string;
-}
-
 export interface ExecuteDraftRequest {
   draftId: string;
   /** The step-up token's `jti`. */
   jti: string;
-  authorised: AuthorisedTransfer;
+  /**
+   * The domain's grant check (`grantMatchesDraft`), bound to what the step-up token authorises. The repository
+   * calls it with the draft row it locked, so the rule exists once and every adapter evaluates it under the lock.
+   */
+  isAuthorised: (draft: TransferDraft) => boolean;
+  /** The call's budget, started when the call began; the repository never works or waits past it. */
+  deadline: Deadline;
 }
 
 export type ExecuteDraftOutcome =
@@ -85,8 +86,9 @@ export interface TransfersRepository {
   findDraft(id: string): Promise<TransferDraft | undefined>;
   /**
    * Executes the draft with the step-up token in one transaction under the draft's row lock, at most once per
-   * draft, within a total time budget (ADR 023). `authorised` is compared with the draft read under the lock
-   * (a mismatch spends nothing). The token is spent in that transaction once the draft is found pending and
+   * draft, within the request's deadline (ADR 023). `isAuthorised` is called with the draft read under the lock
+   * (a mismatch spends nothing). A deadline that runs out before a guarded step ends the call with a refusal
+   * (`execution_in_progress`, `account_busy`) and a rollback, never a commit. The token is spent in that transaction once the draft is found pending and
    * unexpired, and the transfer records it, so a replay is answered from what happened: the receipt for the
    * token that executed, `draft_not_pending` for a spent token on an executed draft, `token_already_used` only
    * when that token moved nothing and the draft is pending. `now` is read once the draft is locked, so a call

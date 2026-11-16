@@ -3,6 +3,8 @@ import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ExecuteDraftOutcome } from '../../../src/features/transfers/transfers-repository.js';
 import { PgTransfersRepository } from '../../../src/features/transfers/pg-transfers-repository.js';
+import { Deadline } from '../../../src/features/transfers/deadline.js';
+import { grantMatchesDraft } from '../../../src/features/transfers/transfer-rules.js';
 
 // Runs against the seeded compose Postgres (`make up && make seed`); skipped when it isn't reachable.
 const url = process.env.TEST_DATABASE_URL;
@@ -15,6 +17,7 @@ const reachable = pool
   : false;
 
 const LOCK_WAIT_MS = 300;
+const BUDGET_MS = 7000;
 const ACCOUNT = 'acc-juan-ars';
 const GRANT = { amount: '10.00', currency: 'ARS', beneficiaryId: 'ben-juan-ana' };
 const refused = (code: string) => ({ status: 'refused', code });
@@ -66,8 +69,17 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     jti: string,
     clock: () => Date,
     authorised = GRANT,
-    target: PgTransfersRepository = repo,
-  ): Promise<ExecuteDraftOutcome> => target.executeDraft({ draftId, jti, authorised }, clock);
+    { target = repo, budgetMs = BUDGET_MS } = {},
+  ): Promise<ExecuteDraftOutcome> =>
+    target.executeDraft(
+      {
+        draftId,
+        jti,
+        isAuthorised: (draft) => grantMatchesDraft(draft, authorised),
+        deadline: Deadline.after(budgetMs),
+      },
+      clock,
+    );
 
   const spendOnARejectedAttempt = (draftId: string, jti: string) =>
     db.query(`INSERT INTO bank.used_jtis (jti, draft_id) VALUES ($1, $2)`, [jti, draftId]);
@@ -289,8 +301,8 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
   });
 
   describe('total execution budget', () => {
-    const BUDGET_MS = 1500;
-    const budgeted = new PgTransfersRepository(db, { lockWaitMs: 1000, executionBudgetMs: BUDGET_MS });
+    const SHORT_BUDGET_MS = 1500;
+    const budgeted = { target: new PgTransfersRepository(db, { lockWaitMs: 1000 }), budgetMs: SHORT_BUDGET_MS };
 
     it('does not let a wait on the draft plus a wait on the account add up past the budget', async () => {
       await withDraft({}, async (draftId, bookedAt) => {
@@ -304,7 +316,7 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
           await draftHolder.release();
           expect(await execution).toEqual(refused('account_busy'));
           // Unbudgeted, the account wait would run its own full 1000 ms after the 800 ms already spent.
-          expect(performance.now() - started).toBeLessThan(BUDGET_MS + 150);
+          expect(performance.now() - started).toBeLessThan(SHORT_BUDGET_MS + 150);
           expect(await jtiRows(draftId)).toEqual([]);
         } finally {
           await draftHolder.release();
@@ -314,7 +326,7 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     });
 
     it('caps a single wait at the budget when the lock wait limit is longer', async () => {
-      const longWaits = new PgTransfersRepository(db, { lockWaitMs: 10_000, executionBudgetMs: 400 });
+      const longWaits = { target: new PgTransfersRepository(db, { lockWaitMs: 10_000 }), budgetMs: 400 };
       await withDraft({}, async (draftId, bookedAt) => {
         const holder = await holdRowLock('transfer_drafts', draftId);
         try {

@@ -54,13 +54,19 @@ time. F72 recorded that as a stopgap.
   and gets the receipt of what already happened.
 - **The invariant.** `token_already_used` means "this token was spent, nothing moved with it, and the draft is still
   pending", and nothing else.
-- **In flight, and the total deadline.** A call waits for a row lock for at most 5 seconds (`lock_timeout`, set per
-  wait), and the whole execution, from asking the pool for a connection to the commit, has a budget of 7 seconds. Before
-  the draft lock, the token insert, the debit and the commit the repository sets `lock_timeout = min(5 s, what is left)`
-  and `statement_timeout = what is left`, so the waits cannot add up past the budget (a 5 s wait on the draft and a
-  5 s wait on the account would have been 10 s). The pg pool adds `connectionTimeoutMillis = 2 s`, inside the
-  budget. The numbers leave 3 s under the gateway's 10 s backend timeout, so a call the gateway abandons has by then
-  rolled back or committed on the database side.
+- **In flight, and the call's deadline.** One deadline starts at the top of the `execute_transfer` callback
+  (`Deadline`, 6 s) and every step shares it: the step-up check (bounded to 2 s of it, since a cold JWKS cache fetches
+  the IdP's keys), the draft read, the transaction, and, after a commit, the receipt lookup (at most 1 s, outside the
+  deadline because the money has moved). Inside the transaction the repository sets `lock_timeout = min(5 s, what is left)`
+  and `statement_timeout = what is left + 250 ms` once after `BEGIN` (before the draft lock) and again before the account
+  debit, the only two lock waits, so the waits cannot add up past the deadline (a 5 s wait on the draft and a 5 s wait on
+  the account would have been 10 s). The statement timeout sits above the lock timeout so a lock wait always ends by
+  `lock_timeout` (55P03, a lock refusal) and a 57014 only means a statement that was slow for another reason or was
+  cancelled, which is an error, not a refusal. `statement_timeout` is reset to 0 before `COMMIT`: a commit is never
+  cancelled by the budget. If the deadline is already spent before a guarded step, the repository does not start it:
+  it rolls back and refuses (`execution_in_progress` before the draft lock, `account_busy` before the account), a
+  definite outcome. The pg pool adds `connectionTimeoutMillis = 2 s`. The worst case is about 6 s + 0.25 s + 1 s, so a
+  call the gateway abandons at 10 s has long since rolled back or committed.
   - A lock wait on the **draft** that runs out answers `execution_in_progress` ("La transferencia se está
     procesando. Esperá unos segundos y confirmá de nuevo con tu PIN."): another call on this draft holds it.
   - A lock wait on the **source account's row** that runs out answers `account_busy` ("La cuenta de origen está
@@ -68,25 +74,49 @@ time. F72 recorded that as a stopgap.
     account, not this draft. It comes after the token insert, which rolls back with the rest, so the token stays
     unspent.
   Both fail closed and confirming again is safe: a finished execution answers with its receipt.
-- **Unknown outcome.** When mcp-payments throws (a driver error, the statement timeout, a lost connection) the tool
-  callback logs the error type and driver code, no message or values, and answers the generic `internal_error` ("No
-  pude confirmar si la transferencia se realizó. Confirmá de nuevo con tu PIN en unos segundos: si ya se hizo, vas a
-  recibir el mismo comprobante."), never the driver's text. The gateway answers `upstream_error` when the backend
-  times out or the call fails below the tool. In both the transaction may have committed, so the rule is the record's:
-  the draft stays open, and a fresh confirmation is answered from the record (the receipt if it committed, a new
-  execution if it rolled back). Nothing aborts a call at the gateway, but the budget is below the gateway's timeout,
-  so this is rare, and it never closes a draft whose money moved.
+- **Failures around the execution.** A failure of the step-up check or the draft read, or either running past the
+  deadline, happens before anything was spent or moved: `NotExecutedError`, answered `not_executed` ("No pude
+  procesar la confirmación y no se ejecutó nada. Confirmá de nuevo con tu PIN en unos segundos."). The draft stays open
+  and, nothing being in flight, the bot may ask again at once. After a confirmed commit the receipt always goes out: if
+  the account or beneficiary lookup fails or is slow, it goes out without those two fields (so the bot's receipt card,
+  which needs them, is not shown, and the model still has the reference), and the failure is logged as a warning.
+  Known residual: `createStepUpVerifier` still reads any verification failure, a JWKS fetch error included, as an
+  invalid token (`not_authorised`, which closes the draft); only a hang past the 2 s bound is `not_executed`.
+- **Unknown outcome.** When the execution itself throws (a driver error, a statement cancelled for another reason, a
+  lost connection, a failed commit) the tool callback logs the error type and driver code, no message or values, and
+  answers the generic `internal_error` ("No pude confirmar si la transferencia se realizó. Confirmá de nuevo con tu PIN
+  en unos segundos: si ya se hizo, vas a recibir el mismo comprobante."), never the driver's text. A client that
+  threw is released with the error, so the pool drops it. The gateway answers `upstream_error` when the backend times
+  out or the call fails below the tool. In both the transaction may have committed, so the rule is the record's: the
+  draft stays open, and a fresh confirmation is answered from the record (the receipt if it committed, a new execution
+  if it rolled back). Nothing aborts a call at the gateway, but the deadline is below the gateway's timeout, so this is
+  rare, and it never closes a draft whose money moved.
+- **The grant check lives in the domain.** `grantMatchesDraft` (`transfer-rules.ts`) is bound by the use case to what
+  the token authorises and passed to the repository as `isAuthorised`, which calls it with the draft row it locked: the
+  rule exists once, and the in-memory and Postgres adapters cannot diverge on it.
 - **mcp-payments messages.** `token_already_used`: "Esa confirmación ya se usó. Confirmá de nuevo con tu PIN." (the
   draft is open again).
-- **Bot.** `UNDECIDING_BANK_ERRORS` in `drafts.py` (beside `UNSENT_ERRORS`) leaves the draft open for
-  `token_already_used`, `execution_in_progress`, `account_busy`, `upstream_error` and `internal_error`. Asking again
-  raises a new interrupt, and the approval carries a fresh step-up token from the app; the bot never resends a spent
-  one. After `execution_in_progress`, `account_busy`, `upstream_error` or `internal_error` the first execution may
-  still hold the lock, so the bot raises no second approval for that draft **in the same run** (`held_drafts`, read
-  from the run's messages: `PolicyToolset` refuses the model's repeat call as `policy_denied`, which also leaves the
-  draft open); the customer confirms again on their next message. `token_already_used` ends the first call, so it
-  re-prompts at once. Every other answer decides the draft, `insufficient_funds` included: a customer short on balance
-  prepares the transfer again after topping up.
+- **Bot.** `CLOSING_BANK_ERRORS` in `drafts.py` lists the codes that close a draft: `draft_expired`,
+  `draft_not_pending`, `draft_not_found`, `insufficient_funds` and `not_authorised`, plus a result with no error code
+  (a receipt, the customer's denial or cancel, Pydantic AI's synthesized result for an interrupted call). Every other
+  code leaves the draft open, whoever raised it: `token_already_used`, `execution_in_progress`, `account_busy`,
+  `not_executed`, `upstream_error` and `internal_error` from the bank, the gateway's refusals that never reached it
+  (`rate_limited`, `insufficient_scope`, `unknown_tool`, `service_unavailable`), the bot's own `policy_denied`, and a
+  code nobody has invented yet, as does a failed result with no readable code. The list is inverted from F72's
+  ("every code but these keeps it open", not the reverse) because a closed draft whose money may have moved sends the
+  customer to prepare a payment twice, while an open one at worst raises one more PIN card, and the single-use
+  step-up token is still required for every execution. Asking again raises a new interrupt, and the approval carries a
+  fresh step-up token from the app; the bot never resends a spent one. After `execution_in_progress`, `account_busy`,
+  `upstream_error` or `internal_error` the first execution may still hold the lock, so the bot raises no second
+  approval for that draft **in the same run** (`held_drafts`, read from the run's messages: `PolicyToolset` refuses
+  the model's repeat call as `policy_denied`, which leaves the draft open); the customer confirms again on their next
+  message. `token_already_used`, `not_executed` and the gateway's refusals end the first call, so they re-prompt at
+  once.
+- **One `execute_transfer` per draft per model response.** Parallel calls in one model response are all checked
+  before any has a result, so each would raise its own PIN card or race on the draft's lock. `PolicyToolset` lets only
+  the first call for a draft in a response go on and refuses the others as `policy_denied`
+  (`repeats_call_in_response`), whatever the first's result will be. Across responses the draft's results decide:
+  `held_drafts` for an execution that may still run, and an at-once re-prompt after `token_already_used` is intended.
 
 ## Alternatives
 - **Keep F72's behaviour** (any bank answer closes the draft, "start again"). Rejected: it tells the customer to repeat
@@ -113,9 +143,11 @@ time. F72 recorded that as a stopgap.
   and the authorised grant and returns the receipt or `refused` with the wire error code itself, so there is one
   vocabulary from the repository to the tool.
 - **Tests.** Repository tests run against Postgres (`TEST_DATABASE_URL`) for the races, both lock timeouts (each
-  waits for a real blocked backend before releasing the holder) and the total budget; the
-  use-case tests run on an in-memory repository with the same contract.
+  waits for a real blocked backend before releasing the holder) and the deadline; a scripted connection checks the
+  transaction's plumbing (no timeout on the commit, a spent deadline refused before a guarded step, 57014 not read as a
+  lock refusal, the client released with its error); the use-case tests run on an in-memory repository with the
+  same contract.
 - **Residual.** A rejected `insufficient_funds` attempt spends its token, and the bot closes the draft on it, so a
   customer short on balance prepares the transfer again (new draft, new PIN) after topping up; the same token is never
-  sent twice anyway. The lock wait (5 s) and the budget (7 s) are constants, not configuration. Only the commit can
+  sent twice anyway. The lock wait (5 s) and the call's deadline (6 s) are constants, not configuration. Only the commit can
   leave the outcome unknown to a caller, and the record answers that.

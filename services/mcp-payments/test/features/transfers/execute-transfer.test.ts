@@ -1,7 +1,8 @@
 import { decodeJwt } from 'jose';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { executeTransfer } from '../../../src/features/transfers/execute-transfer.js';
+import { Deadline } from '../../../src/features/transfers/deadline.js';
+import { executeTransfer, NotExecutedError } from '../../../src/features/transfers/execute-transfer.js';
 import { createStepUpVerifier } from '../../../src/features/transfers/step-up-verifier.js';
 import type { TransferDraft } from '../../../src/features/transfers/transfers-repository.js';
 import { InMemoryTransfersRepository } from '../../support/in-memory-transfers.js';
@@ -226,6 +227,77 @@ describe('executeTransfer', () => {
         error: { code: 'not_authorised' },
       });
       expect(repo.debits).toHaveLength(1);
+    });
+  });
+
+  describe('inside one deadline for the whole call', () => {
+    const never = () => new Promise<never>(() => undefined);
+    const BUDGET_MS = 60;
+
+    async function timed(run: Promise<unknown>) {
+      const started = performance.now();
+      const error = await run.then(
+        () => undefined,
+        (failure: unknown) => failure,
+      );
+      return { error, elapsedMs: performance.now() - started };
+    }
+
+    it('stops waiting for a step-up check that outlasts it, before anything ran', async () => {
+      const slow = { ...deps(), verifyStepUp: never };
+      const { error, elapsedMs } = await timed(
+        executeTransfer(slow, 'juan', DRAFT.id, await stepUp(), Deadline.after(BUDGET_MS)),
+      );
+      expect(error).toBeInstanceOf(NotExecutedError);
+      expect(elapsedMs).toBeLessThan(BUDGET_MS + 200);
+      expect(repo.deadlines).toEqual([]);
+      expect(repo.usedJtis.size).toBe(0);
+    });
+
+    it('stops waiting for a draft read that outlasts it, before anything ran', async () => {
+      repo.findDraft = never;
+      const { error, elapsedMs } = await timed(
+        executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(), Deadline.after(BUDGET_MS)),
+      );
+      expect(error).toBeInstanceOf(NotExecutedError);
+      expect(elapsedMs).toBeLessThan(BUDGET_MS + 200);
+      expect(repo.deadlines).toEqual([]);
+    });
+
+    it('says a failing draft read ran nothing, and keeps the error for the log', async () => {
+      const failure = new Error('connection terminated');
+      repo.findDraft = () => Promise.reject(failure);
+      const { error } = await timed(executeTransfer(deps(), 'juan', DRAFT.id, await stepUp()));
+      expect(error).toBeInstanceOf(NotExecutedError);
+      expect((error as NotExecutedError).cause).toBe(failure);
+    });
+
+    it('hands the repository the call own deadline, not a fresh one', async () => {
+      const deadline = Deadline.after(5000);
+      await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(), deadline);
+      expect(repo.deadlines).toEqual([deadline]);
+    });
+
+    it('lets an execution error through as it is: its outcome is unknown', async () => {
+      const failure = new Error('connection terminated');
+      repo.failWith = failure;
+      const { error } = await timed(executeTransfer(deps(), 'juan', DRAFT.id, await stepUp()));
+      expect(error).toBe(failure);
+    });
+
+    it('answers a budget that ran out before the execution with a refusal, and moves nothing', async () => {
+      let elapsedMs = 0;
+      const deadline = Deadline.after(1000, () => elapsedMs);
+      const find = repo.findDraft.bind(repo);
+      repo.findDraft = async (id) => {
+        const draft = await find(id);
+        elapsedMs = 5000; // The draft read used up the budget.
+        return draft;
+      };
+      const result = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(), deadline);
+      expect(result).toMatchObject({ ok: false, error: { code: 'execution_in_progress' } });
+      expect(repo.debits).toEqual([]);
+      expect(repo.usedJtis.size).toBe(0);
     });
   });
 });

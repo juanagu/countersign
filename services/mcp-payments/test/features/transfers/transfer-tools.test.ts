@@ -3,6 +3,7 @@ import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing
 import type { Logger } from 'pino';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIENCE, createApp } from '../../../src/app.js';
+import { EXECUTE_CALL_BUDGET_MS } from '../../../src/features/transfers/execute-transfer.js';
 import { createStepUpVerifier } from '../../../src/features/transfers/step-up-verifier.js';
 import { InMemoryTransfersRepository } from '../../support/in-memory-transfers.js';
 import { connectClient, parseText } from '../../support/mcp-client.js';
@@ -241,6 +242,73 @@ describe('mcp-payments tools', () => {
       expect(fields).toEqual({ errorType: 'Error', code: '23505' });
       expect(JSON.stringify([fields, message])).not.toContain(stepUpToken);
       expect(JSON.stringify([fields, message])).not.toMatch(/duplicate key|secret-jti/);
+    });
+  });
+
+  describe('around the execution', () => {
+    /** Prepares a draft, runs `breakIt` (what to make fail afterwards), then executes it. */
+    const executed = async (breakIt: () => void = () => undefined) => {
+      const client = await clientFor('juan');
+      const draft = parseText(await client.callTool({ name: 'prepare_transfer', arguments: juanToAna }));
+      const stepUpToken = await keys.sign({
+        aud: AUDIENCE,
+        sub: 'juan',
+        act: undefined,
+        token_use: 'step_up',
+        scope: 'transfers:execute',
+        authorization_details: [
+          {
+            type: 'transfer',
+            draft_id: draft.draft_id,
+            amount: '50000.00',
+            currency: 'ARS',
+            beneficiary_id: 'ben-juan-ana',
+          },
+        ],
+      });
+      breakIt();
+      return client.callTool({
+        name: 'execute_transfer',
+        arguments: { draft_id: draft.draft_id, step_up_token: stepUpToken },
+      });
+    };
+
+    it('returns the receipt of a committed transfer when the account or beneficiary lookup fails afterwards', async () => {
+      const result = await executed(() => {
+        repo.findAccount = () => Promise.reject(new Error('connection terminated'));
+      });
+      expect(result.isError).toBeFalsy();
+      const receipt = parseText(result);
+      expect(receipt).toMatchObject({ amount: '50000.00', currency: 'ARS', reference: 'BD-TEST' });
+      expect(receipt.source_account).toBeUndefined();
+      expect(repo.debits).toHaveLength(1);
+    });
+
+    it('answers not_executed, a definite code, when the draft read fails before anything ran', async () => {
+      const result = await executed(() => {
+        repo.findDraft = () => Promise.reject(new Error('connection terminated'));
+      });
+      expect(result.isError).toBe(true);
+      expect(parseText(result).error).toBe('not_executed');
+      expect(repo.debits).toEqual([]);
+      expect(repo.usedJtis.size).toBe(0);
+    });
+
+    it('answers not_executed within the call budget when the step-up check hangs', async () => {
+      const hanging = createApp({
+        verify: createJwtVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, allowedActors: ['bot'], keys: keys.keys }),
+        transfers: repo,
+        verifyStepUp: () => new Promise<never>(() => undefined),
+        now: () => NOW,
+      });
+      const client = await connectClient(hanging, await keys.sign({ aud: AUDIENCE, sub: 'juan', scope: SCOPE }));
+      const started = performance.now();
+      const result = await client.callTool({
+        name: 'execute_transfer',
+        arguments: { draft_id: 'drf_1', step_up_token: 'x' },
+      });
+      expect(parseText(result).error).toBe('not_executed');
+      expect(performance.now() - started).toBeLessThan(EXECUTE_CALL_BUDGET_MS);
     });
   });
 

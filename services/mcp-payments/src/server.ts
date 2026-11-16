@@ -9,7 +9,7 @@ import { createStepUpVerifier } from './features/transfers/step-up-verifier.js';
 
 const config = loadConfig();
 const logger = pino({ name: SERVICE_NAME, level: config.logLevel });
-// A call waits at most this long for a connection, inside the repository's execution budget (ADR 023).
+// A call waits at most this long for a connection, inside the call's deadline (ADR 023).
 const CONNECTION_TIMEOUT_MS = 2000;
 const pool = new pg.Pool({
   connectionString: config.databaseUrl,

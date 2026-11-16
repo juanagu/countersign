@@ -261,8 +261,11 @@ sequenceDiagram
   transfer records it. A replay is answered from that record: the token that executed gets the same receipt, a spent
   token on an executed draft `draft_not_pending`, and `token_already_used` means only "spent, nothing moved, draft
   still pending". A lock wait that runs out answers `execution_in_progress` (the draft) or `account_busy` (the source
-  account), and the whole execution has a 7 s budget under the gateway's 10 s; a thrown error answers a generic
-  `internal_error`. The bot keeps the draft open on all of these and on the gateway's `upstream_error`. Idempotent per draft.
+  account), and the whole call (step-up check, draft read, execution, receipt lookup) shares one 6 s deadline under the
+  gateway's 10 s; a failure before the execution answers `not_executed`, a thrown error inside it a generic
+  `internal_error`. The bot closes a draft only on the bank's answers about the draft itself (a receipt, `draft_expired`,
+  `draft_not_pending`, `draft_not_found`, `insufficient_funds`, `not_authorised`) and the customer's denial; every other
+  code leaves it open. Idempotent per draft.
 - **The approved exchange.** No session token ever holds `transfers:execute`. `SkillGatedMCPToolset` asks the IdP for
   exactly that scope only when `PolicyToolset` has let an approved T3 call through, makes the one call on a
   session of its own and closes it; the token is never reused. A T3 call that gets past the policy unapproved goes

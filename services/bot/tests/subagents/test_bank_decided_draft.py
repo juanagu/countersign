@@ -68,9 +68,12 @@ BANK_ERRORS = {
     "internal_error": "No pude confirmar si la transferencia se realizó. Confirmá de nuevo con tu PIN.",
     # The gateway's own answer when mcp-payments timed out (the message is the fake bank's, the code the gateway's).
     "upstream_error": "El servicio de transferencias no respondió a tiempo.",
+    # The gateway refused before anything reached the bank.
+    "rate_limited": "Demasiadas operaciones. Probá de nuevo en unos segundos.",
+    "insufficient_scope": "Falta el permiso para transferir.",
 }
 # The first execution ended without moving anything: asking again at once is right.
-LEAVES_OPEN = ("token_already_used",)
+LEAVES_OPEN = ("token_already_used", "rate_limited", "insufficient_scope")
 # The first execution may still be running or may have committed: open, but not again in the same run.
 HELD_OPEN = ("execution_in_progress", "account_busy", "internal_error", "upstream_error")
 DECIDES = sorted(set(BANK_ERRORS) - set(LEAVES_OPEN) - set(HELD_OPEN))

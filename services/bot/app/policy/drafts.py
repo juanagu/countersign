@@ -4,24 +4,21 @@ import json
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
 from app.guardrails.messages import tool_call_parts, tool_return_parts, tool_returns_in
 from app.policy.tool_policy import DRAFT_BOUND_TOOLS, PREPARE_TRANSFER, prepared_draft_id
 
-# Refusals raised by the bot before anything reached the bank: its own policy denial, and an approved call whose
-# token or session could not be set up. Neither decides the draft, so the customer can ask again.
-UNSENT_ERRORS = frozenset({"policy_denied", "service_unavailable"})
-# Answers from mcp-payments or the gateway that leave the draft pending (ADR 023). `token_already_used`: the step-up
-# token was spent and nothing moved with it. `execution_in_progress` and `account_busy`: another call holds the draft
-# or the source account, and everything this call did rolled back. `upstream_error` (the gateway gave up on
-# mcp-payments) and `internal_error` (mcp-payments failed while executing): the outcome is unknown, and a fresh
-# confirmation is answered from the record, with the receipt if the execution committed. Every other answer from the
-# bank decides the draft.
-UNDECIDING_BANK_ERRORS = frozenset(
-    {"token_already_used", "execution_in_progress", "account_busy", "upstream_error", "internal_error"}
+# The bank's answers about the draft itself, the only error codes that close it (ADR 023): the draft is over
+# (`draft_expired`, `draft_not_pending`, `draft_not_found`), the balance cannot cover it (`insufficient_funds`) or the
+# token never authorised it (`not_authorised`). Any other code, whoever raised it (the bot's `policy_denied`, a
+# gateway `rate_limited`, `insufficient_scope`, `unknown_tool` or `service_unavailable`, `token_already_used`,
+# `execution_in_progress`, `account_busy`, `upstream_error`, `internal_error`, a code not invented yet) leaves the draft
+# open: nothing was decided, or the outcome is unknown and a fresh confirmation is answered from the record. A result
+# with no error code closes it too: a receipt, the customer's denial or cancel, Pydantic AI's synthesized result.
+CLOSING_BANK_ERRORS = frozenset(
+    {"draft_expired", "draft_not_pending", "draft_not_found", "insufficient_funds", "not_authorised"}
 )
-_UNDECIDING_ERRORS = UNSENT_ERRORS | UNDECIDING_BANK_ERRORS
 # The subset after which an execution may still be running or may have committed: the draft stays open, but this run
 # raises no second approval for it. The customer confirms again on their next message, when the first call has ended.
 HOLDING_ERRORS = frozenset({"execution_in_progress", "account_busy", "upstream_error", "internal_error"})
@@ -29,12 +26,11 @@ HOLDING_ERRORS = frozenset({"execution_in_progress", "account_busy", "upstream_e
 
 def open_draft(messages: Sequence[ModelMessage], *, delegates: Collection[str] = frozenset()) -> str | None:
     """The draft of the latest `prepare_transfer` result, unless an `execute_transfer` result already decided it:
-    a receipt, the customer's denial or cancel, an answer from the bank about it (expired, not pending, insufficient
-    funds), or a result Pydantic AI synthesized for a call a cut-off run left open. A newer draft supersedes every
-    older one, so at most one draft is open. An error in `UNSENT_ERRORS` (the bot's refusal before anything was sent)
-    or in `UNDECIDING_BANK_ERRORS` (the bank's answers that leave the draft pending), a retried call and an
-    interrupt nobody answered leave it open, so asking again pauses on it again, and the approval needs a fresh
-    step-up token: the spent one is never sent twice.
+    a receipt, the customer's denial or cancel, an answer from the bank about it (`CLOSING_BANK_ERRORS`), or a result
+    Pydantic AI synthesized for a call a cut-off run left open. A newer draft supersedes every older one, so at most
+    one draft is open. Every other error code, a failed result with none, a retried call and an interrupt nobody
+    answered leave it open, so asking again pauses on it again, and the approval needs a fresh step-up token: the
+    spent one is never sent twice.
     `delegates` names the delegate tools whose evidence records hold a subagent's `prepare_transfer` results."""
     drafts = [
         draft
@@ -69,6 +65,27 @@ def held_drafts(messages: Sequence[ModelMessage], run_id: str | None) -> set[str
     return _drafts_named_by(messages, results)
 
 
+def repeats_call_in_response(messages: Sequence[ModelMessage], tool_call_id: str | None, tool_name: str) -> bool:
+    """Whether the model response that holds this call also holds an earlier call to the same tool for the same
+    draft. Parallel calls are all checked before any has a result, so two would each raise an approval (two PIN
+    cards) or race on the draft's lock; only the first of them goes on, whatever its result will be."""
+    if tool_call_id is None:
+        return False
+    for message in messages:
+        calls = (
+            [part for part in message.parts if isinstance(part, ToolCallPart)]
+            if isinstance(message, ModelResponse)
+            else []
+        )
+        mine = next((call for call in calls if call.tool_call_id == tool_call_id), None)
+        if mine is None:
+            continue
+        draft = _draft_named_by(mine)
+        siblings = [c for c in calls if c.tool_name == tool_name and _draft_named_by(c) == draft]
+        return siblings[0].tool_call_id != tool_call_id
+    return False
+
+
 def _drafts_named_by(messages: Sequence[ModelMessage], results: Iterable[ToolReturnPart]) -> set[str]:
     calls = {call.tool_call_id: call for call in tool_call_parts(messages) if call.tool_name in DRAFT_BOUND_TOOLS}
     named: set[str] = set()
@@ -82,8 +99,14 @@ def _drafts_named_by(messages: Sequence[ModelMessage], results: Iterable[ToolRet
 
 
 def _decides(result: ToolReturnPart) -> bool:
-    """A retried call never ran; anything else decides unless its error leaves the draft pending."""
-    return result.outcome != "retried" and _error_code(result.content) not in _UNDECIDING_ERRORS
+    """A retried call never ran. A coded error decides only if the code is in `CLOSING_BANK_ERRORS`; without a code,
+    a failed result is unknown and leaves the draft open, anything else (receipt, denial, interrupted) decides."""
+    if result.outcome == "retried":
+        return False
+    code = _error_code(result.content)
+    if code is None:
+        return result.outcome != "failed"
+    return code in CLOSING_BANK_ERRORS
 
 
 def _error_code(content: Any) -> str | None:

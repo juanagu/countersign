@@ -1,3 +1,4 @@
+import type { Deadline } from '../../src/features/transfers/deadline.js';
 import type {
   Beneficiary,
   SourceAccount,
@@ -97,6 +98,8 @@ export class InMemoryTransfersRepository implements TransfersRepository {
   lockHeldElsewhere = false;
   /** Set while another transfer holds the source account's row past the wait limit. */
   accountLockHeldElsewhere = false;
+  /** The deadline of each `executeDraft` call, so tests can check the call's one budget reached the repository. */
+  readonly deadlines: Deadline[] = [];
   /** The error `executeDraft` throws, as a driver failure would: the caller cannot know whether it committed. */
   failWith: Error | undefined;
 
@@ -106,18 +109,16 @@ export class InMemoryTransfersRepository implements TransfersRepository {
 
   /** The same contract as the Postgres repository; the body has no await, so a call is atomic like the locked transaction. */
   async executeDraft(
-    { draftId, jti, authorised }: ExecuteDraftRequest,
+    { draftId, jti, isAuthorised, deadline }: ExecuteDraftRequest,
     clock: () => Date,
   ): Promise<ExecuteDraftOutcome> {
+    this.deadlines.push(deadline);
     if (this.failWith) throw this.failWith;
+    if (deadline.remainingMs() < 1) return refused('execution_in_progress');
     if (this.lockHeldElsewhere) return refused('execution_in_progress');
     const draft = this.drafts.find((d) => d.id === draftId);
     if (!draft) return refused('draft_not_pending');
-    const grantMatches =
-      draft.amount === authorised.amount &&
-      draft.currency === authorised.currency &&
-      draft.beneficiaryId === authorised.beneficiaryId;
-    if (!grantMatches) return refused('not_authorised');
+    if (!isAuthorised(draft)) return refused('not_authorised');
     if (draft.status === 'executed') return this.replay(draftId, jti);
     if (draft.status !== 'pending') return refused('draft_not_pending');
     const now = clock();
