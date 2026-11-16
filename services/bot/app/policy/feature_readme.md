@@ -37,7 +37,8 @@ denied, and `spending_summary` needs a start date.
 `prepare_transfer` result created, in the run's messages (stored history included) or in a delegate tool's evidence
 record when the payments subagent prepared it, that no `execute_transfer` result has decided yet: a receipt, the
 customer's denial or cancel, the bank's answer about the draft (a failed result such as `draft_expired`), or a result
-Pydantic AI synthesized for a cut-off call. A refusal before anything was sent decides nothing (`UNSENT_ERRORS`:
+Pydantic AI synthesized for a cut-off call. A refusal before anything was sent decides nothing, and nor does the bank's `token_already_used`, which asks the
+customer to confirm again (`RETRYABLE_BANK_ERRORS`; `UNSENT_ERRORS`:
 `policy_denied`, a cap or input verdict included, and the `service_unavailable` an approved call returns when its
 token or session can't be set up; also a `retried` call), so the customer can ask again. A newer draft supersedes the older ones. An interrupt nobody
 answered decides nothing, so the failed-resume recovery (ADR 013: ask again, approve again) still pauses on it. `PolicyToolset` reads it from

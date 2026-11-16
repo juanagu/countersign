@@ -71,6 +71,11 @@ UNSENT = {
     "service-unavailable": _result('{"error":"service_unavailable","service":"mcp-gateway"}', "x1", outcome="failed"),
     "policy-denied": _result({"error": "policy_denied", "reason": "at most 3 T3 calls per conversation"}, "x1"),
     "retried": _result("draft_id: field required", "x1", outcome="retried"),
+    "token-already-used": _result(
+        '{"error":"token_already_used","message":"Esa confirmación ya se usó. Confirmá de nuevo."}',
+        "x1",
+        outcome="failed",
+    ),
 }
 
 

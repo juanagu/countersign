@@ -12,6 +12,9 @@ from app.policy.tool_policy import DRAFT_BOUND_TOOLS, PREPARE_TRANSFER, prepared
 # Refusals raised before anything reached the bank: the policy's own denial, and an approved call whose token or
 # session could not be set up. Neither decides the draft, so the customer can ask again.
 UNSENT_ERRORS = frozenset({"policy_denied", "service_unavailable"})
+# The bank's answers that leave the draft pending: a reused step-up token moved nothing, and the bank asks the
+# customer to confirm again, which needs a fresh single-use token bound to the same draft.
+RETRYABLE_BANK_ERRORS = frozenset({"token_already_used"})
 
 
 def open_draft(messages: Sequence[ModelMessage], *, delegates: Collection[str] = frozenset()) -> str | None:
@@ -47,7 +50,7 @@ def _decided_drafts(messages: Sequence[ModelMessage]) -> set[str]:
 
 def _decides(result: ToolReturnPart) -> bool:
     """A retried call never ran; anything else decides unless it is a refusal before sending."""
-    return result.outcome != "retried" and _error_code(result.content) not in UNSENT_ERRORS
+    return result.outcome != "retried" and _error_code(result.content) not in UNSENT_ERRORS | RETRYABLE_BANK_ERRORS
 
 
 def _error_code(content: Any) -> str | None:
