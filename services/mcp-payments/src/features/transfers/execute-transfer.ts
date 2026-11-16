@@ -21,7 +21,7 @@ export interface ExecuteTransferDeps {
 
 const MESSAGES: Record<ExecuteTransferErrorCode, string> = {
   not_authorised: 'La transferencia no está autorizada.',
-  token_already_used: 'Esa confirmación ya se usó. Confirmá de nuevo si querés reintentar.',
+  token_already_used: 'Esa confirmación ya se usó. Pedime la transferencia de nuevo.',
   draft_not_found: 'No encontré esa transferencia preparada.',
   draft_expired: 'La transferencia preparada venció. Preparala de nuevo.',
   draft_not_pending: 'Esa transferencia ya no está pendiente.',
@@ -65,15 +65,7 @@ export async function executeTransfer(
   const draft = await repo.findDraft(draftId);
   if (draft?.customerId !== customerId) return failure('draft_not_found');
   // Claimed before anything else can fail, so a token is spent even by a rejected attempt.
-  if (!(await repo.claimTokenId(grant.jti))) {
-    // A matching grant replayed on the draft it executed gets the idempotent receipt, so a client that reads
-    // `token_already_used` knows nothing moved and may ask the customer to confirm again.
-    const replay =
-      draft.status === 'executed' && matchesDraft(draft, grant.authorization)
-        ? await executedResult(repo, draft)
-        : null;
-    return replay ?? failure('token_already_used');
-  }
+  if (!(await repo.claimTokenId(grant.jti))) return failure('token_already_used');
   if (!matchesDraft(draft, grant.authorization)) return failure('not_authorised');
 
   if (draft.status === 'executed') {

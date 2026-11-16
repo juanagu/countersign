@@ -16,9 +16,7 @@ MCP tools at `POST /mcp`:
   step-up token; listed under `transfers:prepare` via `bank/listScope`, so the model sees it before approval but the
   gateway serves a call only on a token holding `transfers:execute`, which the bot gets for the approved call alone, ADR 020): `executeTransfer` verifies the step-up token (ADR 013),
   claims its `jti`, checks the grant against the stored draft and executes once per draft (row lock,
-  idempotent receipt). A token that was already used answers the draft's receipt when its grant matches a draft that
-  is `executed` (the replay of the call that moved the money), so `token_already_used` always means nothing moved
-  and the customer may confirm again with a fresh step-up token. Errors: `not_authorised`, `token_already_used`, `draft_not_found`, `draft_expired`,
+  idempotent receipt). A token that was already used answers `token_already_used` and the bot closes the draft: the answer can come after money moved (a double click while the first call still executes, an executed draft with no receipt row, a token a rejected attempt spent), so the customer prepares the transfer again. Errors: `not_authorised`, `token_already_used`, `draft_not_found`, `draft_expired`,
   `draft_not_pending`, `insufficient_funds`.
 
 ## Data flow

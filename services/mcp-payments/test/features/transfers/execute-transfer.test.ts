@@ -129,14 +129,10 @@ describe('executeTransfer', () => {
       expect(repo.debits).toEqual([]);
     });
 
-    it('a used token whose grant does not match the executed draft is used again: no receipt', async () => {
-      const mismatched = await stepUp({}, { amount: '1.00' });
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, mismatched)).toMatchObject({
-        error: { code: 'not_authorised' },
-      });
-      expect((await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).ok).toBe(true);
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, mismatched)).toMatchObject({
-        ok: false,
+    it('the same token is used twice (the double click)', async () => {
+      const token = await stepUp();
+      expect((await executeTransfer(deps(), 'juan', DRAFT.id, token)).ok).toBe(true);
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, token)).toMatchObject({
         error: { code: 'token_already_used' },
       });
       expect(repo.debits).toHaveLength(1);
@@ -153,14 +149,6 @@ describe('executeTransfer', () => {
     const first = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp());
     const second = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp());
     expect(second).toEqual(first);
-    expect(repo.debits).toHaveLength(1);
-  });
-
-  it('answers the same receipt, and debits nothing more, when the executing token is replayed (the double click)', async () => {
-    const token = await stepUp();
-    const first = await executeTransfer(deps(), 'juan', DRAFT.id, token);
-    expect(first.ok).toBe(true);
-    expect(await executeTransfer(deps(), 'juan', DRAFT.id, token)).toEqual(first);
     expect(repo.debits).toHaveLength(1);
   });
 

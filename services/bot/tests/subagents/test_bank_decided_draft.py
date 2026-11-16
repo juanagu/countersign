@@ -1,6 +1,6 @@
 """After the bank answers an approved `execute_transfer` with an error about its draft, that draft raises no second
-interrupt: not later in the resumed run, nor on the next turn (rule 3). The one answer that leaves it open is
-`token_already_used`, where nothing moved: the same draft pauses on a fresh interrupt and needs a fresh step-up token.
+interrupt: not later in the resumed run, nor on the next turn (rule 3). `token_already_used` is one of those answers:
+the bank can give it after money moved.
 
 The most realistic path the tests allow: the real `/agent` route and agent tree, a JSON round-tripping conversation
 store, and the real `MCPToolset` over HTTP to a fake gateway that answers as mcp-payments does (`isError` with
@@ -36,7 +36,7 @@ from tests.conftest import SigningKey, open_guardrails
 from tests.subagents.fakes import DRAFT, DRAFT_ID, PAYMENTS_STEPS, SKILLS, SUBAGENTS, per_turn, scripted, tree_settings
 
 CUSTOMER, AGAIN = "Mandale 50.000 a Ana", "Enviala de nuevo"
-STEP_UP, FRESH_STEP_UP = "step-up-from-the-app", "a-fresh-step-up-from-the-app"
+STEP_UP = "step-up-from-the-app"
 SERVER_START_TIMEOUT = 10.0
 EXECUTE = ("execute_transfer", {"draft_id": DRAFT_ID})
 ASK = ("ask_payments", {"request": "Preparar la transferencia a Ana"})
@@ -45,9 +45,8 @@ DENIAL = {"error": "policy_denied", "reason": "the draft is not this conversatio
 BANK_ERRORS = {
     "draft_expired": "La transferencia preparada venció. Preparala de nuevo.",
     "draft_not_pending": "Esa transferencia ya no está pendiente.",
+    "token_already_used": "Esa confirmación ya se usó. Pedime la transferencia de nuevo.",
 }
-REUSED_TOKEN = {"token_already_used": "Esa confirmación ya se usó. Confirmá de nuevo si querés reintentar."}
-MESSAGES = {**BANK_ERRORS, **REUSED_TOKEN}
 
 
 class SerializingStore(InMemoryConversationStore):
@@ -74,7 +73,6 @@ class Gateway:
     url: str
     error: str  # What the bank answers every execute_transfer with.
     executed: list[str] = field(default_factory=list)
-    step_up_tokens: list[str] = field(default_factory=list)
 
 
 def _bank(error: str) -> FastMCP:
@@ -94,11 +92,10 @@ def _bank(error: str) -> FastMCP:
     @mcp.tool(meta=meta("T3", "transfers:execute", **{"bank/listScope": "transfers:prepare"}))
     def execute_transfer(draft_id: str, step_up_token: str = "") -> CallToolResult:
         mcp.executed.append(draft_id)  # type: ignore[attr-defined]
-        mcp.step_up_tokens.append(step_up_token)  # type: ignore[attr-defined]
-        body = json.dumps({"error": error, "message": MESSAGES[error]})
+        body = json.dumps({"error": error, "message": BANK_ERRORS[error]})
         return CallToolResult(isError=True, content=[TextContent(type="text", text=body)])
 
-    mcp.executed, mcp.step_up_tokens = [], []  # type: ignore[attr-defined]
+    mcp.executed = []  # type: ignore[attr-defined]
     return mcp
 
 
@@ -121,7 +118,7 @@ async def gateway(request: pytest.FixtureRequest) -> AsyncIterator[Gateway]:
     try:
         await asyncio.wait_for(_started(server, task), SERVER_START_TIMEOUT)
         url = f"http://127.0.0.1:{sock.getsockname()[1]}/mcp"
-        yield Gateway(url, request.param, bank.executed, bank.step_up_tokens)  # type: ignore[attr-defined]
+        yield Gateway(url, request.param, bank.executed)  # type: ignore[attr-defined]
     finally:
         server.should_exit = True
         await asyncio.wait({task}, timeout=SERVER_START_TIMEOUT)
@@ -258,24 +255,3 @@ async def test_a_draft_the_bank_refused_after_approval_raises_no_second_interrup
     assert _interrupts(resumed) == []
     assert _execute_results(next_turn, next_turn) == [DENIAL]
     assert _interrupts(next_turn) == []
-
-
-@pytest.mark.filterwarnings("ignore::UserWarning")
-@pytest.mark.parametrize("gateway", sorted(REUSED_TOKEN), indirect=True)
-async def test_a_reused_step_up_token_leaves_the_draft_open_for_a_fresh_interrupt(gateway: Gateway, chat: Chat) -> None:
-    first = await chat.post("r1")
-    [interrupt] = _interrupts(first)
-    resumed = await chat.approve("r2", interrupt, STEP_UP)
-
-    [fresh] = _interrupts(resumed)  # The same draft pauses again, in the resumed run, instead of policy_denied.
-    assert fresh["id"] != interrupt["id"]
-    assert fresh["metadata"]["draft_id"] == DRAFT_ID
-    assert gateway.step_up_tokens == [STEP_UP]  # Nothing reached the bank on the pause: no token is reused.
-    started = [*first, *resumed]
-    refusal = {"error": "token_already_used", "message": REUSED_TOKEN["token_already_used"]}
-    assert _execute_results(started, resumed) == [refusal]
-
-    retried = await chat.approve("r3", fresh, FRESH_STEP_UP)
-    assert gateway.step_up_tokens == [STEP_UP, FRESH_STEP_UP]  # Only the customer's new approval sends a token.
-    assert _execute_results([*started, *retried], retried) == [refusal]
-    assert _interrupts(retried) == []

@@ -80,13 +80,11 @@ def test_a_refusal_before_anything_was_sent_leaves_the_draft_open(refused: Model
     assert open_draft([*_delegated("d1"), _execute("d1", "x1"), refused], delegates=DELEGATES) == "d1"
 
 
-def test_a_reused_step_up_token_leaves_the_draft_open() -> None:
-    # The bank's answer when nothing moved: it asks the customer to confirm again, which needs a fresh token.
-    body = (
-        '{"error":"token_already_used","message":"Esa confirmación ya se usó. Confirmá de nuevo si querés reintentar."}'
-    )
+def test_a_reused_step_up_token_closes_the_draft() -> None:
+    # The bank can answer this after money moved, so it decides the draft like any other answer from the bank.
+    body = '{"error":"token_already_used","message":"Esa confirmación ya se usó. Pedime la transferencia de nuevo."}'
     reused = _result(body, "x1", outcome="failed")
-    assert open_draft([*_delegated("d1"), _execute("d1", "x1"), reused], delegates=DELEGATES) == "d1"
+    assert open_draft([*_delegated("d1"), _execute("d1", "x1"), reused], delegates=DELEGATES) is None
 
 
 def test_a_policy_denied_inside_a_backends_answer_still_closes_the_draft() -> None:
