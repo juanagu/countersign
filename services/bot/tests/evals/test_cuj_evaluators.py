@@ -117,6 +117,7 @@ def test_an_execute_that_resolves_without_ever_pausing_fails_even_when_not_forbi
 def test_an_extra_prepare_transfer_fails_through_the_evaluator() -> None:
     output = _output(_transfer_traces())
     output.delegated = [*_delegated(), PREPARE]
+    output.refresh_calls()
 
     result = Trajectory(STEPS, ALLOW, FORBID).evaluate(_ctx(output))
 

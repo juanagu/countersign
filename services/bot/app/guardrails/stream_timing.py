@@ -21,6 +21,8 @@ FIRST_SURFACE_ATTRIBUTE = "bot.time_to_first_surface_ms"
 DURATION_ATTRIBUTE = "bot.stream_duration_ms"
 # The AG-UI thread (a random id, no content): an eval finds a run's trace by it (`evals/delegation.py`).
 THREAD_ATTRIBUTE = "bot.thread_id"
+# The run's id (a random id, no content): an eval pairs a run with its trace by it.
+RUN_ID_ATTRIBUTE = "bot.run_id"
 TIMING_METRIC = "bot.stream.timing"
 # Model-built A2UI surfaces and the server-template cards (confirm, receipt) both count as UI.
 SURFACE_ACTIVITIES = frozenset({"a2ui-surface", "bank-template"})
@@ -30,13 +32,19 @@ class StreamTimer:
     """One per run. `observe` every event sent to the client, then `finish` once."""
 
     def __init__(
-        self, clock: Callable[[], float] = time.monotonic, tracer: trace.Tracer | None = None, thread_id: str = ""
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        tracer: trace.Tracer | None = None,
+        thread_id: str = "",
+        run_id: str = "",
     ) -> None:
         self._clock = clock
         self._start = clock()
         self._span = (tracer or trace.get_tracer(__name__)).start_span(STREAM_SPAN)
         if thread_id:
             self._span.set_attribute(THREAD_ATTRIBUTE, thread_id)
+        if run_id:
+            self._span.set_attribute(RUN_ID_ATTRIBUTE, run_id)
         self.first_token_ms: float | None = None
         self.first_surface_ms: float | None = None
 
