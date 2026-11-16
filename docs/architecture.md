@@ -93,9 +93,9 @@ sequenceDiagram
   participant S as mcp-accounts / mcp-payments
 
   B->>I: POST /auth/login
-  I-->>B: HttpOnly cookie, JWT aud=bff, 30 min
+  I-->>B: HttpOnly cookie, JWT aud=bff with sid and auth_time, 30 min idle, 8 h absolute (slides, ADR 024)
   B->>I: chat run (cookie)
-  I->>T: AG-UI run, Bearer JWT aud=bot, 5 min
+  I->>T: AG-UI run, Bearer JWT aud=bot with the session's sid, 5 min
   T->>I: POST /token as client bot, subject aud=bot, audience=mcp-gateway, scope = the loaded skills' scopes
   I-->>T: JWT aud=mcp-gateway with exactly that scope, 5 min, never past the subject exp
   T->>G: MCP call with that token, listed and served only by its scopes
@@ -129,6 +129,13 @@ What each side refuses (each has a negative test, section 12):
 - The gateway accepts only a token whose actor chain is exactly `[bot]`; each backend accepts only `[mcp-gateway, bot]`
   (`packages/mcp-kit/src/jwt-verifier.ts`). A token the bot got directly for a backend is useless.
 - Users are identified by the token's `sub`, never by a request body or the model (rule 8).
+- **Session lifetime and logout ([ADR 024](decisions/024-sliding-session-and-logout-revocation.md)).** The session
+  slides: a request with under half of its 30 minutes left re-issues the cookie (same `sid` and `auth_time`), never
+  past 8 hours from login. Every token minted from the session (bot, step-up, history restore, exchanged) carries its
+  `sid`, which the bot, gateway and MCP servers ignore. Logout puts the `sid` on a Redis denylist: `requireSession` and
+  the runtime's own session reads answer 401 and `/token` answers `invalid_grant` for it, so a run already in progress
+  mints nothing new. A subject token or session without a `sid` is refused, and if the denylist cannot be read the
+  IdP fails closed. Tokens already minted live out their 5 minutes.
 
 **Step-up token (rule 3)** is a separate path. The browser asks `POST /auth/step-up` with the PIN and the confirmed
 draft's values. The IdP signs a 2-minute, single-use token: `aud=mcp-payments`, `token_use: step_up`, no `act`, and an
@@ -527,7 +534,8 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 - **Reload fidelity (F25, F34).** Past the replay window a reload restores text and confirm and receipt cards, not
   A2UI surfaces.
 - **Client reconnection (F47, F48)** and **guard history on edit or regenerate (F49)**.
-- **Mock IdP.** Stateless sessions, no logout revocation (F2), fixed PIN.
+- **Mock IdP.** Fixed PIN. Sessions are stateless JWTs plus a Redis denylist of logged-out `sid`s (ADR 024); a token
+  already minted is not recalled, it lives out its 5 minutes.
 - **Gateway direction.** [ADR 017](decisions/017-mcp-gateway.md) weighed agentgateway; the small Hono service stands
   in for it. Replacing it, with shared rate limits across replicas, is the production step.
 - **Evals** share the demo database (F29) and do not count judge tokens (F30).
@@ -563,3 +571,4 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 | [021](decisions/021-in-process-domain-subagents.md) | In-process domain subagents | Complex domains run as subagents the orchestrator calls as tools, each with its own model, policy and gateway token. Subagents stop at T2 and the orchestrator keeps every T3 tool. Separate tokens guard against mistakes, not against a compromised process. |
 | [022](decisions/022-cuj-evals.md) | CUJ evals | Multi-turn journeys with a simulated user, trials and per-call outcomes, built on `make eval`'s pydantic-evals; evalbench evaluated and not adopted. |
 | [023](decisions/023-step-up-token-replay-semantics.md) | Step-up token replay | The `jti` is spent inside the execute transaction and the transfer records it; a replay is answered from that record, `token_already_used` only means nothing moved. Amends 013. |
+| [024](decisions/024-sliding-session-and-logout-revocation.md) | Sliding session and logout revocation | 30 min idle, 8 h absolute, `sid` on every token minted from the session, Redis denylist checked at the session and at `/token`, fail closed. Amends 006. |
