@@ -12,13 +12,12 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Evaluator
+from pydantic_evals import Dataset
 from pydantic_evals.reporting import EvaluationReport
 
 from app.config import Settings
@@ -26,17 +25,7 @@ from app.core.clock import BankClock
 from evals.agui_client import BffSession, RunTrace, bff_client
 from evals.bank_db import expire_draft, read_ledger, restore_balance
 from evals.cuj import Scenario, load_scenarios
-from evals.cuj_content_evaluators import AttackNotObeyed, FinalTurnContains, RedTeamChecks, SpendingChartEachTurn
-from evals.cuj_evaluators import (
-    BalanceMatchesLedger,
-    Cards,
-    ContainsAny,
-    Handoffs,
-    Interrupts,
-    LedgerDelta,
-    StepUpAttempts,
-    Trajectory,
-)
+from evals.cuj_checks import case_for
 from evals.cuj_report import (
     TrialResult,
     cuj_gates,
@@ -50,7 +39,6 @@ from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall, trace_gap_verd
 from evals.cuj_spans import Trial, emit_trials
 from evals.cuj_user import Reply, Turn, is_end, simulated_user
 from evals.delegation import CONFIRM_TEMPLATE
-from evals.golden import month_range
 from evals.live import (
     OUT_OF_TURNS,
     STEP_UP_PIN,
@@ -63,77 +51,14 @@ from evals.live import (
     attach_delegated,
     resume_cut,
 )
-from evals.live_evaluators import AnswersInText, CalledTool, Cites, Contains, Grounded, NoAmounts
 from evals.redteam import Suite, load_suite
 from evals.run import print_gates
-from evals.scenario_evaluators import CITATION_RUBRIC, QUALITY_RUBRIC, Judge, NoRunErrors, ResumedIntact
 from evals.thresholds import load_thresholds
 
-SPENDING_TOOL = "spending_summary"
 WRONG_PIN = "000000"
 CANCEL_PAYLOAD = {"approved": False, "reason": "El cliente canceló la transferencia."}  # As the web's Cancelar sends.
 
-CujEvaluator = Evaluator[LiveInput, LiveOutput, Meta]
 Report = EvaluationReport[LiveInput, LiveOutput, Meta]
-
-
-JUDGE_RUBRICS = {"quality": QUALITY_RUBRIC, "citation": CITATION_RUBRIC}
-
-
-def _content_checks(scenario: Scenario, today: date) -> list[CujEvaluator]:
-    expect = scenario.expect
-    checks: list[CujEvaluator] = [Contains(text) for text in expect.text_contains]
-    checks += [Cites(tuple(expect.cites))] if expect.cites else []
-    checks += [Grounded()] if expect.grounded else []
-    checks += [NoAmounts()] if expect.no_amounts else []
-    checks += [AnswersInText()] if expect.answers_in_text else []
-    checks += [FinalTurnContains(expect.final_turn_contains)] if expect.final_turn_contains else []
-    for months_back in expect.spending_months:
-        first, last = month_range(today, months_back)
-        checks.append(CalledTool(SPENDING_TOOL, {"from": first.isoformat(), "to": last.isoformat()}))
-    checks += [SpendingChartEachTurn(len(expect.spending_months) or 1)] if expect.spending_chart_each_turn else []
-    checks += [ResumedIntact()] if expect.resumed_intact else []
-    return checks
-
-
-def _attack_checks(scenario: Scenario, judge_model: str, suite: Suite) -> list[CujEvaluator]:
-    attack = scenario.expect.attack
-    if attack is None:
-        return []
-    checks: list[CujEvaluator] = [RedTeamChecks(suite, scenario.user, attack.must_not_contain)]
-    return [*checks, AttackNotObeyed(attack.judge, judge_model)] if attack.judge else checks
-
-
-def evaluators_for(scenario: Scenario, judge_model: str, suite: Suite, today: date) -> list[CujEvaluator]:
-    expect = scenario.expect
-    checks: list[CujEvaluator] = [
-        NoRunErrors(),
-        Trajectory(scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires),
-        Cards(expect.cards.present, expect.cards.absent),
-        *_content_checks(scenario, today),
-        *_attack_checks(scenario, judge_model, suite),
-        *(Judge(f"judge_{name}", JUDGE_RUBRICS[name], judge_model) for name in scenario.judges),
-    ]
-    if scenario.handoffs:
-        checks.append(Handoffs(scenario.handoffs))
-    if expect.text_contains_any:
-        checks.append(ContainsAny(expect.text_contains_any))
-    if expect.ledger:
-        checks.append(LedgerDelta(expect.ledger))
-    if expect.interrupts is not None:
-        checks.append(Interrupts(expect.interrupts))
-    if expect.step_up_requests is not None or expect.step_up_statuses is not None:
-        checks.append(StepUpAttempts(expect.step_up_requests, expect.step_up_statuses))
-    if expect.balance_read_matches_ledger:
-        checks.append(BalanceMatchesLedger())
-    return checks
-
-
-def case_for(scenario: Scenario, judge_model: str, suite: Suite, today: date) -> Case[LiveInput, LiveOutput, Meta]:
-    inputs = LiveInput(user=scenario.user, turns=scenario.customer_turns)
-    meta = {"group": scenario.group, "id": scenario.id, "driver": scenario.driver}
-    evaluators = tuple(evaluators_for(scenario, judge_model, suite, today))
-    return Case(name=scenario.id, inputs=inputs, metadata=meta, evaluators=evaluators)
 
 
 @dataclass
@@ -204,7 +129,7 @@ async def follow_policy(
 
 
 async def reconnect(session: BffSession, scenario: Scenario) -> Journey:
-    """The opening's answer is cut mid-run, then the thread is reconnected twice (Scenario 5, as a journey)."""
+    """The opening's answer is cut mid-run, then the thread is reconnected twice."""
     check = await resume_cut(session, scenario.opening)
     return Journey([check.replay], [], 1, check)
 

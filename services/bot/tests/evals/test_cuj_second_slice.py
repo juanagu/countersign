@@ -1,4 +1,4 @@
-"""The second slice's harness (ADR 022): evaluators for multi-turn content and attacks, the judge as an extra score,
+"""The CUJ harness (ADR 022): evaluators for multi-turn content and attacks, the judge as an extra score,
 selecting journeys by group, the reconnect driver and the info group's consistency gate."""
 
 import json
@@ -8,16 +8,19 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 from pydantic_evals.otel._errors import SpanTreeRecordingError
 
+from app.guardrails.input_classifier import SAFE_REPLIES
 from evals.agui_client import RunTrace
 from evals.cuj import load_scenarios
+from evals.cuj_checks import evaluators_for
 from evals.cuj_content_evaluators import AttackNotObeyed, FinalTurnContains, RedTeamChecks, SpendingChartEachTurn
 from evals.cuj_report import TrialResult, cuj_gates, judge_means, trial_result
-from evals.cuj_runner import evaluators_for, reconnect, select
+from evals.cuj_runner import reconnect, select
 from evals.golden import month_range
 from evals.live import LiveInput, LiveOutput, ResumeCheck
 from evals.metrics import cuj_rows
@@ -100,8 +103,43 @@ async def test_the_attack_judge_fails_the_trial_when_the_assistant_complied() ->
     obeyed = TestModel(custom_output_args={"complied": True, "reason": "it transferred"})
     refused = TestModel(custom_output_args={"complied": False, "reason": "it refused"})
 
-    assert not _ok(await AttackNotObeyed("transfers", obeyed).evaluate(_ctx(output)))
-    assert _ok(await AttackNotObeyed("transfers", refused).evaluate(_ctx(output)))
+    assert not _ok(await _attack(obeyed).evaluate(_ctx(output)))
+    assert _ok(await _attack(refused).evaluate(_ctx(output)))
+
+
+def _attack(model: Any) -> AttackNotObeyed:
+    return AttackNotObeyed("transfers", model, RedTeamChecks(load_suite(), "ana", []))
+
+
+def _judge_must_not_run(messages: Any, info: Any) -> Any:
+    raise AssertionError("the judge ran")
+
+
+async def test_the_attack_judge_is_skipped_when_the_guard_blocked_the_run() -> None:
+    blocked = LiveOutput([RunTrace(_text(next(iter(SAFE_REPLIES.values()))))])
+
+    assert _ok(await _attack(FunctionModel(_judge_must_not_run)).evaluate(_ctx(blocked)))
+
+
+async def test_the_attack_judge_is_skipped_when_the_deterministic_checks_already_failed() -> None:
+    errored = LiveOutput([RunTrace([{"type": "RUN_ERROR", "message": "boom"}])])
+
+    assert _ok(await _attack(FunctionModel(_judge_must_not_run)).evaluate(_ctx(errored)))
+
+
+def _judge_down(messages: Any, info: Any) -> Any:
+    raise RuntimeError("guard model down")
+
+
+async def test_a_judge_outage_leaves_the_attack_trial_unscored_but_an_obeyed_verdict_fails_it() -> None:
+    output = LiveOutput([RunTrace(_text("Listo, transferí."))])
+    obeyed = TestModel(custom_output_args={"complied": True, "reason": "it transferred"})
+
+    down = await _trial(_attack(FunctionModel(_judge_down)), output=output)
+    fooled = await _trial(_attack(obeyed), output=output)
+
+    assert down.passed and "guard model down" in down.unscored["judge_attack"]
+    assert not fooled.passed and "judge_attack" in fooled.failed
 
 
 def test_the_info_journeys_carry_the_judge_and_the_money_journeys_do_not() -> None:
@@ -186,12 +224,14 @@ class _Broken(Evaluator[LiveInput, LiveOutput, dict[str, str]]):
         raise RuntimeError("judge down")
 
 
-async def _trial(*evaluators: Evaluator[LiveInput, LiveOutput, dict[str, str]]) -> TrialResult:
+async def _trial(
+    *evaluators: Evaluator[LiveInput, LiveOutput, dict[str, str]], output: LiveOutput | None = None
+) -> TrialResult:
     case = Case(name="cuj-t", inputs=LiveInput(turns=["x"]), metadata={"group": "cuj_info", "id": "cuj-t"})
     dataset = Dataset[LiveInput, LiveOutput, dict[str, str]](name="t", cases=[case], evaluators=list(evaluators))
 
     async def task(_: LiveInput) -> LiveOutput:
-        return LiveOutput([])
+        return output or LiveOutput([])
 
     report = await dataset.evaluate(task, progress=False)
     return trial_result(report.cases[0], 1)
