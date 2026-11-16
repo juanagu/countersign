@@ -18,7 +18,7 @@ CLOSING_BANK_ERRORS = frozenset(
 )
 # The subset after which an execution may still be running or may have committed: the draft stays open, but this run
 # raises no second approval for it. The customer confirms again on their next message, when the first call has ended.
-HOLDING_ERRORS = frozenset({"execution_in_progress", "account_busy", "upstream_error", "internal_error"})
+HOLDING_ERRORS = frozenset({"execution_in_progress", "upstream_error", "internal_error"})
 
 
 def open_draft(messages: Sequence[ModelMessage], *, delegates: Collection[str] = frozenset()) -> str | None:

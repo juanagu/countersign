@@ -157,6 +157,7 @@ export class InMemoryTransfersRepository implements TransfersRepository {
         fullName: beneficiary.fullName,
         bankName: beneficiary.bankName,
         accountRef: beneficiary.accountRef,
+        currency: beneficiary.currency,
       },
     };
   }

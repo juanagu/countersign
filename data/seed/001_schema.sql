@@ -54,7 +54,7 @@ CREATE TABLE transfer_drafts (
   expires_at         timestamptz NOT NULL
 );
 
--- Single-use step-up tokens (Phase 5). A token is spent inside the transaction that evaluates its draft (ADR 023),
+-- Single-use step-up tokens. A token is spent inside the transaction that evaluates its draft,
 -- so a row here with no transfer naming it means the attempt moved no money.
 CREATE TABLE used_jtis (
   jti        text PRIMARY KEY,

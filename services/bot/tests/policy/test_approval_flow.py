@@ -145,7 +145,7 @@ def _model_that_asks_again() -> FunctionModel:
     return FunctionModel(respond)
 
 
-@pytest.mark.parametrize("code", ["execution_in_progress", "account_busy", "upstream_error", "internal_error"])
+@pytest.mark.parametrize("code", ["execution_in_progress", "upstream_error", "internal_error"])
 async def test_an_answer_that_may_still_be_running_raises_no_second_approval_in_the_same_run(code: str) -> None:
     fake = FakePayments(execute_error=code)
     agent = build_agent(

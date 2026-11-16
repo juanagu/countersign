@@ -43,7 +43,7 @@ export interface TransferReceipt {
   fee: string;
   currency: Currency;
   sourceAccount: Pick<SourceAccount, 'id' | 'alias' | 'number'>;
-  beneficiary: Pick<Beneficiary, 'id' | 'fullName' | 'bankName' | 'accountRef'>;
+  beneficiary: Pick<Beneficiary, 'id' | 'fullName' | 'bankName' | 'accountRef' | 'currency'>;
 }
 
 /** Why an execution was refused. The wire codes of `execute_transfer`, so the repository's answer needs no mapping. */

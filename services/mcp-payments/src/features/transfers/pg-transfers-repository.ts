@@ -4,6 +4,7 @@ import { BoundedTransaction, LOCK_NOT_AVAILABLE } from './bounded-transaction.js
 import type { Deadline } from './deadline.js';
 import type {
   Beneficiary,
+  Currency,
   ExecuteDraftOutcome,
   ExecuteDraftRefusal,
   ExecuteDraftRequest,
@@ -27,7 +28,8 @@ const LOCK_DRAFT_SQL = `
          d.beneficiary_id AS "beneficiaryId", d.amount::text AS amount, d.fee::text AS fee, d.currency, d.status,
          ${TIMESTAMP('d.expires_at')} AS "expiresAt",
          a.alias AS "accountAlias", a.number AS "accountNumber",
-         b.full_name AS "beneficiaryName", b.bank_name AS "beneficiaryBank", b.account_ref AS "beneficiaryAccountRef"
+         b.full_name AS "beneficiaryName", b.bank_name AS "beneficiaryBank", b.account_ref AS "beneficiaryAccountRef",
+         b.currency AS "beneficiaryCurrency"
     FROM bank.transfer_drafts d
     JOIN bank.accounts a ON a.id = d.source_account_id
     JOIN bank.beneficiaries b ON b.id = d.beneficiary_id
@@ -50,6 +52,7 @@ interface LockedDraft extends TransferDraft {
   beneficiaryName: string;
   beneficiaryBank: string;
   beneficiaryAccountRef: string;
+  beneficiaryCurrency: Currency;
 }
 
 interface TransferRow {
@@ -72,6 +75,9 @@ const REFUSED_ON_LOCK: Record<LockedResource, ExecuteDraftRefusal> = {
   draft: 'execution_in_progress',
   account: 'account_busy',
 };
+
+const writesSomething = (outcome: ExecuteDraftOutcome): boolean =>
+  outcome.status === 'executed' || (outcome.status === 'refused' && outcome.code === 'insufficient_funds');
 
 const refused = (code: ExecuteDraftRefusal): ExecuteDraftOutcome => ({ status: 'refused', code });
 
@@ -102,6 +108,7 @@ const receiptOf = (row: LockedDraft, transfer: TransferRow): TransferReceipt => 
     fullName: row.beneficiaryName,
     bankName: row.beneficiaryBank,
     accountRef: row.beneficiaryAccountRef,
+    currency: row.beneficiaryCurrency,
   },
 });
 
@@ -171,8 +178,12 @@ export class PgTransfersRepository implements TransfersRepository {
     try {
       await tx.begin();
       const outcome = await this.executeLocked(tx, request, now);
-      // A refused attempt commits too: `insufficient_funds` wrote the spent token, which is what makes a stale one
-      // answer `token_already_used`; the other refusals wrote nothing.
+      // Only an execution and `insufficient_funds` (which wrote the spent token) commit. Every other answer wrote
+      // nothing, so it rolls back and the commit-time deadline check cannot turn it into `not_executed`.
+      if (!writesSomething(outcome)) {
+        await client.query('ROLLBACK');
+        return outcome;
+      }
       await tx.commit();
       return outcome;
     } catch (error) {
@@ -290,6 +301,8 @@ export class PgTransfersRepository implements TransfersRepository {
  * its own limit means another call holds that row.
  */
 function refusalFor(tx: BoundedTransaction, error: unknown): ExecuteDraftRefusal | undefined {
+  // Another call holds the draft whether or not the deadline has also run out, so it is classified first.
+  if (error instanceof LockWaitTimeout && error.resource === 'draft') return REFUSED_ON_LOCK.draft;
   const cause = error instanceof LockWaitTimeout ? error.cause : error;
   if (tx.deadlineRanOut(cause)) return 'not_executed';
   return error instanceof LockWaitTimeout ? REFUSED_ON_LOCK[error.resource] : undefined;

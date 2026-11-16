@@ -146,7 +146,7 @@ def _in_run(run_id: str, *messages: ModelMessage) -> list[ModelMessage]:
     return [ModelRequest(parts=m.parts, run_id=run_id) if isinstance(m, ModelRequest) else m for m in messages]
 
 
-@pytest.mark.parametrize("code", ["execution_in_progress", "account_busy", "upstream_error", "internal_error"])
+@pytest.mark.parametrize("code", ["execution_in_progress", "upstream_error", "internal_error"])
 def test_an_execution_that_may_still_be_running_holds_the_draft_for_the_run_that_saw_it(code: str) -> None:
     answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
     history = [*_prepared("d1"), _execute("d1", "x1"), *_in_run("r2", answered)]
@@ -155,7 +155,7 @@ def test_an_execution_that_may_still_be_running_holds_the_draft_for_the_run_that
     assert held_drafts(history, None) == set()
 
 
-@pytest.mark.parametrize("code", ["token_already_used", "draft_expired", "insufficient_funds"])
+@pytest.mark.parametrize("code", ["token_already_used", "account_busy", "draft_expired", "insufficient_funds"])
 def test_an_answer_that_ended_the_execution_holds_nothing(code: str) -> None:
     answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
     history = [*_prepared("d1"), _execute("d1", "x1"), *_in_run("r2", answered)]

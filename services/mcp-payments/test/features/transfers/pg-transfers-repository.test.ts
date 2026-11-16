@@ -25,6 +25,7 @@ const LOCKED_ROW = {
   beneficiaryName: 'Ana Gómez',
   beneficiaryBank: 'Banco Demo',
   beneficiaryAccountRef: '0170000100000000045211',
+  beneficiaryCurrency: 'USD', // Differs from the draft's ARS: the receipt reads it from the beneficiary row.
 };
 const NOW = new Date('2026-11-13T12:00:00.000Z');
 const TRANSFER_ROW = { transferId: 'trf_1', reference: 'BD-1', executedAt: NOW.toISOString() };
@@ -40,6 +41,7 @@ const RECEIPT = {
     fullName: 'Ana Gómez',
     bankName: 'Banco Demo',
     accountRef: '0170000100000000045211',
+    currency: 'USD',
   },
 };
 
@@ -230,6 +232,67 @@ describe('PgTransfersRepository.executeDraft transaction', () => {
     expect(queries.filter((sql) => sql.includes('FROM bank.transfers'))).toHaveLength(1);
   });
 
+  it('answers execution_in_progress for a lock wait on the draft even when the deadline has also run out', async () => {
+    let elapsedMs = 0;
+    const { pool, queries } = scriptedPool(
+      happyPath((sql) => {
+        if (!sql.includes('FOR UPDATE')) return undefined;
+        elapsedMs = 5000;
+        throw driverError('55P03');
+      }),
+    );
+    const outcome = await executeWith(
+      pool,
+      Deadline.after(1000, () => elapsedMs),
+    );
+    expect(outcome).toEqual({ status: 'refused', code: 'execution_in_progress' });
+    expect(queries).not.toContain('COMMIT');
+  });
+
+  it('still answers not_executed for a lock wait on the account when the deadline has run out', async () => {
+    let elapsedMs = 0;
+    const { pool } = scriptedPool(
+      happyPath((sql) => {
+        if (!sql.startsWith('UPDATE bank.accounts')) return undefined;
+        elapsedMs = 5000;
+        throw driverError('55P03');
+      }),
+    );
+    expect(
+      await executeWith(
+        pool,
+        Deadline.after(1000, () => elapsedMs),
+      ),
+    ).toEqual(notExecuted);
+  });
+
+  it('rolls a refusal that wrote nothing back and answers its own code, though the deadline ran out before the commit', async () => {
+    let elapsedMs = 0;
+    const { pool, queries } = scriptedPool(
+      happyPath((sql) => {
+        if (!sql.includes('FOR UPDATE')) return undefined;
+        elapsedMs = 5000;
+        return { rows: [{ ...LOCKED_ROW, status: 'cancelled' }], rowCount: 1 };
+      }),
+    );
+    const outcome = await executeWith(
+      pool,
+      Deadline.after(1000, () => elapsedMs),
+    );
+    expect(outcome).toEqual({ status: 'refused', code: 'draft_not_pending' });
+    expect(queries).toContain('ROLLBACK');
+    expect(queries).not.toContain('COMMIT');
+  });
+
+  it('commits insufficient_funds, which wrote the spent token', async () => {
+    const { pool, queries } = scriptedPool(
+      happyPath((sql) => (sql.startsWith('UPDATE bank.accounts') ? { rows: [], rowCount: 0 } : undefined)),
+    );
+    expect(await executeWith(pool, Deadline.after(5000))).toEqual({ status: 'refused', code: 'insufficient_funds' });
+    expect(queries).toContain('COMMIT');
+    expect(queries).not.toContain('ROLLBACK');
+  });
+
   it('releases the connection with the error when a statement fails, so the pool drops it', async () => {
     const failure = driverError('08006');
     const { pool, client } = scriptedPool(
@@ -289,19 +352,15 @@ describe('PgTransfersRepository.executeDraft transaction', () => {
       await expect(outcome()).rejects.toMatchObject({ code: '57014' });
     });
 
-    it.each(['55P03', '57014'])(
-      'reads %s as the deadline running out when nothing is left: not_executed',
-      async (code) => {
-        let elapsedMs = 0;
-        // The wait ended at the budget: both timeouts were armed to it.
-        const { outcome } = failingOn(
-          code,
-          Deadline.after(1000, () => elapsedMs),
-          () => (elapsedMs = 1000),
-        );
-        expect(await outcome()).toEqual(notExecuted);
-      },
-    );
+    it('reads a statement cancellation (57014) as the deadline running out when nothing is left: not_executed', async () => {
+      let elapsedMs = 0;
+      const { outcome } = failingOn(
+        '57014',
+        Deadline.after(1000, () => elapsedMs),
+        () => (elapsedMs = 1000),
+      );
+      expect(await outcome()).toEqual(notExecuted);
+    });
 
     it('arms the lock timeout at the lock wait limit, or at what is left when that is less, never past the statement', async () => {
       const { pool, armed } = scriptedPool(happyPath());

@@ -35,7 +35,9 @@ time. F72 recorded that as a stopgap.
   token on it can go stale in a way that matters, and checking expiry first keeps a retry with the same token from
   being told `token_already_used` for a draft that is simply over. A draft the balance cannot cover
   (`insufficient_funds`) commits its spent token: the PIN was presented and the bank evaluated an execution. A draft
-  that is not pending is answered from its record and spends nothing.
+  that is not pending is answered from its record and spends nothing. Only an execution and `insufficient_funds`
+  commit, since only they wrote something; every other refusal rolls back and answers its own code, so the commit's
+  deadline check cannot turn a definite refusal into `not_executed`.
 - **The grant.** The step-up token authorises an amount, currency and beneficiary. The repository compares them with
   the draft row it reads under the lock, so the check does not depend on those fields never changing, and a mismatch
   is `not_authorised` and spends nothing, whatever the draft's status.
@@ -72,14 +74,16 @@ time. F72 recorded that as a stopgap.
   and `lock_timeout` to the lesser of 5 s and what is left (a `set_config` round trip per statement: the waits of one
   call cannot add up past the deadline, which one `SET` after `BEGIN` could not promise). The commit gets no statement
   timeout (it is reset first): cancelling it would leave the outcome unknown for a transaction that was fine. The
-  pg pool adds `connectionTimeoutMillis = 2 s`. A cancel that fires because the deadline ran out (`55P03` or `57014`
-  with nothing left) is `not_executed`; a lock wait that ends at its own 5 s limit with time left is a real wait
-  on a row another call holds:
+  pg pool has no `connectionTimeoutMillis` of its own, so the other tools queue for a connection as before. A cancel
+  that fires because the deadline ran out (`55P03` or `57014` with nothing left) is `not_executed`, except a lock
+  wait on the **draft**, which is `execution_in_progress` even when the deadline has also run out: another call holds
+  the draft. A lock wait on the account that ends at its own 5 s limit with time left is a real wait on a row
+  another call holds:
   - on the **draft**: `execution_in_progress` ("La transferencia se está procesando. Esperá unos segundos y confirmá
     de nuevo con tu PIN.");
   - on the **source account's row**: `account_busy` ("La cuenta de origen está ocupada con otra operación. Esperá unos
     segundos y confirmá de nuevo con tu PIN."), which comes after the token insert and rolls it back, so the token
-    stays unspent.
+    stays unspent. Nothing is in flight for the draft, so it stays open and the bot does not hold it.
   Both fail closed and confirming again is safe: a finished execution answers with its receipt.
 - **`not_executed`: every path where nothing ran.** The deadline spent before the transaction, a pool that gives no
   connection in time (or fails to give one: nothing was sent), the deadline running out before or during a statement
@@ -113,7 +117,7 @@ time. F72 recorded that as a stopgap.
   ("every code but these keeps it open", not the reverse) because a closed draft whose money may have moved sends the
   customer to prepare a payment twice, while an open one at worst raises one more PIN card, and the single-use
   step-up token is still required for every execution. Asking again raises a new interrupt, and the approval carries a
-  fresh step-up token from the app; the bot never resends a spent one. After `execution_in_progress`, `account_busy`,
+  fresh step-up token from the app; the bot never resends a spent one. After `execution_in_progress`,
   `upstream_error` or `internal_error` the first execution may still hold the lock, so the bot raises no second
   approval for that draft **in the same run** (`held_drafts`, read from the run's messages: `PolicyToolset` refuses
   the model's repeat call as `policy_denied`, which leaves the draft open); the customer confirms again on their next

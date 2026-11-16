@@ -62,7 +62,7 @@ function receiptView(receipt: TransferReceipt) {
     fee: receipt.fee,
     currency: receipt.currency,
     source_account: { id: sourceAccount.id, alias: sourceAccount.alias, number: mask(sourceAccount.number) },
-    beneficiary: publicBeneficiary({ ...beneficiary, currency: receipt.currency }),
+    beneficiary: publicBeneficiary(beneficiary),
   };
 }
 

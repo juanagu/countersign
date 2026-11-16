@@ -40,12 +40,13 @@ customer's denial or cancel, the bank's answer about the draft (`CLOSING_BANK_ER
 `draft_not_pending`, `draft_not_found`, `insufficient_funds`, `not_authorised`), or a result Pydantic AI synthesized for
 a cut-off call. The list names what **closes** a draft (ADR 023); every other error code leaves it open, whoever raised
 it: the bot's `policy_denied` and `service_unavailable`, the gateway's `rate_limited`, `insufficient_scope` and
-`unknown_tool`, `token_already_used` (spent with nothing moved on a pending draft), `execution_in_progress` and
-`account_busy` (another call holds the draft or the account, nothing spent), `not_executed` (nothing ran: the deadline,
+`unknown_tool`, `token_already_used` (spent with nothing moved on a pending draft), `account_busy` (another call
+holds the account, nothing spent, nothing in flight for the draft), `execution_in_progress` (another call holds the
+draft), `not_executed` (nothing ran: the deadline,
 a connection or the step-up check), `upstream_error` and `internal_error` (the outcome is unknown and a fresh confirmation is answered from the
 record), a code not invented yet, and a failed result with no readable code. The draft stays open, so asking again
 raises a new interrupt and the approval sends a fresh step-up token, never the spent one. After `execution_in_progress`,
-`account_busy`, `upstream_error` and `internal_error` the first execution may still be running, so `PolicyToolset`
+`upstream_error` and `internal_error` the first execution may still be running, so `PolicyToolset`
 refuses a repeat `execute_transfer` for that draft inside the same run (`held_drafts`, `HOLDING_ERRORS`, read from the
 messages of the current `run_id`) as a `policy_denied`; the customer confirms again on their next message. Two
 `execute_transfer` calls for one draft in the same model response are checked before either has a result, so only the
