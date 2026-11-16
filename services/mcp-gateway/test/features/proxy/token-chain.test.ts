@@ -1,6 +1,6 @@
 import { decodeJwt } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { BOT_SECRET, createStack, GATEWAY_SECRET } from '../../support/stack.js';
+import { BOT_SECRET, createStack, GATEWAY_SECRET, SESSION_ID } from '../../support/stack.js';
 
 describe('the delegation chain at every hop (ADR 017)', () => {
   it('backends see act {mcp-gateway, act {bot}} on the token the gateway exchanged', async () => {
@@ -22,6 +22,7 @@ describe('the delegation chain at every hop (ADR 017)', () => {
       async (audience) => {
         const stack = await createStack();
         const direct = await stack.issuer.issueExchanged({
+          sid: SESSION_ID,
           sub: 'juan',
           audience,
           scopes: ['accounts:read', 'beneficiaries:read', 'transfers:prepare', 'transfers:execute'],
@@ -54,7 +55,7 @@ describe('the delegation chain at every hop (ADR 017)', () => {
   describe('the IdP refuses', () => {
     it.each(['mcp-accounts', 'mcp-payments'])('client bot asking for aud=%s directly', async (audience) => {
       const stack = await createStack();
-      const subject = await stack.issuer.issueBotToken({ sub: 'juan', name: 'Juan' });
+      const subject = await stack.issuer.issueBotToken({ sub: 'juan', sid: SESSION_ID });
       await expect(stack.exchangeAs('bot', BOT_SECRET, subject, audience)).rejects.toThrow(/invalid_target/);
     });
   });
@@ -63,6 +64,7 @@ describe('the delegation chain at every hop (ADR 017)', () => {
     it('a token exchanged for a backend audience instead of the gateway', async () => {
       const stack = await createStack();
       const backendToken = await stack.issuer.issueExchanged({
+        sid: SESSION_ID,
         sub: 'juan',
         audience: 'mcp-accounts',
         scopes: ['accounts:read'],
@@ -74,12 +76,13 @@ describe('the delegation chain at every hop (ADR 017)', () => {
 
     it('the bot token itself (aud=bot)', async () => {
       const stack = await createStack();
-      await expect(stack.connect(await stack.issuer.issueBotToken({ sub: 'juan', name: 'Juan' }))).rejects.toThrow();
+      await expect(stack.connect(await stack.issuer.issueBotToken({ sub: 'juan', sid: SESSION_ID }))).rejects.toThrow();
     });
 
     it('a gateway-audience token whose actor chain is not exactly [bot]', async () => {
       const stack = await createStack();
       const chained = await stack.issuer.issueExchanged({
+        sid: SESSION_ID,
         sub: 'juan',
         audience: 'mcp-gateway',
         scopes: ['accounts:read'],
@@ -91,7 +94,7 @@ describe('the delegation chain at every hop (ADR 017)', () => {
 
     it('a session token (aud=bff)', async () => {
       const stack = await createStack();
-      const session = await stack.issuer.issueSession({ id: 'juan', name: 'Juan' });
+      const { token: session } = await stack.issuer.issueSession({ id: 'juan', name: 'Juan' });
       await expect(stack.connect(session)).rejects.toThrow();
     });
 

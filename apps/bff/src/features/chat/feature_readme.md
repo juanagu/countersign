@@ -6,8 +6,8 @@ replays the thread instead of losing it (ADR 015).
 
 ## Exposed interface
 
-- `chatRoutes({ issuer, botAgentUrl, threadLog, logger })`: the runtime under `/copilotkit/*`, behind
-  `requireSession`, with no CORS headers. `identifyUser` scopes each thread to the session's user. Any path
+- `chatRoutes({ issuer, revocations, cookieSecure, botAgentUrl, threadLog, logger })`: the runtime under `/copilotkit/*`, behind
+  `requireSession` (which refuses a logged-out `sid` and slides the session cookie onto a successful streamed response, ADR 024; the agents factory and `identifyUser` reuse the session it verified), with no CORS headers. `identifyUser` scopes each thread to the session's user. Any path
   ending in `cpk-debug-events` (CopilotKit's cross-thread event feed) answers 404.
 - Agent id: `default`.
 - `runner/`: `DurableAgentRunner` (the runtime's `AgentRunner`), the `ThreadLog` port with
@@ -25,6 +25,9 @@ replays the thread instead of losing it (ADR 015).
 - `POST /copilotkit/agent/default/connect` → another user's thread gives nothing. Otherwise every logged
   event is replayed, then live events are followed from the last replayed `seq` until the run ends. With
   no events left (the 15-minute window passed), the bot's history for this user comes back as one
-  `MESSAGES_SNAPSHOT` (`GET /threads/{id}/messages`, token minted for the owner).
+  `MESSAGES_SNAPSHOT` (`GET /threads/{id}/messages`, token minted for the owner in the caller's session: it is
+  built from the connect request's `Authorization` header, the per-request bot token the agents factory set, which the
+  runtime keeps over a client-supplied one; `BotThreadHistory` verifies it, its `sub` must be the owner, and the
+  restore token never outlives it; otherwise no history, and a missing header is logged at error).
 - Lease: a run renews it every 5 s (15 s TTL). A run whose lease lapsed without a terminal event is closed
   with a `RUN_ERROR` on replay, and in the log before the thread's next run.

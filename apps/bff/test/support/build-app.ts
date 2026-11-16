@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { pino } from 'pino';
 import { createApp, type AppDeps } from '../../src/app.js';
+import { MemoryRevocationStore } from './memory-revocation-store.js';
 import { TokenIssuer } from '../../src/features/idp/token-issuer.js';
 import { MemoryThreadLog } from './memory-thread-log.js';
 
@@ -9,6 +11,11 @@ export const TEST_GATEWAY_SECRET = 'test-gateway-secret-0123456789';
 
 export const silentLogger = pino({ level: 'silent' });
 
+/** The identity fields every token minted from a session carries; a fresh random `sid` each call. */
+export function testSession(sub = 'ana'): { sub: string; sid: string } {
+  return { sub, sid: `sid-${randomUUID()}` };
+}
+
 /** App dependencies for tests: an in-memory thread log and a silent logger unless overridden. */
 export function testDeps(issuer: TokenIssuer, overrides: Partial<AppDeps> = {}): AppDeps {
   return {
@@ -17,6 +24,7 @@ export function testDeps(issuer: TokenIssuer, overrides: Partial<AppDeps> = {}):
     cookieSecure: false,
     clients: { bot: TEST_BOT_SECRET, 'mcp-gateway': TEST_GATEWAY_SECRET },
     stepUpPin: '123456',
+    revocations: new MemoryRevocationStore(),
     threadLog: new MemoryThreadLog(),
     logger: silentLogger,
     ...overrides,

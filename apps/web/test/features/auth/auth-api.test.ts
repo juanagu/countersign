@@ -15,6 +15,11 @@ describe('auth-api', () => {
     expect(await fetchSession()).toBeNull();
   });
 
+  it('rejects, instead of reporting no session, when the BFF cannot check it (503): only a 401 signs out', async () => {
+    stubFetch(503, { error: 'session_check_unavailable' });
+    await expect(fetchSession()).rejects.toThrow('503');
+  });
+
   it('returns the session user', async () => {
     stubFetch(200, { id: 'ana', name: 'Ana Gómez' });
     expect(await fetchSession()).toEqual({ id: 'ana', name: 'Ana Gómez' });

@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { pino } from 'pino';
 import { tokenExchangeRoutes } from '../../../../apps/bff/src/features/idp/token-exchange.js';
 import { TokenIssuer } from '../../../../apps/bff/src/features/idp/token-issuer.js';
+import { MemoryRevocationStore } from '../../../../apps/bff/test/support/memory-revocation-store.js';
 import {
   ALLOWED_ACTOR_CHAINS as ACCOUNTS_CHAINS,
   createApp as createAccountsApp,
@@ -24,6 +25,8 @@ import { createProxy, type ProxyOptions } from '../../src/features/proxy/proxy.j
 import { createTokenExchanger } from '../../src/features/proxy/token-exchanger.js';
 
 export const ISSUER = 'http://idp.test';
+/** The gateway never reads `sid`; the tokens it sees carry one, as the IdP always issues them. */
+export const SESSION_ID = 'sid-gateway-tests';
 export const BOT_SECRET = 'test-bot-secret-0123456789';
 export const GATEWAY_SECRET = 'test-gateway-secret-0123456789';
 
@@ -67,6 +70,7 @@ export async function createStack(options: StackOptions = {}) {
     tokenExchangeRoutes({
       issuer,
       clients: { bot: BOT_SECRET, 'mcp-gateway': GATEWAY_SECRET },
+      revocations: new MemoryRevocationStore(),
       logger: pino({ level: 'silent' }),
     }),
   );
@@ -131,7 +135,7 @@ export async function createStack(options: StackOptions = {}) {
    * what a run that loaded accounts and payments holds; the IdP refuses the bot a request with no scope.
    */
   async function gatewayToken(sub: string, scope = PRE_APPROVAL_SCOPES): Promise<string> {
-    return exchangeAs('bot', BOT_SECRET, await issuer.issueBotToken({ sub, name: sub }), AUDIENCE, scope);
+    return exchangeAs('bot', BOT_SECRET, await issuer.issueBotToken({ sub, sid: SESSION_ID }), AUDIENCE, scope);
   }
 
   async function exchangeAs(client: string, secret: string, subject: string, audience: string, scope?: string) {

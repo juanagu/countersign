@@ -3,7 +3,7 @@ import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { TokenIssuer } from '../../../src/features/idp/token-issuer.js';
-import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER, testDeps } from '../../support/build-app.js';
+import { buildTestApp, TEST_BOT_SECRET, TEST_ISSUER, testDeps, testSession } from '../../support/build-app.js';
 
 const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS = 'urn:ietf:params:oauth:token-type:access_token';
@@ -14,7 +14,7 @@ const basic = (id: string, secret: string) => `Basic ${Buffer.from(`${id}:${secr
 // The bot must always send a scope, so the helper does by default; `scope: undefined` leaves it out.
 async function exchange(fields: Record<string, string | undefined>, authorization = basic('bot', TEST_BOT_SECRET)) {
   const { app, issuer } = await buildTestApp();
-  const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+  const botToken = await issuer.issueBotToken(testSession());
   const body = new URLSearchParams(
     Object.entries({
       grant_type: GRANT,
@@ -63,7 +63,7 @@ describe('POST /token (token exchange)', () => {
 
   it('refuses a scope parameter that is repeated (RFC 6749 §3.1)', async () => {
     const { app, issuer } = await buildTestApp();
-    const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+    const botToken = await issuer.issueBotToken(testSession());
     const form = new URLSearchParams({ grant_type: GRANT, subject_token: botToken, subject_token_type: ACCESS });
     form.append('audience', 'mcp-gateway');
     form.append('scope', 'accounts:read');
@@ -82,7 +82,7 @@ describe('POST /token (token exchange)', () => {
       const lines: Record<string, unknown>[] = [];
       const logger = pino({ level: 'info' }, { write: (line: string) => lines.push(JSON.parse(line)) });
       const { app, issuer } = await buildTestApp(undefined, { logger });
-      const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+      const botToken = await issuer.issueBotToken(testSession());
       const res = await app.request('/token', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
@@ -153,7 +153,7 @@ describe('POST /token (token exchange)', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       const issuedAt = Math.floor(Date.now() / 1000);
       vi.setSystemTime(issuedAt * 1000);
-      const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+      const botToken = await issuer.issueBotToken(testSession());
       vi.setSystemTime((issuedAt + 300 - remaining) * 1000);
       return app.request('/token', {
         method: 'POST',
@@ -183,7 +183,7 @@ describe('POST /token (token exchange)', () => {
 
   it('rejects a session token (aud=bff) as subject: only the bot token can be exchanged', async () => {
     const { app, issuer } = await buildTestApp();
-    const session = await issuer.issueSession({ id: 'ana', name: 'Ana Gómez' });
+    const session = await issuer.issueSession({ id: 'ana', name: 'Ana' }).then((session) => session.token);
     const res = await app.request('/token', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('bot', TEST_BOT_SECRET) },
@@ -219,7 +219,7 @@ describe('POST /token (token exchange)', () => {
         headers: { 'content-type': 'application/x-www-form-urlencoded', authorization },
         body: new URLSearchParams({
           grant_type: GRANT,
-          subject_token: await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' }),
+          subject_token: await issuer.issueBotToken(testSession()),
           subject_token_type: ACCESS,
           audience: 'mcp-gateway',
           scope: PRE_APPROVAL,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createStack, parseText } from '../../support/stack.js';
+import { createStack, parseText, SESSION_ID } from '../../support/stack.js';
 
 describe('gateway in front of the real mcp-accounts and mcp-payments', () => {
   it('lists every backend tool unprefixed, with schemas and the risk tier passed through', async () => {
@@ -35,13 +35,16 @@ describe('gateway in front of the real mcp-accounts and mcp-payments', () => {
         },
       }),
     );
-    const stepUp = await stack.issuer.issueStepUp('juan', {
-      type: 'transfer',
-      draft_id: draft.draft_id as string,
-      amount: '50000.00',
-      currency: 'ARS',
-      beneficiary_id: 'ben-juan-ana',
-    });
+    const stepUp = await stack.issuer.issueStepUp(
+      { sub: 'juan', sid: SESSION_ID },
+      {
+        type: 'transfer',
+        draft_id: draft.draft_id as string,
+        amount: '50000.00',
+        currency: 'ARS',
+        beneficiary_id: 'ben-juan-ana',
+      },
+    );
 
     // The approved call holds a token with transfers:execute alone.
     const approved = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'));
@@ -69,13 +72,16 @@ describe('gateway in front of the real mcp-accounts and mcp-payments', () => {
         arguments: { source_account_id: 'acc-juan-ars', beneficiary_id: 'ben-juan-ana', amount: 100, currency: 'ARS' },
       }),
     );
-    const stepUp = await stack.issuer.issueStepUp('juan', {
-      type: 'transfer',
-      draft_id: draft.draft_id as string,
-      amount: '100.00',
-      currency: 'ARS',
-      beneficiary_id: 'ben-juan-ana',
-    });
+    const stepUp = await stack.issuer.issueStepUp(
+      { sub: 'juan', sid: SESSION_ID },
+      {
+        type: 'transfer',
+        draft_id: draft.draft_id as string,
+        amount: '100.00',
+        currency: 'ARS',
+        beneficiary_id: 'ben-juan-ana',
+      },
+    );
     const args = { draft_id: draft.draft_id, step_up_token: stepUp };
     const approved = await stack.connect(await stack.gatewayToken('juan', 'transfers:execute'));
     await approved.callTool({ name: 'execute_transfer', arguments: args });

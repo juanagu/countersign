@@ -6,14 +6,31 @@ Keys are ES256, generated per process (a restart ends every session and rotates 
 ## Exposed interface
 
 - Routes: `GET /.well-known/jwks.json`, `GET /auth/demo-users`, `POST /auth/login` (`{ username }`),
-  `POST /auth/logout`, `GET /auth/me`.
-- `TokenIssuer`: `issueSession` (`aud=bff`, 30 min), `issueBotToken` (`aud=bot`, 5 min), `verifySession`, `verifyExchangeSubject`, `jwks`.
-- `requireSession` middleware and `readSession` (raw `Request`) from `session.ts`.
+  `POST /auth/logout` (revokes the session's `sid`, up to 5 minutes after the session ended; 204 with or without a
+  session, 503 and the cookie kept if the revocation could not be recorded), `GET /auth/me`. A login that arrives
+  with a session cookie revokes that `sid` first (503 `previous_session_not_revoked` and no new cookie if it cannot).
+- `TokenIssuer`: `issueSession` (`aud=bff`, with `sid` and `auth_time`; a second argument re-issues the same session),
+  `issueBotToken` (`aud=bot`, 5 min or less with `notAfter`, `sid`), `issueStepUp`, `verifySession` (a tolerance argument is for logout and login only), `verifyBotToken`, `verifyExchangeSubject`, `jwks`.
+- `RevocationStore` (`revocation-store.ts`), `RedisRevocationStore` (its client is `createRedisClient(url, { disableOfflineQueue: true })`),
+  and `sessionStanding` / `isRevokedOrUnknown` / `recordRevocation` (`revocation-guard.ts`), the one place a store failure
+  becomes a refusal and a log line. `MemoryRevocationStore` is a test double under `test/support/`.
+- `requireSession(deps)` middleware (503 `session_check_unavailable` when the store cannot answer; it slides the session
+  after a `2xx` response, if the `sid` is still not revoked), and `checkSession` / `readSession(deps, request)` (raw `Request`; answers from the claims already verified for that request) and
+  `bindSession` from `session.ts`; `session-lifetime.ts` holds the 30-minute idle and 8-hour absolute constants.
 
 ## Data flow
 
 Login sets the `session` cookie (HttpOnly, SameSite=Strict) holding the `aud=bff` JWT. Each chat run
 re-verifies it and mints a fresh `aud=bot` token; the session token never leaves the BFF.
+
+Session (ADR 024): the JWT carries `sid` (random, opaque) and `auth_time`. `requireSession` verifies it, refuses a
+revoked `sid` with 401 (503 when the store cannot answer), and, with under 15 minutes of the 30 left, re-issues the cookie with the same `sid` and
+`auth_time` and `exp = min(now + 30 min, auth_time + 8 h)` (nothing past the cap). Every token minted from the session
+carries its `sid`, and `POST /token` copies the subject's onto what it issues. Logout writes the `sid` to the denylist
+(`auth:revoked:{sid}`, TTL to the cap plus the 5-minute bot-token tail); `POST /token` answers `invalid_grant` for a
+revoked subject. A session or subject token without a `sid` is refused. If the denylist cannot be read, the session
+check answers 401 and the exchange `invalid_grant` (fail closed), logging `revocation_store_unavailable` without the
+`sid`. The session is verified and checked against the denylist once per request.
 `POST /token` (RFC 8693 exchange, ADRs 008 and 017: each client in `client-policies.ts` presents one kind of
 subject token and may ask for fixed audiences; `bot` → `mcp-gateway` only (it may not ask for a backend directly),
 `mcp-gateway` → the two backends with scopes capped by its subject, and the `act` claim nests, so a

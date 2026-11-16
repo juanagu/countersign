@@ -3,7 +3,7 @@ import { Writable } from 'node:stream';
 import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
 import { RateLimiter } from '../../../src/features/proxy/rate-limiter.js';
-import { createStack, parseText, type Stack } from '../../support/stack.js';
+import { createStack, parseText, SESSION_ID, type Stack } from '../../support/stack.js';
 
 const ACCOUNTS_ONLY = 'accounts:read';
 const BEFORE_APPROVAL = 'accounts:read beneficiaries:read transfers:prepare';
@@ -89,13 +89,16 @@ describe('the gateway lists and calls by token scope', () => {
     const before = await stack.connect(await stack.gatewayToken('juan', BEFORE_APPROVAL));
     expect((await before.listTools()).tools.map((t) => t.name)).toContain('execute_transfer');
     const draft = parseText(await before.callTool({ name: 'prepare_transfer', arguments: ARGS }));
-    const stepUp = await stack.issuer.issueStepUp('juan', {
-      type: 'transfer',
-      draft_id: draft.draft_id as string,
-      amount: '100.00',
-      currency: 'ARS',
-      beneficiary_id: 'ben-juan-ana',
-    });
+    const stepUp = await stack.issuer.issueStepUp(
+      { sub: 'juan', sid: SESSION_ID },
+      {
+        type: 'transfer',
+        draft_id: draft.draft_id as string,
+        amount: '100.00',
+        currency: 'ARS',
+        beneficiary_id: 'ben-juan-ana',
+      },
+    );
     const args = { draft_id: draft.draft_id, step_up_token: stepUp };
     stack.seen.length = 0;
 

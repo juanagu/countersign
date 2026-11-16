@@ -2,9 +2,7 @@ import { HttpAgent } from '@ag-ui/client';
 import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime/v2';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import type { Logger } from 'pino';
-import { readSession, requireSession, type SessionEnv } from '../idp/session.js';
-import type { TokenIssuer } from '../idp/token-issuer.js';
+import { bindSession, readSession, requireSession, type SessionDeps, type SessionEnv } from '../idp/session.js';
 import { DurableAgentRunner } from './runner/durable-agent-runner.js';
 import { BotThreadHistory } from './runner/thread-history.js';
 import type { ThreadLog } from './runner/thread-log.js';
@@ -16,12 +14,10 @@ export const AGENT_ID = 'default';
 // that no request can carry an oversized collection.
 export const MAX_RUN_BODY_BYTES = 1024 * 1024;
 
-export interface ChatRoutesOptions {
-  issuer: TokenIssuer;
+export interface ChatRoutesOptions extends SessionDeps {
   botAgentUrl: string;
   /** Where threads live between requests and across BFF restarts (Redis in the stack). */
   threadLog: ThreadLog;
-  logger: Logger;
 }
 
 // CopilotKit serves every thread's events here under NODE_ENV=development, and no runtime option turns that off.
@@ -32,26 +28,27 @@ function isDebugFeed(request: Request): boolean {
   return new URL(request.url).pathname.split('/').filter(Boolean).at(-1) === DEBUG_FEED_SEGMENT;
 }
 
-async function sessionOrThrow(issuer: TokenIssuer, request: Request) {
-  const session = await readSession(issuer, request);
+async function sessionOrThrow(deps: SessionDeps, request: Request) {
+  const session = await readSession(deps, request);
   if (!session) throw new Error('unauthenticated');
   return session;
 }
 
-export function chatRoutes({ issuer, botAgentUrl, threadLog, logger }: ChatRoutesOptions): Hono<SessionEnv> {
-  const history = new BotThreadHistory(issuer, botAgentUrl, logger);
+export function chatRoutes(options: ChatRoutesOptions): Hono<SessionEnv> {
+  const { issuer, botAgentUrl, threadLog, logger } = options;
+  const history = new BotThreadHistory(issuer, options.revocations, botAgentUrl, logger);
   const runtime = new CopilotRuntime({
     runner: new DurableAgentRunner({ log: threadLog, history, logger }),
     // One agent per request, carrying a bot token minted for this user only.
     agents: async ({ request }) => {
-      const botToken = await issuer.issueBotToken(await sessionOrThrow(issuer, request));
+      const botToken = await issuer.issueBotToken(await sessionOrThrow(options, request));
       return {
         [AGENT_ID]: new HttpAgent({ url: botAgentUrl, headers: { Authorization: `Bearer ${botToken}` } }),
       };
     },
     // Without an identity a thread id is a bearer capability; with it, threads belong to their user.
     identifyUser: async (request) => {
-      const { sub, name } = await sessionOrThrow(issuer, request);
+      const { sub, name } = await sessionOrThrow(options, request);
       return { id: sub, name };
     },
   });
@@ -60,8 +57,13 @@ export function chatRoutes({ issuer, botAgentUrl, threadLog, logger }: ChatRoute
 
   const app = new Hono<SessionEnv>();
   app.use(`${COPILOT_BASE_PATH}/*`, async (c, next) => (isDebugFeed(c.req.raw) ? c.notFound() : next()));
-  app.use(`${COPILOT_BASE_PATH}/*`, requireSession(issuer));
+  app.use(`${COPILOT_BASE_PATH}/*`, requireSession(options));
   app.use(`${COPILOT_BASE_PATH}/*`, bodyLimit({ maxSize: MAX_RUN_BODY_BYTES }));
-  app.all(`${COPILOT_BASE_PATH}/*`, (c) => handler(c.req.raw));
+  app.all(`${COPILOT_BASE_PATH}/*`, (c) => {
+    // bodyLimit swaps in a new Request, and the runtime's callbacks see the one passed here: bind the verified
+    // session to it so they reuse it instead of checking again.
+    bindSession(c.req.raw, c.get('session'));
+    return handler(c.req.raw);
+  });
   return app;
 }

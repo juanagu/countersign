@@ -1,6 +1,12 @@
 import { createLocalJWKSet, decodeJwt, jwtVerify } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildTestApp, TEST_BOT_SECRET, TEST_GATEWAY_SECRET, TEST_ISSUER } from '../../support/build-app.js';
+import {
+  buildTestApp,
+  TEST_BOT_SECRET,
+  TEST_GATEWAY_SECRET,
+  TEST_ISSUER,
+  testSession,
+} from '../../support/build-app.js';
 
 const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS = 'urn:ietf:params:oauth:token-type:access_token';
@@ -27,7 +33,7 @@ async function post(env: Env, authorization: string, subject_token: string, audi
 }
 
 async function botToken(env: Env, sub = 'ana') {
-  return env.issuer.issueBotToken({ sub, name: 'Ana' });
+  return env.issuer.issueBotToken(testSession(sub));
 }
 
 async function gatewayToken(env: Env, scope = PRE_APPROVAL) {
@@ -179,7 +185,7 @@ describe('MCP gateway hop of the token exchange (ADR 017)', () => {
 
     it('does not let the gateway exchange a session token', async () => {
       const env = await buildTestApp();
-      const session = await env.issuer.issueSession({ id: 'ana', name: 'Ana' });
+      const session = await env.issuer.issueSession({ id: 'ana', name: 'Ana' }).then((session) => session.token);
       const { body } = await post(env, GATEWAY, session, 'mcp-accounts');
       expect(body).toEqual({ error: 'invalid_grant' });
     });
