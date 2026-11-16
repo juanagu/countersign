@@ -10,7 +10,7 @@ import asyncio
 import os
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -48,7 +48,16 @@ from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall, trace_gap_verd
 from evals.cuj_spans import Trial, emit_trials
 from evals.cuj_user import Reply, Turn, is_end, simulated_user
 from evals.delegation import CONFIRM_TEMPLATE
-from evals.live import STEP_UP_PIN, DiscardedAttempt, LiveInput, LiveOutput, Meta, attach_delegated
+from evals.live import (
+    OUT_OF_TURNS,
+    STEP_UP_PIN,
+    DiscardedAttempt,
+    LiveInput,
+    LiveOutput,
+    Meta,
+    Note,
+    attach_delegated,
+)
 from evals.live_evaluators import Contains
 from evals.run import print_gates
 from evals.scenario_evaluators import NoRunErrors
@@ -95,7 +104,7 @@ class Journey:
     """What a played journey left behind."""
 
     traces: list[RunTrace]
-    notes: list[str]
+    notes: list[Note]
     turns: int
 
 
@@ -111,16 +120,23 @@ def _interrupted_draft(trace: RunTrace, interrupt: dict[str, Any]) -> str | None
     return str(draft) if draft else None
 
 
-def _confirm_card(trace: RunTrace, interrupt: dict[str, Any]) -> dict[str, Any] | None:
+def _confirm_card(history: Sequence[RunTrace], trace: RunTrace, interrupt: dict[str, Any]) -> dict[str, Any] | None:
+    """The interrupted draft's confirm card, looked up in every run of the session: the customer may have seen it a
+    turn before the one that paused ("¿confirmás?" then "sí")."""
     draft = _interrupted_draft(trace, interrupt)
-    cards = [c for c in trace.cards if c.get("template") == CONFIRM_TEMPLATE and c["data"]["draftId"] == draft]
+    cards = [
+        c for t in history for c in t.cards if c.get("template") == CONFIRM_TEMPLATE and c["data"]["draftId"] == draft
+    ]
     return cards[-1] if cards else None
 
 
-async def answer_interrupt(session: BffSession, trace: RunTrace, action: str) -> tuple[RunTrace | None, str]:
-    """Answers the run's pending approval as the customer's app would. Returns the resume's trace, or a note."""
+async def answer_interrupt(
+    session: BffSession, history: Sequence[RunTrace], trace: RunTrace, action: str
+) -> tuple[RunTrace | None, str]:
+    """Answers the run's pending approval as the customer's app would; `history` is every run so far, the paused one
+    last. Returns the resume's trace, or a note."""
     interrupt = trace.interrupts[0]
-    card = _confirm_card(trace, interrupt)
+    card = _confirm_card([*history, trace], trace, interrupt)
     if card is None:
         return None, f"no confirm card for the interrupted draft {_interrupted_draft(trace, interrupt)!r}"
     if action == "cancel":
@@ -136,14 +152,16 @@ async def answer_interrupt(session: BffSession, trace: RunTrace, action: str) ->
     return await session.resume(interrupt, {"approved": True, "editedArgs": edited}), ""
 
 
-async def follow_policy(session: BffSession, scenario: Scenario, paused: RunTrace, notes: list[str]) -> list[RunTrace]:
+async def follow_policy(
+    session: BffSession, scenario: Scenario, history: Sequence[RunTrace], paused: RunTrace, notes: list[Note]
+) -> list[RunTrace]:
     """The resume that answers a run's approval, per the scenario's `on_interrupt`; none when it has no policy."""
     action = scenario.on_interrupt.get(CONFIRM_TEMPLATE)
     if action is None:
-        notes.append("an interrupt the scenario has no on_interrupt policy for")
+        notes.append(Note("an interrupt the scenario has no on_interrupt policy for"))
         return []
-    resumed, note = await answer_interrupt(session, paused, action)
-    notes += [note] if note else []
+    resumed, note = await answer_interrupt(session, history, paused, action)
+    notes += [Note(note)] if note else []
     return [resumed] if resumed else []
 
 
@@ -152,7 +170,7 @@ async def play(session: BffSession, scenario: Scenario, reply: Reply | None) -> 
 
     Only the first approval follows the policy; a later one (a re-prepared draft) is left pending."""
     traces: list[RunTrace] = []
-    notes: list[str] = []
+    notes: list[Note] = []
     conversation: list[Turn] = []
     scripted = iter(scenario.then)
     message: str | None = scenario.opening
@@ -163,12 +181,12 @@ async def play(session: BffSession, scenario: Scenario, reply: Reply | None) -> 
         runs = [await session.say(message)]
         if runs[0].interrupted and not answered:
             answered = True
-            runs += await follow_policy(session, scenario, runs[0], notes)
+            runs += await follow_policy(session, scenario, traces, runs[0], notes)
         traces += runs
         conversation += [Turn("Cliente", message), Turn("Asistente", " ".join(t.text for t in runs if t.text))]
         message = await _next_message(scenario, scripted, reply, conversation)
     if message is not None:
-        notes.append(f"ran out of turns ({scenario.max_turns}) before the plan ended")
+        notes.append(Note(f"ran out of turns ({scenario.max_turns}) before the plan ended", OUT_OF_TURNS))
     return Journey(traces, notes, turns)
 
 
@@ -241,6 +259,22 @@ async def run_scenario(
     return results
 
 
+def _trial_span(r: TrialResult) -> Trial:
+    discarded = tuple(a.thread_id for a in r.discarded)
+    return Trial(
+        cuj_id=r.cuj_id,
+        trial=r.trial,
+        passed=r.passed,
+        turns=r.turns,
+        driver=r.driver,
+        thread_id=r.thread_id,
+        policy_refused=r.policy_refused,
+        start_ns=r.start_ns,
+        end_ns=r.end_ns,
+        discarded_threads=discarded,
+    )
+
+
 async def main(out: Path | None, only: str | None, trials: int | None) -> int:
     thresholds = load_thresholds()
     scenarios = [s for s in load_scenarios() if not only or only in s.id]
@@ -256,13 +290,7 @@ async def main(out: Path | None, only: str | None, trials: int | None) -> int:
     for scenario in scenarios:
         results += await run_scenario(scenario, trials or scenario.trials, reply, starting)
     print_results(results)
-    emit_trials(
-        [
-            Trial(r.cuj_id, r.trial, r.passed, r.turns, r.driver, r.thread_id, r.policy_refused, r.start_ns, r.end_ns)
-            for r in results
-        ],
-        os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
-    )
+    emit_trials([_trial_span(r) for r in results], os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"))
     gates = cuj_gates(results, thresholds)
     print_gates(gates)
     bill = token_bill(results, since)

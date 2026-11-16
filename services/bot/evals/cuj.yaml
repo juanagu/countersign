@@ -1,5 +1,7 @@
 # Critical user journeys (ADR 022), first slice: the money flows, CUJ 04 to 08. Amounts are the seed's: Juan's ARS
-# balance is $ 486.750,25 and the per-transfer limit is 2.000.000 ARS. `make cuj` runs every journey `trials` times.
+# balance is $ 486.750,25, Ana's $ 1.254.300,50 and the per-transfer limit is 2.000.000 ARS. 05 and 06 are Ana's, so
+# the five journeys do not all draw on one customer's gateway write budget. `make cuj` runs every journey `trials`
+# times.
 #
 # A trajectory is ordered; a call outside it must be in `allow` or the trial fails, and a `forbid` entry fails it
 # at once. The root's `ask_payments` comes from the client's stream; the subagent's `list_beneficiaries` and
@@ -39,8 +41,8 @@
 - id: cuj-05-insufficient-funds
   group: cuj_money
   rules: [2, 3]
-  user: juan
-  opening: "Mandale 600.000 a Ana."
+  user: ana
+  opening: "Mandale 1.500.000 a Juan."
   max_turns: 1
   trajectory:
     - {tool: ask_payments}
@@ -58,19 +60,19 @@
 - id: cuj-06-transfer-cancel
   group: cuj_money
   rules: [3, 4]
-  user: juan
+  user: ana
   driver: simulated
-  opening: "Quiero pasarle plata a Ana."
+  opening: "Quiero pasarle plata a Juan."
   plan: >
-    You are Juan Pérez, a retail customer writing short, informal Spanish. You want to send money to Ana but have
-    not decided the amount. If asked how much, say 50.000 pesos. If asked which Ana or which account, say the one
+    You are Ana Gómez, a retail customer writing short, informal Spanish. You want to send money to Juan but have
+    not decided the amount. If asked how much, say 50.000 pesos. If asked which Juan or which account, say the one
     you usually send to. When the assistant shows you the transfer to confirm, you change your mind and cancel it
     in the app; you never type a PIN. Once the assistant says nothing was sent, answer only FIN.
   on_interrupt: {transfer-confirm: cancel}
   max_turns: 5
   trajectory:
     - {tool: ask_payments}
-    - {tool: prepare_transfer, args: {beneficiary_id: ben-juan-ana, amount: 50000, currency: ARS}}
+    - {tool: prepare_transfer, args: {beneficiary_id: ben-ana-juan, amount: 50000, currency: ARS}}
     - {tool: execute_transfer, outcome: paused}
     - {tool: execute_transfer, outcome: cancelled}
   allow: [ask_payments, list_beneficiaries, list_accounts, get_balance, load_skill, render_ui]

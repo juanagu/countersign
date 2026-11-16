@@ -16,6 +16,7 @@ RUN_TIMEOUT_SECONDS = 180.0
 SSE = {"accept": "text/event-stream"}
 A2UI_ACTIVITY = "a2ui-surface"
 TEMPLATE_ACTIVITY = "bank-template"
+RESTORE_RUN_PREFIX = "restore-"  # The BFF thread-replay snapshot's run ids, which are no bot run.
 
 Event = dict[str, Any]
 StopWhen = Callable[[list[Event]], bool]
@@ -77,6 +78,13 @@ class RunTrace:
     @property
     def interrupts(self) -> list[dict[str, Any]]:
         return [i for e in self.of("RUN_FINISHED") for i in (e.get("outcome") or {}).get("interrupts") or []]
+
+    @property
+    def run_id(self) -> str | None:
+        """The id the bot gave the run, as its `RUN_STARTED` event carries it. The BFF's `restore-<uuid>` snapshot
+        opens with a `RUN_STARTED` of its own, which is no bot run."""
+        ids = (str(e["runId"]) for e in self.of("RUN_STARTED") if e.get("runId"))
+        return next((i for i in ids if not i.startswith(RESTORE_RUN_PREFIX)), None)
 
     @property
     def interrupted(self) -> bool:

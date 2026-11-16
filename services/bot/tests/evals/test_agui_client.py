@@ -9,7 +9,7 @@ import httpx
 import psycopg
 import pytest
 
-from evals.agui_client import BffSession
+from evals.agui_client import BffSession, RunTrace
 from evals.bank_db import database_url, expire_draft
 
 CARD = {"data": {"draftId": "drf_x", "amount": "50000.00", "currency": "ARS", "beneficiaryId": "ben-juan-ana"}}
@@ -113,3 +113,15 @@ async def test_a_step_up_answer_that_is_not_a_token_comes_back_as_an_attempt_wit
     assert (attempt.status, attempt.token) == (response.status_code, None)
     assert attempt.note if response.is_success else True
     assert session.step_up_statuses == [response.status_code]
+
+
+def test_the_run_id_skips_the_bff_restore_snapshot() -> None:
+    trace = RunTrace(
+        [
+            {"type": "RUN_STARTED", "runId": "restore-0b1c"},
+            {"type": "RUN_STARTED", "runId": "bot-run-1"},
+        ]
+    )
+
+    assert trace.run_id == "bot-run-1"
+    assert RunTrace([{"type": "RUN_STARTED", "runId": "restore-0b1c"}]).run_id is None
