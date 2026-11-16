@@ -18,6 +18,7 @@ from evals.metrics import Span, spans
 TOOL_NAME = "gen_ai.tool.name"
 MCP_METHOD = "mcp.method.name"  # Set on the MCP transport's own span, which repeats the tool's `execute_tool` span.
 EXPORT_WAIT_SECONDS = 30.0  # The bot's BatchSpanProcessor exports every few seconds.
+LATE_EXPORT_WAIT_SECONDS = 60.0  # One longer final wait before a missing run is called missing: it may only be late.
 POLL_SECONDS = 2.0
 UNKNOWN_ERROR = "unknown"
 CONFIRM_TEMPLATE = "transfer-confirm"
@@ -102,10 +103,10 @@ class Delegated:
 
 async def read_delegated(thread_id: str, since: datetime, cards: Sequence[dict[str, Any]], runs: int) -> Delegated:
     """The thread's delegated calls since `since`: from all of its `runs` runs once they reached Phoenix (a span is
-    exported at its run's end, children first), else from the traces that did arrive when the wait ran out, with a
+    exported at its run's end, children first), else from the traces that did arrive when the waits ran out, with a
     note naming how many are missing."""
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + EXPORT_WAIT_SECONDS
+    deadline = loop.time() + EXPORT_WAIT_SECONDS + LATE_EXPORT_WAIT_SECONDS
     while True:
         streams = await asyncio.to_thread(lambda: list(spans(since, name="bot.stream")))
         traces = {

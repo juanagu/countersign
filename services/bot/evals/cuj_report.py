@@ -31,6 +31,7 @@ class TrialResult:
     calls: list[str]
     driver: str
     attempts: int
+    policy_refused: int
     start_ns: int
     end_ns: int
     discarded: list[DiscardedAttempt] = field(default_factory=list)
@@ -53,6 +54,7 @@ def trial_result(case: ReportCase[LiveInput, LiveOutput, Meta], trial: int) -> T
         calls=[f"{c.name}:{c.outcome}" for c in case.output.calls],
         driver=meta.get("driver", ""),
         attempts=case.output.attempts,
+        policy_refused=case.output.policy_refused,
         start_ns=case.output.start_ns,
         end_ns=case.output.end_ns,
         discarded=case.output.discarded,
@@ -62,7 +64,21 @@ def trial_result(case: ReportCase[LiveInput, LiveOutput, Meta], trial: int) -> T
 def error_result(scenario: Scenario, trial: int, message: str) -> TrialResult:
     now = time.time_ns()
     return TrialResult(
-        scenario.id, scenario.group, trial, False, {"task": message}, 0.0, 0, "", "", [], scenario.driver, 1, now, now
+        scenario.id,
+        scenario.group,
+        trial,
+        False,
+        {"task": message},
+        0.0,
+        0,
+        "",
+        "",
+        [],
+        scenario.driver,
+        1,
+        0,
+        now,
+        now,
     )
 
 
@@ -102,7 +118,10 @@ def print_results(results: list[TrialResult]) -> None:
     for r in results:
         mark = "PASS" if r.passed else "FAIL"
         retried = f", {r.attempts} attempts" if r.attempts > 1 else ""
-        print(f"{mark} {r.cuj_id} trial {r.trial} ({r.seconds}s, {r.turns} turns{retried}) calls: {r.calls}")
+        print(
+            f"{mark} {r.cuj_id} trial {r.trial} ({r.seconds}s, {r.turns} turns{retried}, "
+            f"{r.policy_refused} policy-refused) calls: {r.calls}"
+        )
         for attempt in r.discarded:
             print(f"     discarded attempt: {attempt.verdict}; calls: {attempt.calls}")
         for name, reason in r.failed.items():

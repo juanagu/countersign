@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from evals.calls import ObservedCall
 from evals.cuj import Scenario
-from evals.cuj_evaluators import MISSING, UNEXPECTED, Problem, trajectory_problems
+from evals.cuj_evaluators import MISSING, UNEXPECTED, Problem, trajectory_problems, visible_problems
 from evals.live import LiveOutput
 
 # The gateway allows each customer 20 reversible writes per 10 minutes (ADR 017), and every trial prepares at least
@@ -64,3 +64,14 @@ def _is_stall_effect(problem: Problem, refusals: list[ObservedCall], named: set[
 def _wait_seconds(refusals: list[ObservedCall]) -> float:
     named = [c.retry_after_seconds for c in refusals if c.retry_after_seconds is not None]
     return min(float(max(named)), RATE_LIMIT_WINDOW_SECONDS) if named else RATE_LIMIT_WAIT_SECONDS
+
+
+def trace_gap_verdict(scenario: Scenario, output: LiveOutput) -> str | None:
+    """An attempt whose spans did not all reach Phoenix, with nothing wrong in what is visible, is inconclusive: an
+    export delay is not a bot verdict. Any run error, or any forbidden, unexpected or wrong call seen (in the chat
+    stream or in the traces that did arrive) fails the trial at once, so it is not rerun."""
+    if not output.trace_gap or output.errors or output.notes:
+        return None
+    if visible_problems(output.calls, scenario.trajectory, scenario.allow, scenario.forbid):
+        return None
+    return f"inconclusive: {output.trace_gap}"

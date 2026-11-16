@@ -134,8 +134,8 @@ def test_each_journey_reports_its_pass_rate_turns_and_the_tokens_of_its_threads(
     rows = cuj_rows(trials, {"a": 90_000.0, "b": 100_000.0, "c": 40_000.0})
 
     assert rows == [
-        "  cuj-04                           2 trials  pass  50%  turns p50 3  tokens p50 90,000",
-        "  cuj-05                           1 trials  pass 100%  turns p50 1  tokens p50 40,000",
+        "  cuj-04                           2 trials  pass  50%  turns p50 3  tokens p50 90,000  policy-refused 0",
+        "  cuj-05                           1 trials  pass 100%  turns p50 1  tokens p50 40,000  policy-refused 0",
     ]
 
 
@@ -143,4 +143,6 @@ def test_a_journey_without_a_thread_in_phoenix_counts_zero_tokens() -> None:
     attributes = {"cuj.id": "cuj-04", "cuj.passed": True, "cuj.turns": 2, "cuj.thread_id": "gone"}
     trials = [{"name": "cuj.trial", "context": {"trace_id": "x"}, "attributes": attributes}]
 
-    assert cuj_rows(trials, {}) == ["  cuj-04                           1 trials  pass 100%  turns p50 2  tokens p50 0"]
+    assert cuj_rows(trials, {}) == [
+        "  cuj-04                           1 trials  pass 100%  turns p50 2  tokens p50 0  policy-refused 0"
+    ]

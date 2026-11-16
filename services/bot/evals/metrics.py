@@ -105,7 +105,7 @@ def tokens_by_thread(stream_spans: list[Span], model_spans: list[Span]) -> dict[
 
 
 def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[str]:
-    """One line per journey: trials, pass rate, and the median turns and tokens of its trials."""
+    """One line per journey: trials, pass rate, the median turns and tokens, and the total policy-refused attempts."""
     by_cuj: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for span in trial_spans:
         by_cuj[str(span["attributes"].get("cuj.id", UNRECORDED))].append(span["attributes"])
@@ -113,10 +113,11 @@ def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[s
     for cuj_id, trials in sorted(by_cuj.items()):
         passed = sum(bool(t.get("cuj.passed")) for t in trials)
         turns = percentile([float(t.get("cuj.turns") or 0) for t in trials], 0.5)
+        refused = sum(int(t.get("cuj.policy_refused") or 0) for t in trials)
         tokens = percentile([thread_tokens.get(str(t.get("cuj.thread_id")), 0.0) for t in trials], 0.5)
         rows.append(
             f"  {cuj_id:30} {len(trials):3} trials  pass {passed / len(trials):4.0%}  "
-            f"turns p50 {turns or 0:.0f}  tokens p50 {tokens or 0:,.0f}"
+            f"turns p50 {turns or 0:.0f}  tokens p50 {tokens or 0:,.0f}  policy-refused {refused}"
         )
     return rows
 

@@ -8,7 +8,7 @@ from pydantic_evals.evaluators import EvaluationReason, Evaluator
 
 from app.subagents.registry import DELEGATE_PREFIX
 from evals.bank_db import Ledger
-from evals.calls import ANY, ObservedCall
+from evals.calls import ANY, POLICY_DENIED, ObservedCall
 from evals.cuj import Step
 from evals.live import LiveInput, LiveOutput, Meta
 from evals.live_evaluators import Ctx, reason_for, values_match
@@ -27,6 +27,14 @@ def _rule_matches(rule: str, call: ObservedCall) -> bool:
     """`tool` matches the call whatever its outcome; `tool:outcome` only that outcome."""
     tool, _, outcome = rule.partition(":")
     return call.name == tool and (not outcome or outcome == call.outcome)
+
+
+def _is_counted_refusal(call: ObservedCall, forbid: list[str]) -> bool:
+    """A call the tool policy refused (the model attempted it, nothing ran) is counted by `LiveOutput.policy_refused`.
+    A refused call is skipped by the trajectory, the steps and `requires` (it is never a draft, a pause or a
+    result). Only a `forbid` rule that names `policy_denied` itself fails it, not a bare tool or another outcome."""
+    explicit = [rule for rule in forbid if rule.partition(":")[2] == POLICY_DENIED]
+    return call.outcome == POLICY_DENIED and not any(_rule_matches(rule, call) for rule in explicit)
 
 
 FORBIDDEN, UNEXPECTED, MISSING, UNMET = "forbidden", "unexpected", "missing", "unmet"
@@ -60,6 +68,8 @@ def _unmet_requirements(calls: list[ObservedCall], requires: list[str]) -> list[
         needing, _, needed = rule.partition(" <- ")
         fresh = False
         for call in calls:
+            if call.outcome == POLICY_DENIED:
+                continue
             if _rule_matches(needed, call):
                 fresh = True
             elif _rule_matches(needing, call):
@@ -73,10 +83,12 @@ def trajectory_problems(
     calls: list[ObservedCall], steps: list[Step], allow: list[str], forbid: list[str], requires: list[str] | None = None
 ) -> list[Problem]:
     """Calls must follow `steps` in order. Others are fine only when listed in `allow`; a forbidden call fails even if
-    it is also allowed. Steps never reached are missing."""
+    it is also allowed. Steps never reached are missing. Policy-refused calls are counted elsewhere, see above."""
     problems: list[Problem] = []
     next_step = 0
     for call in calls:
+        if _is_counted_refusal(call, forbid):
+            continue
         if any(_rule_matches(rule, call) for rule in forbid):
             problems.append(Problem(FORBIDDEN, _label(call)))
         elif next_step < len(steps) and _step_matches(steps[next_step], call):
@@ -98,7 +110,25 @@ class Trajectory(Evaluator[LiveInput, LiveOutput, Meta]):
         calls = ctx.output.calls
         problems = trajectory_problems(calls, self.steps, self.allow, self.forbid, self.requires)
         seen = [f"{c.name}:{c.outcome}" for c in calls]
-        return reason_for(not problems, f"{'; '.join(map(str, problems))}. Calls: {seen}")
+        refused = f" Policy-refused attempts: {ctx.output.policy_refused}."
+        return reason_for(not problems, f"{'; '.join(map(str, problems))}. Calls: {seen}.{refused}")
+
+
+def visible_problems(
+    calls: list[ObservedCall], steps: list[Step], allow: list[str], forbid: list[str]
+) -> list[Problem]:
+    """What can be judged without the missing traces: each observed call on its own, in any order. It fails when a
+    `forbid` rule matches it, or when no step and no `allow` rule names it. Missing steps and `requires` need the
+    whole trajectory, so they are not judged here."""
+    problems: list[Problem] = []
+    for call in calls:
+        if _is_counted_refusal(call, forbid):
+            continue
+        if any(_rule_matches(rule, call) for rule in forbid):
+            problems.append(Problem(FORBIDDEN, _label(call)))
+        elif not any(_step_matches(s, call) for s in steps) and not any(_rule_matches(r, call) for r in allow):
+            problems.append(Problem(UNEXPECTED, _label(call)))
+    return problems
 
 
 @dataclass

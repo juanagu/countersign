@@ -205,7 +205,7 @@ def test_the_end_token(message: str, ends: bool) -> None:
 
 
 def _trial(cuj_id: str, group: str, trial: int, passed: bool) -> TrialResult:
-    return TrialResult(cuj_id, group, trial, passed, {}, 0.0, 1, "t", "", [], "scripted", 1, 0, 0)
+    return TrialResult(cuj_id, group, trial, passed, {}, 0.0, 1, "t", "", [], "scripted", 1, 0, 0, 0)
 
 
 def test_a_group_at_one_fails_on_a_single_failed_trial() -> None:
@@ -235,13 +235,13 @@ def _stalled_scenario(**overrides: Any) -> Scenario:
     return _scenario(trajectory=steps, **overrides)
 
 
-def _output(*delegated: ObservedCall, thread: str = "t") -> LiveOutput:
+def _output(*delegated: ObservedCall, thread: str = "t", trace_gap: str = "") -> LiveOutput:
     handoff = [
         {"type": "TOOL_CALL_START", "toolCallId": "a", "toolCallName": "ask_payments"},
         {"type": "TOOL_CALL_RESULT", "toolCallId": "a", "messageId": "m", "content": ""},
     ]
     calls = [ObservedCall("ask_payments", delegated=True), *delegated]
-    return LiveOutput([RunTrace(handoff)], delegated=calls, thread_id=thread)
+    return LiveOutput([RunTrace(handoff)], delegated=calls, thread_id=thread, trace_gap=trace_gap)
 
 
 def _refused(retry_after: int | None = None) -> LiveOutput:
@@ -295,6 +295,58 @@ async def test_an_attempt_with_a_forbidden_call_and_then_a_rate_limit_fails_and_
     output = await run_trial(_stalled_scenario(forbid=["list_beneficiaries"]), None, STARTING)
 
     assert (attempts, output.attempts, output.discarded) == (1, 1, [])
+
+
+GAP = "only 1 of 2 runs reached Phoenix for the thread"
+
+
+def _complete(thread: str) -> LiveOutput:
+    steps = [ObservedCall("prepare_transfer"), ObservedCall("execute_transfer", outcome="paused", delegated=True)]
+    return _output(*steps, thread=thread)
+
+
+def _patch_attempts(monkeypatch: pytest.MonkeyPatch, outputs: list[LiveOutput]) -> list[int]:
+    ran: list[int] = []
+    queue = iter(outputs)
+
+    async def attempt(_scenario: Scenario, _reply: object) -> LiveOutput:
+        ran.append(1)
+        return next(queue)
+
+    monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
+    monkeypatch.setattr("evals.cuj_runner.restore_balance", _no_restore)
+    return ran
+
+
+async def test_missing_traces_with_a_clean_visible_part_rerun_once_and_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_attempts(monkeypatch, [_output(thread="late", trace_gap=GAP), _complete("fresh")])
+
+    output = await run_trial(_stalled_scenario(), None, STARTING)
+
+    assert (output.attempts, output.thread_id, output.trace_gap) == (2, "fresh", "")
+    [inconclusive] = output.discarded
+    assert inconclusive.thread_id == "late"
+    assert inconclusive.verdict == f"inconclusive: {GAP}"
+
+
+async def test_a_second_trace_miss_fails_the_trial_with_a_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran = _patch_attempts(monkeypatch, [_output(thread="a", trace_gap=GAP), _output(thread="b", trace_gap=GAP)])
+
+    output = await run_trial(_stalled_scenario(), None, STARTING)
+
+    assert (len(ran), output.attempts, output.trace_gap) == (2, 2, GAP)
+    assert [a.thread_id for a in output.discarded] == ["a"]
+
+
+async def test_a_visible_forbidden_call_with_traces_missing_fails_without_a_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gap = _output(ObservedCall("execute_transfer"), thread="a", trace_gap=GAP)
+    ran = _patch_attempts(monkeypatch, [gap])
+
+    output = await run_trial(_stalled_scenario(forbid=["execute_transfer:result"]), None, STARTING)
+
+    assert (len(ran), output.attempts, output.discarded) == (1, 1, [])
 
 
 def test_a_rate_limit_after_the_steps_are_done_is_not_a_stall() -> None:

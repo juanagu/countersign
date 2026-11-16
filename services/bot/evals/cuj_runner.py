@@ -44,7 +44,7 @@ from evals.cuj_report import (
     trial_result,
     write_summary,
 )
-from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall
+from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall, trace_gap_verdict
 from evals.cuj_spans import Trial, emit_trials
 from evals.cuj_user import Reply, Turn, is_end, simulated_user
 from evals.delegation import CONFIRM_TEMPLATE
@@ -182,22 +182,27 @@ async def _next_message(scenario: Scenario, scripted: Any, reply: Reply | None, 
 
 async def run_trial(scenario: Scenario, reply: Reply | None, starting: Mapping[str, Decimal]) -> LiveOutput:
     """One trial: the source account's balance restored, then the journey, run again on a fresh thread while the
-    gateway's write limit stops it. Every discarded attempt stays in the output with its verdict."""
+    gateway's write limit stops it, and once when traces are missing and the visible part is clean (a second miss
+    fails the trial). Every discarded attempt stays in the output with its verdict."""
     started = time.time_ns()
     discarded: list[DiscardedAttempt] = []
+    reran_for_traces = False
     for attempt in range(1, RATE_LIMIT_RETRIES + 2):
         if scenario.source_account in starting:
             await restore_balance(scenario.source_account, starting[scenario.source_account])
         output = await run_attempt(scenario, reply)
         stall = rate_limit_stall(scenario, output)
-        if stall is None or attempt > RATE_LIMIT_RETRIES:
+        verdict, wait = (stall.verdict, stall.wait_seconds) if stall else (None, 0.0)
+        if stall is None and not reran_for_traces and (verdict := trace_gap_verdict(scenario, output)):
+            reran_for_traces = True
+        if verdict is None or attempt > RATE_LIMIT_RETRIES:
             output.attempts, output.discarded = attempt, discarded
             output.start_ns, output.end_ns = started, time.time_ns()
             return output
         calls = [f"{c.name}:{c.outcome}" for c in output.calls]
-        discarded.append(DiscardedAttempt(output.thread_id, stall.verdict, calls))
-        print(f"  {scenario.id}: {stall.verdict}; waiting {stall.wait_seconds:g}s", flush=True)
-        await asyncio.sleep(stall.wait_seconds)
+        discarded.append(DiscardedAttempt(output.thread_id, verdict, calls))
+        print(f"  {scenario.id}: {verdict}; waiting {wait:g}s", flush=True)
+        await asyncio.sleep(wait)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -252,7 +257,10 @@ async def main(out: Path | None, only: str | None, trials: int | None) -> int:
         results += await run_scenario(scenario, trials or scenario.trials, reply, starting)
     print_results(results)
     emit_trials(
-        [Trial(r.cuj_id, r.trial, r.passed, r.turns, r.driver, r.thread_id, r.start_ns, r.end_ns) for r in results],
+        [
+            Trial(r.cuj_id, r.trial, r.passed, r.turns, r.driver, r.thread_id, r.policy_refused, r.start_ns, r.end_ns)
+            for r in results
+        ],
         os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
     )
     gates = cuj_gates(results, thresholds)

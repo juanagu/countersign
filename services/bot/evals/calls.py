@@ -18,6 +18,7 @@ CANCELLED = "cancelled"  # The customer answered the interrupt with a refusal.
 UNFINISHED = "unfinished"
 ANY = "any"  # Only in an expected step: matches every outcome.
 ERROR_PREFIX = "error:"
+POLICY_DENIED = f"{ERROR_PREFIX}policy_denied"  # The tool policy refused the call: it never ran.
 
 
 @dataclass(frozen=True)

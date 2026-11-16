@@ -134,10 +134,11 @@ async def test_the_runs_that_reached_phoenix_are_read_and_the_missing_one_is_not
 
     monkeypatch.setattr(delegation, "spans", fake_spans)
     monkeypatch.setattr(delegation, "EXPORT_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr(delegation, "LATE_EXPORT_WAIT_SECONDS", 0.0)
 
     from datetime import UTC, datetime
 
     result = await delegation.read_delegated("thr", datetime.now(UTC), [], runs=2)
 
     assert [c.name for c in result.calls] == ["ask_payments"]
-    assert "1 of 2 runs" in result.note
+    assert "1 of 2 runs" in result.note  # The gap is reported, not hidden.

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from evals.agui_client import BffSession, Event, RunTrace, bff_client
 from evals.bank_db import Ledger, read_ledger
-from evals.calls import ObservedCall, client_calls, with_delegated
+from evals.calls import POLICY_DENIED, ObservedCall, client_calls, with_delegated
 from evals.delegation import CONFIRM_TEMPLATE, read_delegated
 
 STEP_UP_PIN = "123456"  # The mock IdP's synthetic PIN (AGENTS.md, rule 3).
@@ -44,7 +44,8 @@ class ResumeCheck:
 
 @dataclass(frozen=True)
 class DiscardedAttempt:
-    """A CUJ attempt thrown away because the gateway's rate limit stopped it: why, what it did and its thread."""
+    """A CUJ attempt thrown away as inconclusive (the gateway's rate limit, or missing traces): why, what it did and
+    its thread."""
 
     thread_id: str
     verdict: str
@@ -57,6 +58,7 @@ class LiveOutput:
     ledger_change: Ledger | None = None
     resume: ResumeCheck | None = None
     notes: list[str] = field(default_factory=list)
+    trace_gap: str = ""  # Runs whose spans never reached Phoenix: the delegated calls may be incomplete.
     delegated: list[ObservedCall] = field(default_factory=list)  # From the trace, not the client.
     # A CUJ's extras: the ledger after the journey and each step-up request's HTTP status.
     ledger_after: Ledger | None = None
@@ -107,6 +109,10 @@ class LiveOutput:
     @property
     def errors(self) -> list[str]:
         return [error for trace in self.traces for error in trace.errors]
+
+    @property
+    def policy_refused(self) -> int:
+        return sum(call.outcome == POLICY_DENIED for call in self.calls)
 
     def for_judge(self) -> dict[str, Any]:
         """What the LLM judge sees: the answer, what it cited and the passages it was given."""
@@ -161,7 +167,7 @@ async def attach_delegated(output: LiveOutput, thread_id: str, since: datetime) 
     """Reads the subagents' calls from the thread's Phoenix spans into `output`, noting any run with no trace."""
     delegated = await read_delegated(thread_id, since, output.cards, runs=len(output.traces))
     output.delegated = delegated.calls
-    output.notes += [delegated.note] if delegated.note else []
+    output.trace_gap = delegated.note
 
 
 async def run_live(case: LiveInput) -> LiveOutput:

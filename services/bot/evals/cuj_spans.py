@@ -25,6 +25,7 @@ class Trial:
     turns: int
     driver: str
     thread_id: str
+    policy_refused: int
     start_ns: int
     end_ns: int
 
@@ -47,6 +48,7 @@ def emit_trials(trials: Iterable[Trial], endpoint: str | None) -> None:
                     "cuj.turns": t.turns,
                     "cuj.driver": t.driver,
                     "cuj.thread_id": t.thread_id,
+                    "cuj.policy_refused": t.policy_refused,
                 }
             )
             span.end(end_time=t.end_ns)

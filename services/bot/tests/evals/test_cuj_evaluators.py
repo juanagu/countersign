@@ -11,7 +11,7 @@ from pydantic_evals.otel._errors import SpanTreeRecordingError
 from evals.agui_client import RunTrace
 from evals.bank_db import Ledger
 from evals.calls import CANCELLED, PAUSED, ObservedCall, result_outcome
-from evals.cuj import Step
+from evals.cuj import Step, load_scenarios
 from evals.cuj_evaluators import (
     BalanceMatchesLedger,
     Cards,
@@ -22,6 +22,7 @@ from evals.cuj_evaluators import (
     StepUpAttempts,
     Trajectory,
     trajectory_problems,
+    visible_problems,
 )
 from evals.live import LiveInput, LiveOutput
 
@@ -264,3 +265,94 @@ def test_a_failed_re_prepare_is_not_a_fresh_draft() -> None:
     problems = trajectory_problems(calls, steps, allow, [], EXPIRED_RETRY_RULE)
 
     assert [p.kind for p in problems] == ["unmet"]
+
+
+def _denied() -> ObservedCall:
+    return ObservedCall("execute_transfer", outcome="error:policy_denied")
+
+
+JOURNEY_PREPARE = ObservedCall(
+    "prepare_transfer", {"beneficiary_id": "ben-juan-ana", "amount": Decimal("50000.00"), "currency": "ARS"}
+)
+
+
+def _journey_08() -> Any:
+    return next(s for s in load_scenarios() if s.id == "cuj-08-expired-approval")
+
+
+def test_cuj_08s_observed_sequence_passes_and_counts_the_refused_attempt() -> None:
+    scenario = _journey_08()
+    expired = ObservedCall("execute_transfer", outcome="error:draft_expired")
+    ask = ObservedCall("ask_payments")
+    calls = [ask, JOURNEY_PREPARE, _paused_execute(), expired, JOURNEY_PREPARE, _denied(), _paused_execute()]
+
+    problems = trajectory_problems(calls, scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires)
+    refusal = _run(_call("d", "execute_transfer", result='{"untrusted_data": {"error": "policy_denied"}}'))
+    output = LiveOutput([refusal], delegated=[ask, JOURNEY_PREPARE])
+
+    assert problems == []
+    assert output.policy_refused == 1
+
+
+def test_a_refused_call_is_never_a_fresh_draft_a_pause_or_a_result() -> None:
+    scenario = _journey_08()
+    expired = ObservedCall("execute_transfer", outcome="error:draft_expired")
+    refused_prepare = ObservedCall("prepare_transfer", outcome="error:policy_denied")
+    calls = [
+        ObservedCall("ask_payments"),
+        JOURNEY_PREPARE,
+        _paused_execute(),
+        expired,
+        refused_prepare,
+        _paused_execute(),
+    ]
+
+    problems = trajectory_problems(calls, scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires)
+    only_refused = trajectory_problems([_denied()], [Step(tool="execute_transfer", outcome="paused")], [], [])
+
+    assert [p.kind for p in problems] == ["unmet"]  # The refused prepare did not make the second pause legitimate.
+    assert [p.kind for p in only_refused] == ["missing"]  # Nor did the refused execute count as a pause.
+
+
+def test_a_refused_call_followed_by_a_real_forbidden_result_still_fails() -> None:
+    scenario = _journey_08()
+    calls = [
+        ObservedCall("ask_payments"),
+        JOURNEY_PREPARE,
+        _paused_execute(),
+        _denied(),
+        ObservedCall("execute_transfer"),
+    ]
+
+    problems = trajectory_problems(calls, scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires)
+
+    assert "forbidden execute_transfer (result)" in _texts(problems)
+
+
+def test_a_forbid_rule_that_names_the_refusal_fails_it() -> None:
+    steps = [Step(tool="prepare_transfer")]
+
+    problems = trajectory_problems([JOURNEY_PREPARE, _denied()], steps, [], ["execute_transfer:error:policy_denied"])
+
+    assert _texts(problems) == ["forbidden execute_transfer (error:policy_denied)"]
+
+
+def test_the_visible_part_fails_on_a_forbidden_unexpected_or_wrong_call_in_any_order() -> None:
+    steps = [Step(tool="prepare_transfer", args={"amount": 50000}), Step(tool="execute_transfer", outcome="paused")]
+    wrong = ObservedCall("prepare_transfer", {"amount": Decimal("5000")})
+
+    assert visible_problems([_paused_execute()], steps, [], ["execute_transfer:result"]) == []
+    assert _texts(visible_problems([ObservedCall("execute_transfer")], steps, [], ["execute_transfer:result"])) == [
+        "forbidden execute_transfer (result)"
+    ]
+    assert _texts(visible_problems([wrong], steps, [], [])) == ["unexpected prepare_transfer (result)"]
+
+
+def test_missing_traces_fail_the_run_check_with_a_clear_note() -> None:
+    from evals.scenario_evaluators import NoRunErrors
+
+    output = LiveOutput([], trace_gap="only 1 of 2 runs reached Phoenix for the thread")
+
+    result = NoRunErrors().evaluate(_ctx(output))
+
+    assert (result.value, "traces missing: only 1 of 2" in str(result.reason)) == (False, True)
