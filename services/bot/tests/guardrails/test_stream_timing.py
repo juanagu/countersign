@@ -6,7 +6,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from app.guardrails.stream_timing import (
     DURATION_ATTRIBUTE,
     FIRST_SURFACE_ATTRIBUTE,
+    RUN_ID_ATTRIBUTE,
     STREAM_SPAN,
+    THREAD_ATTRIBUTE,
     TTFT_ATTRIBUTE,
     StreamTimer,
 )
@@ -82,3 +84,16 @@ def test_the_span_also_says_which_models_served_and_how_many_failovers() -> None
     assert span.attributes is not None
     assert span.attributes["bot.models_served"] == ("orchestrator:claude-haiku-5-5",)
     assert span.attributes["bot.failovers"] == 1
+
+
+def test_the_span_names_its_run_and_thread_and_nothing_else_of_them() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    timer = StreamTimer(Clock(), provider.get_tracer("test"), thread_id="thr", run_id="run-1")
+
+    timer.finish()
+
+    [span] = exporter.get_finished_spans()
+    assert span.attributes is not None
+    assert (span.attributes[THREAD_ATTRIBUTE], span.attributes[RUN_ID_ATTRIBUTE]) == ("thr", "run-1")

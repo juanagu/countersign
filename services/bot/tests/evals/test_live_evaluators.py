@@ -146,8 +146,8 @@ async def test_run_live_reads_the_spans_of_every_run_of_the_thread(monkeypatch: 
     async def flow(_session: object, _case: LiveInput) -> LiveOutput:
         return LiveOutput([RunTrace([]), RunTrace([])])
 
-    async def read(_thread: str, _since: object, _cards: object, runs: int) -> Delegated:
-        seen.append(runs)
+    async def read(_thread: str, _since: object, runs: list[RunTrace]) -> Delegated:
+        seen.append(len(runs))
         return Delegated([])
 
     monkeypatch.setattr("evals.live.bff_client", client)

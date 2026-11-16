@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from evals.metrics import (
+    DISCARDED_THREADS,
     FIRST_SURFACE,
     TTFT,
     UNRECORDED,
@@ -146,3 +147,13 @@ def test_a_journey_without_a_thread_in_phoenix_counts_zero_tokens() -> None:
     assert cuj_rows(trials, {}) == [
         "  cuj-04                           1 trials  pass 100%  turns p50 2  tokens p50 0  policy-refused 0"
     ]
+
+
+def test_a_trials_tokens_include_its_discarded_attempts() -> None:
+    attributes = {"cuj.id": "cuj-04", "cuj.passed": True, "cuj.turns": 2, "cuj.thread_id": "kept"}
+    attributes[DISCARDED_THREADS] = ["stalled-1", "stalled-2"]
+    trials = [{"name": "cuj.trial", "context": {"trace_id": "x"}, "attributes": attributes}]
+
+    [row] = cuj_rows(trials, {"kept": 100.0, "stalled-1": 20.0, "stalled-2": 5.0})
+
+    assert "tokens p50 125" in row

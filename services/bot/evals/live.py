@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from evals.agui_client import BffSession, Event, RunTrace, bff_client
 from evals.bank_db import Ledger, read_ledger
-from evals.calls import POLICY_DENIED, ObservedCall, client_calls, with_delegated
+from evals.calls import POLICY_DENIED, RESULT, ObservedCall, client_calls, with_delegated
 from evals.delegation import CONFIRM_TEMPLATE, read_delegated
 
 STEP_UP_PIN = "123456"  # The mock IdP's synthetic PIN (AGENTS.md, rule 3).
@@ -69,6 +69,12 @@ class LiveOutput:
     discarded: list["DiscardedAttempt"] = field(default_factory=list)  # The attempts that came before this one.
     start_ns: int = 0  # A CUJ trial's wall-clock span, first attempt's start to last attempt's end.
     end_ns: int = 0
+    _calls: list[ObservedCall] | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in ("traces", "delegated"):  # What `calls` is built from.
+            object.__setattr__(self, "_calls", None)
+        object.__setattr__(self, name, value)
 
     @property
     def text(self) -> str:
@@ -86,14 +92,17 @@ class LiveOutput:
 
     @property
     def calls(self) -> list[ObservedCall]:
-        """Every call in order with its outcome, the subagent's included."""
-        return with_delegated(
-            client_calls(self.traces, frozenset().union(*(t.cancelled for t in self.traces))), self.delegated
-        )
+        """Every call in order with its outcome, the subagent's included. Built once, again after `traces` or
+        `delegated` is set."""
+        if self._calls is None:
+            cancelled = frozenset().union(*(t.cancelled for t in self.traces))
+            object.__setattr__(self, "_calls", with_delegated(client_calls(self.traces, cancelled), self.delegated))
+        return self._calls or []
 
     @property
     def handoffs(self) -> set[str]:
-        return {c.name for c in self.delegated if c.is_handoff}
+        """The domains handed off to, whose handoff returned a result: a refused or failed one is no handoff."""
+        return {c.name for c in self.delegated if c.is_handoff and c.outcome == RESULT}
 
     @property
     def components(self) -> list[dict[str, Any]]:
@@ -165,7 +174,7 @@ FLOWS = {"chat": _chat, "transfer": _transfer, "resume": _resume}
 
 async def attach_delegated(output: LiveOutput, thread_id: str, since: datetime) -> None:
     """Reads the subagents' calls from the thread's Phoenix spans into `output`, noting any run with no trace."""
-    delegated = await read_delegated(thread_id, since, output.cards, runs=len(output.traces))
+    delegated = await read_delegated(thread_id, since, output.traces)
     output.delegated = delegated.calls
     output.trace_gap = delegated.note
 

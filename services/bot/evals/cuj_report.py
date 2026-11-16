@@ -12,7 +12,7 @@ from pydantic_evals.reporting import ReportCase
 
 from evals.cuj import Scenario
 from evals.live import DiscardedAttempt, LiveInput, LiveOutput, Meta
-from evals.metrics import spans, tokens_by_thread
+from evals.metrics import STREAM_SPAN, spans, tokens_by_thread
 from evals.run import Gate
 from evals.thresholds import Thresholds
 
@@ -132,7 +132,7 @@ def token_bill(results: list[TrialResult], since: datetime) -> dict[str, float]:
     """Tokens per journey id (orchestrator, subagent and guard models together, discarded attempts included) from
     Phoenix; empty without it."""
     try:
-        stream = list(spans(since, name="bot.stream"))
+        stream = list(spans(since, name=STREAM_SPAN))
         models = list(spans(since, span_kind="LLM"))
     except httpx.HTTPError:
         return {}

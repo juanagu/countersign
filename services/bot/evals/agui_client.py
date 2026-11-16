@@ -79,6 +79,11 @@ class RunTrace:
         return [i for e in self.of("RUN_FINISHED") for i in (e.get("outcome") or {}).get("interrupts") or []]
 
     @property
+    def run_id(self) -> str | None:
+        """The id the bot gave the run, as its `RUN_STARTED` event carries it."""
+        return next((str(e["runId"]) for e in self.of("RUN_STARTED") if e.get("runId")), None)
+
+    @property
     def interrupted(self) -> bool:
         return any((e.get("outcome") or {}).get("type") == "interrupt" for e in self.of("RUN_FINISHED"))
 

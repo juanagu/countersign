@@ -1,6 +1,7 @@
 """The journey loop on a fake BFF: the simulated customer sees only text, the interrupt policy is answered by code
 (approve, cancel, wrong PIN then right, expiry), and the gates count trials."""
 
+import dataclasses
 import json
 from decimal import Decimal
 from typing import Any
@@ -12,8 +13,8 @@ from evals.agui_client import RUN_PATH, STEP_UP_PATH, BffSession, RunTrace
 from evals.calls import ObservedCall
 from evals.cuj import Scenario
 from evals.cuj_report import TrialResult, cuj_gates
-from evals.cuj_retry import rate_limit_stall
-from evals.cuj_runner import main, play, run_trial
+from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall
+from evals.cuj_runner import _trial_span, main, play, run_trial
 from evals.cuj_user import Turn, is_end
 from evals.live import DiscardedAttempt, LiveOutput
 from evals.thresholds import Consistency, Thresholds
@@ -42,7 +43,7 @@ def _text(text: str) -> list[dict[str, Any]]:
 def _paused(draft: str = "drf_1", cards: list[str] | None = None) -> list[dict[str, Any]]:
     interrupt = {"id": "int-x", "toolCallId": "x"}
     return [
-        *(_card(d) for d in cards or [draft]),
+        *(_card(d) for d in (cards if cards is not None else [draft])),
         {"type": "TOOL_CALL_START", "toolCallId": "x", "toolCallName": "execute_transfer"},
         {"type": "TOOL_CALL_ARGS", "toolCallId": "x", "delta": json.dumps({"draft_id": draft})},
         {"type": "RUN_FINISHED", "outcome": {"type": "interrupt", "interrupts": [interrupt]}},
@@ -420,6 +421,17 @@ async def test_the_step_up_is_made_against_the_card_of_the_interrupted_draft() -
     assert bff.step_up_drafts == ["drf_1"]
 
 
+async def test_the_confirm_card_shown_a_turn_before_the_approval_is_found() -> None:
+    asked = [_card("drf_1"), *_text("¿Confirmás?")]
+    bff = FakeBff([asked, _paused(draft="drf_1", cards=[]), _text("Enviada")], step_ups=[200])
+
+    journey = await play(bff.session(), _scenario(then=["sí"]), None)
+
+    assert journey.notes == []
+    assert bff.step_up_drafts == ["drf_1"]
+    assert len(journey.traces) == 3
+
+
 async def test_an_interrupt_with_no_matching_card_is_noted_and_nothing_is_stepped_up() -> None:
     bff = FakeBff([_paused(draft="drf_9", cards=["drf_1"])])
 
@@ -475,18 +487,39 @@ async def _run_with(monkeypatch: pytest.MonkeyPatch, scenario: Scenario, output:
     monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
     monkeypatch.setattr("evals.cuj_runner.restore_balance", _no_restore)
     monkeypatch.setattr("evals.cuj_retry.RATE_LIMIT_WAIT_SECONDS", 0.0)
-    return attempts, await run_trial(scenario, None, STARTING)
+    trial = await run_trial(scenario, None, STARTING)
+    return attempts, trial
 
 
-async def test_a_rate_limited_forbidden_call_fails_and_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_bare_forbid_on_a_rate_limited_call_fails_and_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    refused_execute = _output(
+        ObservedCall("prepare_transfer"), ObservedCall("execute_transfer", outcome="error:rate_limited")
+    )
+    scenario = _stalled_scenario(forbid=["execute_transfer"])
+
+    assert rate_limit_stall(scenario, refused_execute) is None
+    _, output = await _run_with(monkeypatch, scenario, refused_execute)
+    assert (output.attempts, output.discarded) == (1, [])
+
+
+async def test_a_rate_limited_execute_is_a_stall_when_only_a_result_is_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     refused_execute = _output(
         ObservedCall("prepare_transfer"), ObservedCall("execute_transfer", outcome="error:rate_limited")
     )
     scenario = _stalled_scenario(forbid=["execute_transfer:result"])
 
-    assert rate_limit_stall(scenario, refused_execute) is None
-    _, output = await _run_with(monkeypatch, scenario, refused_execute)
-    assert (output.attempts, output.discarded) == (1, [])
+    assert rate_limit_stall(scenario, refused_execute) is not None
+    attempts, _ = await _run_with(monkeypatch, scenario, refused_execute)
+    assert attempts == RATE_LIMIT_RETRIES + 1  # Retried until the budget ran out, never counted as a verdict.
+
+
+def test_a_harness_note_beside_a_rate_limit_keeps_the_attempt_as_the_verdict() -> None:
+    attempt = _refused()
+    attempt.notes = ["no confirm card for the interrupted draft 'drf_1'"]
+
+    assert rate_limit_stall(_stalled_scenario(), attempt) is None
 
 
 async def test_a_forbidden_call_after_a_rate_limited_prepare_fails_and_is_not_retried(
@@ -519,3 +552,18 @@ def test_fewer_trials_than_the_consistency_minimum_clamp_it_and_say_so() -> None
     assert "WEAKENED" in consistency.detail
     _, failing = cuj_gates([_trial("a", "cuj_money", 1, False)], thresholds)
     assert not failing.ok
+
+
+def test_the_trial_span_carries_the_threads_of_its_discarded_attempts() -> None:
+    result = TrialResult("cuj-t", "cuj_money", 1, True, {}, 1.0, 2, "kept", "", [], "scripted", 3, 0, 1, 2)
+    result = dataclasses.replace(result, discarded=[DiscardedAttempt("a", "v", []), DiscardedAttempt("b", "v", [])])
+
+    assert _trial_span(result).discarded_threads == ("a", "b")
+
+
+def test_the_calls_are_built_once_and_again_when_the_delegated_calls_are_set() -> None:
+    output = _output(ObservedCall("prepare_transfer"))
+
+    assert output.calls is output.calls
+    output.delegated = [ObservedCall("ask_payments", delegated=True)]
+    assert [c.name for c in output.calls] == ["ask_payments"]

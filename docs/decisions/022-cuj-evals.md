@@ -278,8 +278,8 @@ Written after ADR 021 was built, so trajectories are in what the client and the 
   keeps the attempt as the verdict. Problems are structured (`kind`, `call`, `detail`; the printed text derives from
   them) so the rule never reads wording. The wait is the gateway's own `retry_after_seconds` from the parsed error, capped
   at the 10 minute window (60 s when the error names none); the gateway gets no reset hook. Up to 12 retries. Every
-  discarded attempt stays in `--out` (`discarded`: thread, verdict, calls) and its tokens are in the bill. A journey that
-  could run as Ana would spread the budget; the ADR fixes the users, so it stays as is.
+  discarded attempt stays in `--out` (`discarded`: thread, verdict, calls) and its tokens are in the bill. Moving journeys
+  to Ana spreads the budget (F70, below).
 - **Fixes after the second review** (F64). `requires` honours the outcome on its right side, and CUJ 08 now reads
   `execute_transfer:paused <- prepare_transfer:result`: a failed re-prepare is not a fresh draft. A delegated call's
   outcome is its **own** span's status; a descendant (the MCP transport span) only supplies the error code when the
@@ -349,6 +349,24 @@ allowed is the user's call.
     `discarded` as `inconclusive: ...` with its tokens billed. A second miss fails the trial (`NoRunErrors`: "traces
     missing: ..."). The export wait is `EXPORT_WAIT_SECONDS` plus one longer final `LATE_EXPORT_WAIT_SECONDS` (60 s)
     before a run is called missing. Why: an export delay is not a bot verdict.
+
+- **CUJ 05 and 06 are Ana's now (F70).** The gateway's write limit is per customer, and all five money journeys were
+  Juan's, so a run waited minutes between trials. CUJ 05 (insufficient funds) and CUJ 06 (cancel) run as Ana, who has
+  Juan Pérez and Lucía Fernández as beneficiaries: 06 sends 50.000 to Juan (`ben-ana-juan`), and 05 asks for 1.500.000,
+  over her $ 1.254.300,50 and under the 2.000.000 per-transfer limit, so it still ends in `insufficient_funds`. CUJ 04,
+  07 and 08 stay Juan's. Ana's balance is read when the run starts and restored before each trial, as Juan's is. The
+  budget is still shared with `make eval`'s own transfer cases and red team, so F70 stays open: wiring `make cuj` into
+  `make eval` waits for a week of stable runs.
+- **Harness edge cases (F74).** The confirm card of an interrupt is looked up in every run of the session, so an
+  approval that pauses a turn after the card was shown ("¿confirmás?", "sí") is found. A policy refusal is a normal
+  tool result, so its span ends OK; the bot now sets `policy.denied` on the span of a refused call (a flag only: no
+  reason, no content, rule 7) and `delegation.py` reads it as `error:policy_denied`, for handoffs too. A failed or
+  refused handoff has its real outcome and does not count in `handoffs`. Card pairing is per run: a trace is matched to
+  its run by the new `bot.run_id` attribute on `bot.stream` (order only when every run's trace arrived, nothing paired
+  otherwise), and a draft belongs to the first run that showed its card. A harness note beside a rate limit keeps the
+  attempt as the verdict, and a `forbid` rule with an outcome (`execute_transfer:result`) no longer forbids a
+  rate-limited execute. `make metrics` adds the tokens of a trial's discarded attempts through the
+  `cuj.discarded_threads` span attribute.
 
 ### What the journeys showed about the bot
 - **CUJ 08, first exploratory run (before `requires`):** after `draft_expired` the orchestrator called `ask_payments`
