@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
+import type { ExecuteDraftOutcome } from '../../../src/features/transfers/transfers-repository.js';
 import { PgTransfersRepository } from '../../../src/features/transfers/pg-transfers-repository.js';
 
 // Runs against the seeded compose Postgres (`make up && make seed`); skipped when it isn't reachable.
@@ -15,10 +16,12 @@ const reachable = pool
 
 const LOCK_WAIT_MS = 300;
 const ACCOUNT = 'acc-juan-ars';
+const GRANT = { amount: '10.00', currency: 'ARS', beneficiaryId: 'ben-juan-ana' };
+const refused = (code: string) => ({ status: 'refused', code });
 
 describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
   const db = pool as pg.Pool;
-  const repo = new PgTransfersRepository(db, LOCK_WAIT_MS);
+  const repo = new PgTransfersRepository(db, { lockWaitMs: LOCK_WAIT_MS });
   afterAll(() => pool?.end());
 
   const balance = async () =>
@@ -58,14 +61,52 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     (await db.query<{ step_up_jti: string }>(`SELECT step_up_jti FROM bank.transfers WHERE draft_id = $1`, [draftId]))
       .rows;
 
+  const execute = (
+    draftId: string,
+    jti: string,
+    clock: () => Date,
+    authorised = GRANT,
+    target: PgTransfersRepository = repo,
+  ): Promise<ExecuteDraftOutcome> => target.executeDraft({ draftId, jti, authorised }, clock);
+
+  const spendOnARejectedAttempt = (draftId: string, jti: string) =>
+    db.query(`INSERT INTO bank.used_jtis (jti, draft_id) VALUES ($1, $2)`, [jti, draftId]);
+
+  /** Resolves once a backend is blocked on a row lock of `table`, so the test commits the holder only after that. */
+  async function untilWaitingOnLock(table: string): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const { rowCount } = await db.query(
+        `SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE $1`,
+        [`%bank.${table}%`],
+      );
+      if (rowCount) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`nothing waited on a lock of ${table}`);
+  }
+
+  /** Holds a row lock on `table` until released; the holder is a transaction of its own. */
+  async function holdRowLock(table: 'transfer_drafts' | 'accounts', id: string) {
+    const holder = await db.connect();
+    await holder.query('BEGIN');
+    await holder.query(`SELECT 1 FROM bank.${table} WHERE id = $1 FOR UPDATE`, [id]);
+    let released = false;
+    return {
+      release: async () => {
+        if (released) return;
+        released = true;
+        await holder.query('COMMIT').catch(() => undefined);
+        holder.release();
+      },
+    };
+  }
+
   it('executes once when two executions with one token race, answers both with the receipt and debits once', async () => {
     await withDraft({}, async (draftId, bookedAt) => {
       const before = Number(await balance());
       const jti = `jti-${draftId}`;
-      const [a, b] = await Promise.all([
-        repo.executeDraft(draftId, jti, () => bookedAt),
-        repo.executeDraft(draftId, jti, () => bookedAt),
-      ]);
+      const [a, b] = await Promise.all([execute(draftId, jti, () => bookedAt), execute(draftId, jti, () => bookedAt)]);
       expect([a.status, b.status].sort()).toEqual(['already_executed', 'executed']);
       expect(a).toMatchObject({ receipt: (b as { receipt: unknown }).receipt });
       expect(before - Number(await balance())).toBeCloseTo(10, 2);
@@ -77,8 +118,8 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     await withDraft({}, async (draftId, bookedAt) => {
       const before = Number(await balance());
       const [a, b] = await Promise.all([
-        repo.executeDraft(draftId, `jti-a-${draftId}`, () => bookedAt),
-        repo.executeDraft(draftId, `jti-b-${draftId}`, () => bookedAt),
+        execute(draftId, `jti-a-${draftId}`, () => bookedAt),
+        execute(draftId, `jti-b-${draftId}`, () => bookedAt),
       ]);
       expect([a.status, b.status].sort()).toEqual(['already_executed', 'executed']);
       expect(before - Number(await balance())).toBeCloseTo(10, 2);
@@ -86,79 +127,105 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     });
   });
 
-  it('answers the token that executed the draft with the same receipt, and a token spent elsewhere not_pending', async () => {
+  it('answers the token that executed the draft with the same receipt, and a token spent elsewhere draft_not_pending', async () => {
     await withDraft({}, async (draftId, bookedAt) => {
       const executing = `jti-exec-${draftId}`;
       const stale = `jti-stale-${draftId}`;
-      const later = new Date(Date.now() + 10 * 60_000);
-      expect((await repo.executeDraft(draftId, stale, () => later)).status).toBe('expired');
-      const executed = await repo.executeDraft(draftId, executing, () => bookedAt);
+      await spendOnARejectedAttempt(draftId, stale);
+      const executed = await execute(draftId, executing, () => bookedAt);
       expect(executed.status).toBe('executed');
-      expect(await repo.executeDraft(draftId, executing, () => bookedAt)).toEqual({
+      // The replay carries exactly what the fresh execution returned: one column list for both.
+      expect(await execute(draftId, executing, () => bookedAt)).toEqual({
         status: 'already_executed',
         receipt: (executed as { receipt: unknown }).receipt,
       });
-      expect(await repo.executeDraft(draftId, stale, () => bookedAt)).toEqual({ status: 'not_pending' });
-      const fresh = await repo.executeDraft(draftId, `jti-fresh-${draftId}`, () => bookedAt);
-      expect(fresh).toMatchObject({ status: 'already_executed' });
+      expect(await execute(draftId, stale, () => bookedAt)).toEqual(refused('draft_not_pending'));
+      expect(await execute(draftId, `jti-fresh-${draftId}`, () => bookedAt)).toMatchObject({
+        status: 'already_executed',
+      });
       expect(await jtiRows(draftId)).toHaveLength(2);
     });
   });
 
-  it('keeps a token a rejected attempt spent as token_already_used while the draft is pending, and moves nothing', async () => {
+  it('answers a spent token on a pending draft token_already_used, and moves nothing', async () => {
     await withDraft({}, async (draftId, bookedAt) => {
       const before = await balance();
       const jti = `jti-${draftId}`;
-      const later = new Date(Date.now() + 10 * 60_000);
-      expect((await repo.executeDraft(draftId, jti, () => later)).status).toBe('expired');
-      expect((await jtiRows(draftId)).map((r) => r.jti)).toEqual([jti]);
-      expect(await repo.executeDraft(draftId, jti, () => bookedAt)).toEqual({ status: 'token_already_used' });
+      await spendOnARejectedAttempt(draftId, jti);
+      expect(await execute(draftId, jti, () => bookedAt)).toEqual(refused('token_already_used'));
       expect(await transferRows(draftId)).toEqual([]);
       expect(await balance()).toBe(before);
+    });
+  });
+
+  it('answers draft_expired, not token_already_used, for a spent token while the clock is still past expiry', async () => {
+    await withDraft({}, async (draftId) => {
+      const jti = `jti-${draftId}`;
+      const later = new Date(Date.now() + 10 * 60_000);
+      await spendOnARejectedAttempt(draftId, jti);
+      expect(await execute(draftId, jti, () => later)).toEqual(refused('draft_expired'));
+      expect(await execute(draftId, jti, () => later)).toEqual(refused('draft_expired'));
+    });
+  });
+
+  it('spends no token on an expired draft', async () => {
+    await withDraft({}, async (draftId) => {
+      const later = new Date(Date.now() + 10 * 60_000);
+      expect(await execute(draftId, `jti-${draftId}`, () => later)).toEqual(refused('draft_expired'));
+      expect(await jtiRows(draftId)).toEqual([]);
     });
   });
 
   it('spends the token of an attempt the balance could not cover, and executes nothing', async () => {
     await withDraft({ amount: '999999999.00' }, async (draftId, bookedAt) => {
       const jti = `jti-${draftId}`;
+      const grant = { ...GRANT, amount: '999999999.00' };
       const before = await balance();
-      expect((await repo.executeDraft(draftId, jti, () => bookedAt)).status).toBe('insufficient_funds');
-      expect(await repo.executeDraft(draftId, jti, () => bookedAt)).toEqual({ status: 'token_already_used' });
+      expect(await execute(draftId, jti, () => bookedAt, grant)).toEqual(refused('insufficient_funds'));
+      expect(await execute(draftId, jti, () => bookedAt, grant)).toEqual(refused('token_already_used'));
       expect(await balance()).toBe(before);
     });
   });
 
-  it('fails closed as in_progress when the draft stays locked, spending nothing', async () => {
+  it('compares the grant with the draft read under the lock: a mismatch spends nothing, executed draft or not', async () => {
     await withDraft({}, async (draftId, bookedAt) => {
-      const holder = await db.connect();
+      const tampered = { ...GRANT, amount: '1.00' };
+      expect(await execute(draftId, `jti-bad-${draftId}`, () => bookedAt, tampered)).toEqual(refused('not_authorised'));
+      expect(await jtiRows(draftId)).toEqual([]);
+      expect((await execute(draftId, `jti-ok-${draftId}`, () => bookedAt)).status).toBe('executed');
+      const elsewhere = { ...GRANT, beneficiaryId: 'ben-ana-lucia' };
+      expect(await execute(draftId, `jti-new-${draftId}`, () => bookedAt, elsewhere)).toEqual(
+        refused('not_authorised'),
+      );
+      expect(await jtiRows(draftId)).toHaveLength(1);
+    });
+  });
+
+  it('fails closed as execution_in_progress when the draft stays locked, spending nothing', async () => {
+    await withDraft({}, async (draftId, bookedAt) => {
+      const holder = await holdRowLock('transfer_drafts', draftId);
       try {
-        await holder.query('BEGIN');
-        await holder.query(`SELECT 1 FROM bank.transfer_drafts WHERE id = $1 FOR UPDATE`, [draftId]);
         const jti = `jti-${draftId}`;
-        expect(await repo.executeDraft(draftId, jti, () => bookedAt)).toEqual({ status: 'in_progress' });
-        await holder.query('COMMIT');
+        expect(await execute(draftId, jti, () => bookedAt)).toEqual(refused('execution_in_progress'));
+        await holder.release();
         expect(await jtiRows(draftId)).toEqual([]);
-        expect((await repo.executeDraft(draftId, jti, () => bookedAt)).status).toBe('executed');
+        expect((await execute(draftId, jti, () => bookedAt)).status).toBe('executed');
       } finally {
-        await holder.query('ROLLBACK').catch(() => undefined);
-        holder.release();
+        await holder.release();
       }
     });
   });
 
-  it('waits for a lock that is released inside the wait limit and then answers from the record', async () => {
+  it('waits for a draft lock that is released inside the wait limit, then executes', async () => {
     await withDraft({}, async (draftId, bookedAt) => {
-      const jti = `jti-${draftId}`;
-      const holder = await db.connect();
+      const holder = await holdRowLock('transfer_drafts', draftId);
       try {
-        await holder.query('BEGIN');
-        await holder.query(`SELECT 1 FROM bank.transfer_drafts WHERE id = $1 FOR UPDATE`, [draftId]);
-        const waiting = repo.executeDraft(draftId, jti, () => bookedAt);
-        await holder.query('COMMIT');
+        const waiting = execute(draftId, `jti-${draftId}`, () => bookedAt);
+        await untilWaitingOnLock('transfer_drafts');
+        await holder.release();
         expect((await waiting).status).toBe('executed');
       } finally {
-        await holder.query('ROLLBACK').catch(() => undefined);
-        holder.release();
+        await holder.release();
       }
     });
   });
@@ -166,7 +233,7 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
   it('records the fee as its own movement, so the movements add up to the debit', async () => {
     await withDraft({ fee: '1.50' }, async (draftId, bookedAt) => {
       const before = Number(await balance());
-      expect((await repo.executeDraft(draftId, `jti-${draftId}`, () => bookedAt)).status).toBe('executed');
+      expect((await execute(draftId, `jti-${draftId}`, () => bookedAt)).status).toBe('executed');
       const { rows } = await db.query<{ amount: string; category: string }>(
         `SELECT amount::text, category FROM bank.transactions
           WHERE account_id = $1 AND booked_at = $2 ORDER BY category`,
@@ -183,15 +250,14 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
   it('refuses a draft that expired while the execution waited on its row lock', async () => {
     await withDraft({}, async (draftId) => {
       const before = await balance();
-      const holder = await db.connect();
+      const holder = await holdRowLock('transfer_drafts', draftId);
       try {
-        await holder.query('BEGIN');
-        await holder.query(`SELECT 1 FROM bank.transfer_drafts WHERE id = $1 FOR UPDATE`, [draftId]);
         let clock = new Date();
-        const execution = repo.executeDraft(draftId, `jti-${draftId}`, () => clock);
+        const execution = execute(draftId, `jti-${draftId}`, () => clock);
+        await untilWaitingOnLock('transfer_drafts');
         clock = new Date(Date.now() + 10 * 60_000); // The lock is released only after the draft's expiry.
-        await holder.query('COMMIT');
-        expect((await execution).status).toBe('expired');
+        await holder.release();
+        expect(await execution).toEqual(refused('draft_expired'));
         const { rows } = await db.query<{ status: string }>(`SELECT status FROM bank.transfer_drafts WHERE id = $1`, [
           draftId,
         ]);
@@ -199,9 +265,68 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
         expect(await transferRows(draftId)).toEqual([]);
         expect(await balance()).toBe(before);
       } finally {
-        await holder.query('ROLLBACK').catch(() => undefined);
-        holder.release();
+        await holder.release();
       }
+    });
+  });
+
+  it('rolls the token back when the account row stays locked, and answers account_busy', async () => {
+    await withDraft({}, async (draftId, bookedAt) => {
+      const before = await balance();
+      const jti = `jti-${draftId}`;
+      const holder = await holdRowLock('accounts', ACCOUNT);
+      try {
+        expect(await execute(draftId, jti, () => bookedAt)).toEqual(refused('account_busy'));
+        expect(await jtiRows(draftId)).toEqual([]); // The token row was written, then rolled back: still unspent.
+        expect(await transferRows(draftId)).toEqual([]);
+        await holder.release();
+        expect(await balance()).toBe(before);
+        expect((await execute(draftId, jti, () => bookedAt)).status).toBe('executed');
+      } finally {
+        await holder.release();
+      }
+    });
+  });
+
+  describe('total execution budget', () => {
+    const BUDGET_MS = 1500;
+    const budgeted = new PgTransfersRepository(db, { lockWaitMs: 1000, executionBudgetMs: BUDGET_MS });
+
+    it('does not let a wait on the draft plus a wait on the account add up past the budget', async () => {
+      await withDraft({}, async (draftId, bookedAt) => {
+        const draftHolder = await holdRowLock('transfer_drafts', draftId);
+        const accountHolder = await holdRowLock('accounts', ACCOUNT);
+        try {
+          const started = performance.now();
+          const execution = execute(draftId, `jti-${draftId}`, () => bookedAt, GRANT, budgeted);
+          await untilWaitingOnLock('transfer_drafts');
+          await new Promise((resolve) => setTimeout(resolve, 800)); // Most of the draft wait: 1000 ms is allowed.
+          await draftHolder.release();
+          expect(await execution).toEqual(refused('account_busy'));
+          // Unbudgeted, the account wait would run its own full 1000 ms after the 800 ms already spent.
+          expect(performance.now() - started).toBeLessThan(BUDGET_MS + 150);
+          expect(await jtiRows(draftId)).toEqual([]);
+        } finally {
+          await draftHolder.release();
+          await accountHolder.release();
+        }
+      });
+    });
+
+    it('caps a single wait at the budget when the lock wait limit is longer', async () => {
+      const longWaits = new PgTransfersRepository(db, { lockWaitMs: 10_000, executionBudgetMs: 400 });
+      await withDraft({}, async (draftId, bookedAt) => {
+        const holder = await holdRowLock('transfer_drafts', draftId);
+        try {
+          const started = performance.now();
+          expect(await execute(draftId, `jti-${draftId}`, () => bookedAt, GRANT, longWaits)).toEqual(
+            refused('execution_in_progress'),
+          );
+          expect(performance.now() - started).toBeLessThan(1500);
+        } finally {
+          await holder.release();
+        }
+      });
     });
   });
 });

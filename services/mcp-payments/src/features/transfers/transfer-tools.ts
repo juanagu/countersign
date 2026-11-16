@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { fail, ok, requireScope, toolMeta, type Principal } from '@poc/mcp-kit';
+import type { Logger } from 'pino';
 import { z } from 'zod';
 import { executeTransfer } from './execute-transfer.js';
 import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
@@ -61,15 +62,30 @@ async function receiptView(repo: TransfersRepository, draft: TransferDraft, rece
   };
 }
 
+/**
+ * What the model sees when `execute_transfer` throws: a fixed message, never the error's text (a driver's
+ * message can carry SQL and row values). The execution may or may not have committed, so it says so.
+ */
+export const INTERNAL_ERROR_CODE = 'internal_error';
+const INTERNAL_ERROR_MESSAGE =
+  'No pude confirmar si la transferencia se realizó. Confirmá de nuevo con tu PIN en unos segundos: si ya se hizo, vas a recibir el mismo comprobante.';
+
 export interface TransferToolsDeps {
   repo: TransfersRepository;
   verifyStepUp: VerifyStepUp;
   now?: () => Date;
+  logger?: Logger;
+}
+
+/** Only the error's type and a driver code: its message can echo SQL, ids or amounts. */
+function errorFields(error: unknown) {
+  const code = (error as { code?: unknown } | null)?.code;
+  return { errorType: error instanceof Error ? error.name : typeof error, ...(typeof code === 'string' && { code }) };
 }
 
 export function buildPaymentsServer(
   principal: Principal,
-  { repo, verifyStepUp, now = () => new Date() }: TransferToolsDeps,
+  { repo, verifyStepUp, now = () => new Date(), logger }: TransferToolsDeps,
 ): McpServer {
   const server = new McpServer({ name: 'mcp-payments', version: '0.1.0' });
 
@@ -125,9 +141,14 @@ export function buildPaymentsServer(
       // Checked before the step-up token, so a caller without the scope can't spend its jti.
       const scopeError = requireScope(principal.scopes, SCOPES.execute);
       if (scopeError) return scopeError;
-      const result = await executeTransfer({ repo, verifyStepUp, now }, principal.sub, draft_id, step_up_token);
-      if (!result.ok) return fail(result.error.code, result.error.message);
-      return ok(await receiptView(repo, result.value.draft, result.value.receipt));
+      try {
+        const result = await executeTransfer({ repo, verifyStepUp, now }, principal.sub, draft_id, step_up_token);
+        if (!result.ok) return fail(result.error.code, result.error.message);
+        return ok(await receiptView(repo, result.value.draft, result.value.receipt));
+      } catch (error) {
+        logger?.error(errorFields(error), 'execute_transfer failed');
+        return fail(INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE);
+      }
     },
   );
 

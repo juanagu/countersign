@@ -1,6 +1,7 @@
 import { createJwtVerifier, readListScope, readScope } from '@poc/mcp-kit';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
+import type { Logger } from 'pino';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIENCE, createApp } from '../../../src/app.js';
 import { createStepUpVerifier } from '../../../src/features/transfers/step-up-verifier.js';
 import { InMemoryTransfersRepository } from '../../support/in-memory-transfers.js';
@@ -184,6 +185,63 @@ describe('mcp-payments tools', () => {
       arguments: { draft_id: 'drf_1', step_up_token: 'x' },
     });
     expect(parseText(result).error).toBe('not_authorised');
+  });
+
+  describe('when the execution throws', () => {
+    const DRIVER_TEXT = 'duplicate key value violates unique constraint "used_jtis_pkey" Key (jti)=(secret-jti)';
+
+    async function executeWithFailingRepo() {
+      const error = Object.assign(new Error(DRIVER_TEXT), { code: '23505' });
+      const logger = { error: vi.fn() } as unknown as Logger & { error: ReturnType<typeof vi.fn> };
+      const failing = createApp({
+        verify: createJwtVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, allowedActors: ['bot'], keys: keys.keys }),
+        transfers: repo,
+        verifyStepUp: createStepUpVerifier({ issuer: TEST_ISSUER, audience: AUDIENCE, keys: keys.keys }),
+        now: () => NOW,
+        logger,
+      });
+      const client = await connectClient(failing, await keys.sign({ aud: AUDIENCE, sub: 'juan', scope: SCOPE }));
+      const draft = parseText(await client.callTool({ name: 'prepare_transfer', arguments: juanToAna }));
+      const stepUpToken = await keys.sign({
+        aud: AUDIENCE,
+        sub: 'juan',
+        act: undefined,
+        token_use: 'step_up',
+        scope: 'transfers:execute',
+        authorization_details: [
+          {
+            type: 'transfer',
+            draft_id: draft.draft_id,
+            amount: '50000.00',
+            currency: 'ARS',
+            beneficiary_id: 'ben-juan-ana',
+          },
+        ],
+      });
+      repo.failWith = error;
+      const result = await client.callTool({
+        name: 'execute_transfer',
+        arguments: { draft_id: draft.draft_id, step_up_token: stepUpToken },
+      });
+      return { result, logger, stepUpToken };
+    }
+
+    it('answers a generic internal_error that carries none of the error text', async () => {
+      const { result } = await executeWithFailingRepo();
+      expect(result.isError).toBe(true);
+      const body = parseText(result);
+      expect(body.error).toBe('internal_error');
+      expect(JSON.stringify(result)).not.toMatch(/duplicate key|used_jtis|secret-jti|23505/);
+    });
+
+    it('logs the error type and driver code only, never its message', async () => {
+      const { logger, stepUpToken } = await executeWithFailingRepo();
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      const [fields, message] = logger.error.mock.calls[0] as [Record<string, unknown>, string];
+      expect(fields).toEqual({ errorType: 'Error', code: '23505' });
+      expect(JSON.stringify([fields, message])).not.toContain(stepUpToken);
+      expect(JSON.stringify([fields, message])).not.toMatch(/duplicate key|secret-jti/);
+    });
   });
 
   it('rejects a token minted for mcp-accounts', async () => {

@@ -9,7 +9,13 @@ import { createStepUpVerifier } from './features/transfers/step-up-verifier.js';
 
 const config = loadConfig();
 const logger = pino({ name: SERVICE_NAME, level: config.logLevel });
-const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 5 });
+// A call waits at most this long for a connection, inside the repository's execution budget (ADR 023).
+const CONNECTION_TIMEOUT_MS = 2000;
+const pool = new pg.Pool({
+  connectionString: config.databaseUrl,
+  max: 5,
+  connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+});
 const keys = remoteJwks(config.idpJwksUrl);
 const verify = createJwtVerifier({
   issuer: config.idpIssuer,

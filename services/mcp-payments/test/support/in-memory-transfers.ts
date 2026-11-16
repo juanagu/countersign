@@ -2,6 +2,8 @@ import type {
   Beneficiary,
   SourceAccount,
   ExecuteDraftOutcome,
+  ExecuteDraftRefusal,
+  ExecuteDraftRequest,
   TransferDraft,
   TransferReceipt,
   TransfersRepository,
@@ -64,6 +66,8 @@ const BENEFICIARIES: Beneficiary[] = [
   },
 ];
 
+const refused = (code: ExecuteDraftRefusal): ExecuteDraftOutcome => ({ status: 'refused', code });
+
 export class InMemoryTransfersRepository implements TransfersRepository {
   readonly drafts: TransferDraft[] = [];
 
@@ -91,22 +95,38 @@ export class InMemoryTransfersRepository implements TransfersRepository {
   readonly debits: { draftId: string; amount: string }[] = [];
   /** Set while another call holds the draft's lock past the wait limit. */
   lockHeldElsewhere = false;
+  /** Set while another transfer holds the source account's row past the wait limit. */
+  accountLockHeldElsewhere = false;
+  /** The error `executeDraft` throws, as a driver failure would: the caller cannot know whether it committed. */
+  failWith: Error | undefined;
 
   async findDraft(id: string) {
     return this.drafts.find((d) => d.id === id);
   }
 
   /** The same contract as the Postgres repository; the body has no await, so a call is atomic like the locked transaction. */
-  async executeDraft(draftId: string, jti: string, clock: () => Date): Promise<ExecuteDraftOutcome> {
-    if (this.lockHeldElsewhere) return { status: 'in_progress' };
+  async executeDraft(
+    { draftId, jti, authorised }: ExecuteDraftRequest,
+    clock: () => Date,
+  ): Promise<ExecuteDraftOutcome> {
+    if (this.failWith) throw this.failWith;
+    if (this.lockHeldElsewhere) return refused('execution_in_progress');
     const draft = this.drafts.find((d) => d.id === draftId);
-    if (draft?.status === 'executed') return this.replay(draftId, jti);
-    if (draft?.status !== 'pending') return { status: 'not_pending' };
-    if (this.usedJtis.has(jti)) return { status: 'token_already_used' };
-    this.usedJtis.set(jti, draftId);
+    if (!draft) return refused('draft_not_pending');
+    const grantMatches =
+      draft.amount === authorised.amount &&
+      draft.currency === authorised.currency &&
+      draft.beneficiaryId === authorised.beneficiaryId;
+    if (!grantMatches) return refused('not_authorised');
+    if (draft.status === 'executed') return this.replay(draftId, jti);
+    if (draft.status !== 'pending') return refused('draft_not_pending');
     const now = clock();
-    if (new Date(draft.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
-    if (draft.amount === INSUFFICIENT_AMOUNT) return { status: 'insufficient_funds' };
+    if (new Date(draft.expiresAt).getTime() <= now.getTime()) return refused('draft_expired');
+    if (this.usedJtis.has(jti)) return refused('token_already_used');
+    // The account wait comes after the token was written and rolls it back with the rest.
+    if (this.accountLockHeldElsewhere) return refused('account_busy');
+    this.usedJtis.set(jti, draftId);
+    if (draft.amount === INSUFFICIENT_AMOUNT) return refused('insufficient_funds');
     draft.status = 'executed';
     this.debits.push({ draftId, amount: draft.amount });
     const receipt = { transferId: `trf_${draftId}`, draftId, reference: 'BD-TEST', executedAt: now.toISOString() };
@@ -116,7 +136,7 @@ export class InMemoryTransfersRepository implements TransfersRepository {
 
   private replay(draftId: string, jti: string): ExecuteDraftOutcome {
     const execution = this.executions.get(draftId);
-    if (!execution || (this.usedJtis.has(jti) && execution.jti !== jti)) return { status: 'not_pending' };
+    if (!execution || (this.usedJtis.has(jti) && execution.jti !== jti)) return refused('draft_not_pending');
     return { status: 'already_executed', receipt: execution.receipt };
   }
 }

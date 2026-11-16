@@ -1,3 +1,4 @@
+import { decodeJwt } from 'jose';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { executeTransfer } from '../../../src/features/transfers/execute-transfer.js';
@@ -47,6 +48,11 @@ function stepUp(overrides: Record<string, unknown> = {}, grant: Record<string, u
     authorization_details: [{ ...GRANT, ...grant }],
     ...overrides,
   });
+}
+
+/** Marks the token's `jti` spent by an attempt that moved nothing, as an `insufficient_funds` answer leaves it. */
+function spendOnARejectedAttempt(token: string) {
+  repo.usedJtis.set(String(decodeJwt(token).jti), DRAFT.id);
 }
 
 const deps = (now = NOW) => ({
@@ -107,19 +113,6 @@ describe('executeTransfer', () => {
       expect(repo.debits).toEqual([]);
     });
 
-    it('a token a rejected attempt already spent is used again on a pending draft', async () => {
-      const token = await stepUp();
-      const later = new Date('2026-11-13T12:06:00.000Z');
-      expect(await executeTransfer(deps(later), 'juan', DRAFT.id, token)).toMatchObject({
-        error: { code: 'draft_expired' },
-      });
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, token)).toMatchObject({
-        ok: false,
-        error: { code: 'token_already_used' },
-      });
-      expect(repo.debits).toEqual([]);
-    });
-
     it('another customer calls with their own valid token for this draft', async () => {
       const result = await executeTransfer(deps(), 'ana', DRAFT.id, await stepUp({ sub: 'ana' }));
       expect(result).toMatchObject({ ok: false, error: { code: 'draft_not_found' } });
@@ -168,9 +161,7 @@ describe('executeTransfer', () => {
 
     it('tells a token a rejected attempt spent that the draft is no longer pending once another token executed it', async () => {
       const stale = await stepUp();
-      expect(await executeTransfer(deps(later), 'juan', DRAFT.id, stale)).toMatchObject({
-        error: { code: 'draft_expired' },
-      });
+      spendOnARejectedAttempt(stale);
       expect((await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).ok).toBe(true);
       expect(await executeTransfer(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
         ok: false,
@@ -181,11 +172,35 @@ describe('executeTransfer', () => {
 
     it('answers token_already_used only for a spent token on a draft that is still pending', async () => {
       const stale = await stepUp();
-      await executeTransfer(deps(later), 'juan', DRAFT.id, stale);
+      spendOnARejectedAttempt(stale);
       expect(await executeTransfer(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
         error: { code: 'token_already_used' },
       });
       expect(repo.drafts[0]?.status).toBe('pending');
+      expect(repo.debits).toEqual([]);
+    });
+
+    it('answers draft_expired, not token_already_used, for a spent token on a draft that is past its expiry', async () => {
+      const stale = await stepUp();
+      spendOnARejectedAttempt(stale);
+      expect(await executeTransfer(deps(later), 'juan', DRAFT.id, stale)).toMatchObject({
+        ok: false,
+        error: { code: 'draft_expired' },
+      });
+    });
+
+    it('spends no token on a draft that has expired', async () => {
+      await executeTransfer(deps(later), 'juan', DRAFT.id, await stepUp());
+      expect(repo.usedJtis.size).toBe(0);
+    });
+
+    it('spends nothing when the source account is locked by another transfer, and says so with its own code', async () => {
+      repo.accountLockHeldElsewhere = true;
+      expect(await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).toMatchObject({
+        ok: false,
+        error: { code: 'account_busy' },
+      });
+      expect(repo.usedJtis.size).toBe(0);
       expect(repo.debits).toEqual([]);
     });
 
