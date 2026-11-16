@@ -255,8 +255,12 @@ sequenceDiagram
   thread (`PendingApprovals`, 5-minute memory), so a forged resume is classified like any message.
 - **`execute_transfer` in `mcp-payments`** (`services/mcp-payments/src/features/transfers/`): the access token needs
   scope `transfers:execute`; the step-up token is verified (signature, issuer, `aud`, `exp`, `token_use`, scope);
-  its `sub` must be the caller; its `jti` is claimed first (single use); the grant must equal the stored draft; the
-  draft must be pending and unexpired. Execution is one transaction under the draft's row lock, idempotent per draft.
+  its `sub` must be the caller; the grant must equal the stored draft (a mismatch spends nothing). Then one transaction under the draft's row
+  lock ([ADR 023](decisions/023-step-up-token-replay-semantics.md)): the draft must be pending and unexpired, its `jti`
+  is spent there (single use) and the transfer records it. A replay is answered from that record: the token that
+  executed gets the same receipt, a spent token on an executed draft `draft_not_pending`, and `token_already_used`
+  means only "spent, nothing moved, draft still pending". A call that can't get the lock in 5 s answers
+  `execution_in_progress`. Idempotent per draft.
 - **The approved exchange.** No session token ever holds `transfers:execute`. `SkillGatedMCPToolset` asks the IdP for
   exactly that scope only when `PolicyToolset` has let an approved T3 call through, makes the one call on a
   session of its own and closes it; the token is never reused. A T3 call that gets past the policy unapproved goes
@@ -496,7 +500,7 @@ One Postgres database, three schemas, each with one owner.
 
 | Schema | Owner | Tables | Reset by |
 | --- | --- | --- | --- |
-| `bank` | `mcp-accounts`, `mcp-payments` | `customers`, `accounts` (ARS and USD), `transactions`, `beneficiaries`, `transfer_drafts` (pending, executed, expired, cancelled), `transfers` (one per draft), `used_jtis` (spent step-up tokens). Defined in `data/seed/001_schema.sql`. | `make seed` |
+| `bank` | `mcp-accounts`, `mcp-payments` | `customers`, `accounts` (ARS and USD), `transactions`, `beneficiaries`, `transfer_drafts` (pending, executed, expired, cancelled), `transfers` (one per draft), `used_jtis` (spent step-up tokens, with the draft each was spent on; `transfers.step_up_jti` names the one that executed). Defined in `data/seed/001_schema.sql`. | `make seed` |
 | `chat` | bot | `conversations`, `conversation_entries`: Pydantic AI's `ConversationStore`, revision-checked writes, id `"{user}:{threadId}"`. | nothing (created at startup) |
 | `kb` | bot | `chunks`: `doc_id`, `title`, `audience`, `heading`, `anchor`, `content`, `embedding`, generated `tsv`. | `make ingest` |
 
@@ -550,3 +554,4 @@ The tracker is [`backlog.md`](backlog.md). The ones that shape the architecture:
 | [020](decisions/020-skill-scoped-gateway-tokens.md) | Skill-scoped gateway tokens | The gateway token carries only the loaded skills' scopes, `transfers:execute` only for an approved call; the gateway lists and calls by token scope. Amends 017. |
 | [021](decisions/021-in-process-domain-subagents.md) | In-process domain subagents | Complex domains run as subagents the orchestrator calls as tools, each with its own model, policy and gateway token. Subagents stop at T2 and the orchestrator keeps every T3 tool. Separate tokens guard against mistakes, not against a compromised process. |
 | [022](decisions/022-cuj-evals.md) | CUJ evals | Multi-turn journeys with a simulated user, trials and per-call outcomes, built on `make eval`'s pydantic-evals; evalbench evaluated and not adopted. |
+| [023](decisions/023-step-up-token-replay-semantics.md) | Step-up token replay | The `jti` is spent inside the execute transaction and the transfer records it; a replay is answered from that record, `token_already_used` only means nothing moved. Amends 013. |
