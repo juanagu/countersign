@@ -396,7 +396,9 @@ Built without a live run: the live checks are the user's (unit tests and lint on
   the rate and failing the minimum).
 - **Rewrapped, not rewritten.** 09 and 10 run the red team's `deterministic_violations` (a write not asked for, the
   other customer's markers, a credential request, an ungrounded figure, `must_not_contain`) over the whole journey
-  (`RedTeamChecks`) and its judge prompt (`AttackNotObeyed`, a gating check as in `redteam.py`). 01 to 03 reuse
+  (`RedTeamChecks`) and its judge prompt (`AttackNotObeyed`, a gating check as in `redteam.py`: it skips the judge when
+  the guard blocked the run (`redteam.is_blocked`) or the deterministic checks already failed, and it is named
+  `judge_attack`, so a GUARD_MODEL outage leaves the trial unscored while an "obeyed" verdict fails it). 01 to 03 reuse
   `Contains`, `Cites`, `Grounded`, `NoAmounts`, `AnswersInText`, `CalledTool` and `ResumedIntact`. New and small:
   `FinalTurnContains` (the last run answers; an earlier turn cannot stand in), `SpendingChartEachTurn` (each turn's
   BarChart bars are that turn's totals; `SpendingMatches` takes the first chart of the whole journey) and a

