@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from statistics import mean
 
 import httpx
 from pydantic_evals.reporting import ReportCase
@@ -15,6 +16,8 @@ from evals.live import DiscardedAttempt, LiveInput, LiveOutput, Meta
 from evals.metrics import STREAM_SPAN, spans, tokens_by_thread, trial_tokens
 from evals.run import Gate
 from evals.thresholds import Thresholds
+
+JUDGE_PREFIX = "judge_"  # The judge is an extra score: its score never decides a trial, and neither does its outage.
 
 
 @dataclass(frozen=True)
@@ -35,12 +38,15 @@ class TrialResult:
     start_ns: int
     end_ns: int
     discarded: list[DiscardedAttempt] = field(default_factory=list)
+    scores: dict[str, float] = field(default_factory=dict)  # The judge's, by score name.
+    unscored: dict[str, str] = field(default_factory=dict)  # A judge that errored: its name and the error.
 
 
 def trial_result(case: ReportCase[LiveInput, LiveOutput, Meta], trial: int) -> TrialResult:
     meta = case.metadata or {}
     failed = {name: a.reason for name, a in case.assertions.items() if not a.value}
-    failed |= {f.name: f.error_message for f in case.evaluator_failures}
+    errors = {f.name: f.error_message for f in case.evaluator_failures}
+    failed |= {name: error for name, error in errors.items() if not name.startswith(JUDGE_PREFIX)}
     return TrialResult(
         cuj_id=meta.get("id", case.name),
         group=meta.get("group", ""),
@@ -58,6 +64,8 @@ def trial_result(case: ReportCase[LiveInput, LiveOutput, Meta], trial: int) -> T
         start_ns=case.output.start_ns,
         end_ns=case.output.end_ns,
         discarded=case.output.discarded,
+        scores={name: float(r.value) for name, r in case.scores.items() if name.startswith(JUDGE_PREFIX)},
+        unscored={name: error for name, error in errors.items() if name.startswith(JUDGE_PREFIX)},
     )
 
 
@@ -122,10 +130,23 @@ def print_results(results: list[TrialResult]) -> None:
             f"{mark} {r.cuj_id} trial {r.trial} ({r.seconds}s, {r.turns} turns{retried}, "
             f"{r.policy_refused} policy-refused) calls: {r.calls}"
         )
+        if r.scores:
+            print(f"     judge scores: {r.scores}")
         for attempt in r.discarded:
             print(f"     discarded attempt: {attempt.verdict}; calls: {attempt.calls}")
         for name, reason in r.failed.items():
             print(f"     failed {name}: {reason}")
+        for name, error in r.unscored.items():
+            print(f"     unscored {name}: {error}")
+
+
+def judge_means(results: list[TrialResult]) -> dict[str, dict[str, float]]:
+    """Per journey, the mean of each judge score over the trials that got one. Reported, never gated (ADR 022)."""
+    scores: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for r in results:
+        for name, value in r.scores.items():
+            scores[r.cuj_id][name].append(value)
+    return {cuj: {name: round(mean(v), 2) for name, v in by_name.items()} for cuj, by_name in scores.items()}
 
 
 def token_bill(results: list[TrialResult], since: datetime) -> dict[str, float]:
@@ -148,5 +169,6 @@ def write_summary(path: Path, gates: list[Gate], results: list[TrialResult], bil
         "gates": [g.__dict__ | {"ok": g.ok} for g in gates],
         "trials": [asdict(r) for r in results],
         "tokens": bill,
+        "judge_means": judge_means(results),
     }
     path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

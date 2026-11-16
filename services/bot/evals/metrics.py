@@ -29,6 +29,7 @@ PHOENIX_SPANS = "http://localhost:6006/v1/projects/default/spans"
 PAGE_SIZE = 1000
 MAX_PAGES = 200
 CUJ_SPAN = "cuj.trial"  # Exported by `evals/cuj_spans.py`.
+SCORE_PREFIX = "cuj.score."  # + the judge's score name (judge_quality): a trial's extra scores.
 DISCARDED_THREADS = "cuj.discarded_threads"  # The threads of the trial's discarded attempts: their tokens are its.
 TTFT = "bot.time_to_first_token_ms"
 FIRST_SURFACE = "bot.time_to_first_surface_ms"
@@ -119,6 +120,13 @@ def discarded_threads(value: object) -> list[str]:
     return [str(thread) for thread in value] if isinstance(value, list) else []
 
 
+def _score_means(trials: list[dict[str, Any]]) -> str:
+    """`  judge_quality 0.90 ...` over the trials that carry the score; empty when none does."""
+    names = sorted({k for t in trials for k in t if k.startswith(SCORE_PREFIX)})
+    means = {n: [float(t[n]) for t in trials if t.get(n) is not None] for n in names}
+    return "".join(f"  {n.removeprefix(SCORE_PREFIX)} {sum(v) / len(v):.2f}" for n, v in means.items() if v)
+
+
 def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[str]:
     """One line per journey: trials, pass rate, the median turns and tokens, and the total policy-refused attempts."""
     by_cuj: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -139,6 +147,7 @@ def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[s
         rows.append(
             f"  {cuj_id:30} {len(trials):3} trials  pass {passed / len(trials):4.0%}  "
             f"turns p50 {turns or 0:.0f}  tokens p50 {tokens or 0:,.0f}  policy-refused {refused}"
+            f"{_score_means(trials)}"
         )
     return rows
 

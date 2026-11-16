@@ -12,7 +12,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -22,9 +22,11 @@ from pydantic_evals.evaluators import Evaluator
 from pydantic_evals.reporting import EvaluationReport
 
 from app.config import Settings
+from app.core.clock import BankClock
 from evals.agui_client import BffSession, RunTrace, bff_client
 from evals.bank_db import expire_draft, read_ledger, restore_balance
 from evals.cuj import Scenario, load_scenarios
+from evals.cuj_content_evaluators import AttackNotObeyed, FinalTurnContains, RedTeamChecks, SpendingChartEachTurn
 from evals.cuj_evaluators import (
     BalanceMatchesLedger,
     Cards,
@@ -48,6 +50,7 @@ from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall, trace_gap_verd
 from evals.cuj_spans import Trial, emit_trials
 from evals.cuj_user import Reply, Turn, is_end, simulated_user
 from evals.delegation import CONFIRM_TEMPLATE
+from evals.golden import month_range
 from evals.live import (
     OUT_OF_TURNS,
     STEP_UP_PIN,
@@ -56,13 +59,17 @@ from evals.live import (
     LiveOutput,
     Meta,
     Note,
+    ResumeCheck,
     attach_delegated,
+    resume_cut,
 )
-from evals.live_evaluators import Contains
+from evals.live_evaluators import AnswersInText, CalledTool, Cites, Contains, Grounded, NoAmounts
+from evals.redteam import Suite, load_suite
 from evals.run import print_gates
-from evals.scenario_evaluators import NoRunErrors
+from evals.scenario_evaluators import CITATION_RUBRIC, QUALITY_RUBRIC, Judge, NoRunErrors, ResumedIntact
 from evals.thresholds import load_thresholds
 
+SPENDING_TOOL = "spending_summary"
 WRONG_PIN = "000000"
 CANCEL_PAYLOAD = {"approved": False, "reason": "El cliente canceló la transferencia."}  # As the web's Cancelar sends.
 
@@ -70,13 +77,42 @@ CujEvaluator = Evaluator[LiveInput, LiveOutput, Meta]
 Report = EvaluationReport[LiveInput, LiveOutput, Meta]
 
 
-def evaluators_for(scenario: Scenario) -> list[CujEvaluator]:
+JUDGE_RUBRICS = {"quality": QUALITY_RUBRIC, "citation": CITATION_RUBRIC}
+
+
+def _content_checks(scenario: Scenario, today: date) -> list[CujEvaluator]:
+    expect = scenario.expect
+    checks: list[CujEvaluator] = [Contains(text) for text in expect.text_contains]
+    checks += [Cites(tuple(expect.cites))] if expect.cites else []
+    checks += [Grounded()] if expect.grounded else []
+    checks += [NoAmounts()] if expect.no_amounts else []
+    checks += [AnswersInText()] if expect.answers_in_text else []
+    checks += [FinalTurnContains(expect.final_turn_contains)] if expect.final_turn_contains else []
+    for months_back in expect.spending_months:
+        first, last = month_range(today, months_back)
+        checks.append(CalledTool(SPENDING_TOOL, {"from": first.isoformat(), "to": last.isoformat()}))
+    checks += [SpendingChartEachTurn(len(expect.spending_months) or 1)] if expect.spending_chart_each_turn else []
+    checks += [ResumedIntact()] if expect.resumed_intact else []
+    return checks
+
+
+def _attack_checks(scenario: Scenario, judge_model: str, suite: Suite) -> list[CujEvaluator]:
+    attack = scenario.expect.attack
+    if attack is None:
+        return []
+    checks: list[CujEvaluator] = [RedTeamChecks(suite, scenario.user, attack.must_not_contain)]
+    return [*checks, AttackNotObeyed(attack.judge, judge_model)] if attack.judge else checks
+
+
+def evaluators_for(scenario: Scenario, judge_model: str, suite: Suite, today: date) -> list[CujEvaluator]:
     expect = scenario.expect
     checks: list[CujEvaluator] = [
         NoRunErrors(),
         Trajectory(scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires),
         Cards(expect.cards.present, expect.cards.absent),
-        *(Contains(text) for text in expect.text_contains),
+        *_content_checks(scenario, today),
+        *_attack_checks(scenario, judge_model, suite),
+        *(Judge(f"judge_{name}", JUDGE_RUBRICS[name], judge_model) for name in scenario.judges),
     ]
     if scenario.handoffs:
         checks.append(Handoffs(scenario.handoffs))
@@ -93,10 +129,11 @@ def evaluators_for(scenario: Scenario) -> list[CujEvaluator]:
     return checks
 
 
-def case_for(scenario: Scenario) -> Case[LiveInput, LiveOutput, Meta]:
-    inputs = LiveInput(user=scenario.user, turns=[scenario.opening])
+def case_for(scenario: Scenario, judge_model: str, suite: Suite, today: date) -> Case[LiveInput, LiveOutput, Meta]:
+    inputs = LiveInput(user=scenario.user, turns=scenario.customer_turns)
     meta = {"group": scenario.group, "id": scenario.id, "driver": scenario.driver}
-    return Case(name=scenario.id, inputs=inputs, metadata=meta, evaluators=tuple(evaluators_for(scenario)))
+    evaluators = tuple(evaluators_for(scenario, judge_model, suite, today))
+    return Case(name=scenario.id, inputs=inputs, metadata=meta, evaluators=evaluators)
 
 
 @dataclass
@@ -106,6 +143,7 @@ class Journey:
     traces: list[RunTrace]
     notes: list[Note]
     turns: int
+    resume: ResumeCheck | None = None
 
 
 def _interrupted_draft(trace: RunTrace, interrupt: dict[str, Any]) -> str | None:
@@ -163,6 +201,12 @@ async def follow_policy(
     resumed, note = await answer_interrupt(session, history, paused, action)
     notes += [Note(note)] if note else []
     return [resumed] if resumed else []
+
+
+async def reconnect(session: BffSession, scenario: Scenario) -> Journey:
+    """The opening's answer is cut mid-run, then the thread is reconnected twice (Scenario 5, as a journey)."""
+    check = await resume_cut(session, scenario.opening)
+    return Journey([check.replay], [], 1, check)
 
 
 async def play(session: BffSession, scenario: Scenario, reply: Reply | None) -> Journey:
@@ -230,13 +274,16 @@ async def run_attempt(scenario: Scenario, reply: Reply | None) -> LiveOutput:
     async with bff_client() as http:
         session = await BffSession.login(http, scenario.user)
         before = await read_ledger(account)
-        journey = await play(session, scenario, reply)
+        journey = await (
+            reconnect(session, scenario) if scenario.driver == "reconnect" else play(session, scenario, reply)
+        )
         after = await read_ledger(account)
     output = LiveOutput(
         journey.traces,
         ledger_change=after.minus(before),
         ledger_after=after,
         notes=journey.notes,
+        resume=journey.resume,
         step_up_statuses=session.step_up_statuses,
         thread_id=session.thread_id,
         turns=journey.turns,
@@ -247,12 +294,18 @@ async def run_attempt(scenario: Scenario, reply: Reply | None) -> LiveOutput:
 
 
 async def run_scenario(
-    scenario: Scenario, trials: int, reply: Reply | None, starting: Mapping[str, Decimal]
+    scenario: Scenario,
+    trials: int,
+    reply: Reply | None,
+    starting: Mapping[str, Decimal],
+    judge_model: str,
+    suite: Suite,
 ) -> list[TrialResult]:
     async def task(_: LiveInput) -> LiveOutput:
         return await run_trial(scenario, reply, starting)
 
-    dataset = Dataset[LiveInput, LiveOutput, Meta](name=scenario.id, cases=[case_for(scenario)])
+    case = case_for(scenario, judge_model, suite, BankClock().today())
+    dataset = Dataset[LiveInput, LiveOutput, Meta](name=scenario.id, cases=[case])
     report: Report = await dataset.evaluate(task, max_concurrency=1, progress=False, repeat=trials)
     results = [trial_result(case, n) for n, case in enumerate(report.cases, 1)]
     results += [error_result(scenario, len(results) + n, f.error_message) for n, f in enumerate(report.failures, 1)]
@@ -272,23 +325,30 @@ def _trial_span(r: TrialResult) -> Trial:
         start_ns=r.start_ns,
         end_ns=r.end_ns,
         discarded_threads=discarded,
+        scores=tuple(sorted(r.scores.items())),
     )
 
 
-async def main(out: Path | None, only: str | None, trials: int | None) -> int:
+def select(scenarios: list[Scenario], only: str | None, groups: Sequence[str]) -> list[Scenario]:
+    """The journeys whose id contains `only` (when given) and whose group is one of `groups` (when any are given)."""
+    return [s for s in scenarios if (not only or only in s.id) and (not groups or s.group in groups)]
+
+
+async def main(out: Path | None, only: str | None, trials: int | None, groups: Sequence[str] = ()) -> int:
     thresholds = load_thresholds()
-    scenarios = [s for s in load_scenarios() if not only or only in s.id]
+    scenarios = select(load_scenarios(), only, groups)
     if not scenarios:
-        print(f"No journey matches {only!r}.")
+        print(f"No journey matches id {only!r} in groups {list(groups)}.")
         return 1
     settings = Settings()
+    suite = load_suite()
     reply = simulated_user(settings.guard_model) if any(s.driver == "simulated" for s in scenarios) else None
     since = datetime.now(UTC)
     accounts = {s.source_account for s in scenarios}
     starting = {account: (await read_ledger(account)).balance for account in sorted(accounts)}
     results: list[TrialResult] = []
     for scenario in scenarios:
-        results += await run_scenario(scenario, trials or scenario.trials, reply, starting)
+        results += await run_scenario(scenario, trials or scenario.trials, reply, starting, settings.guard_model, suite)
     print_results(results)
     emit_trials([_trial_span(r) for r in results], os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"))
     gates = cuj_gates(results, thresholds)
@@ -304,6 +364,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, help="Write the gates and per-trial results as JSON here.")
     parser.add_argument("--only", help="Run only the journeys whose id contains this (a partial run still gates).")
+    parser.add_argument(
+        "--group", action="append", default=[], help="Run only this group's journeys; repeat for several groups."
+    )
     parser.add_argument("--trials", type=int, help="Override each journey's trials.")
     args = parser.parse_args()
-    sys.exit(asyncio.run(main(args.out, args.only, args.trials)))
+    sys.exit(asyncio.run(main(args.out, args.only, args.trials, args.group)))
