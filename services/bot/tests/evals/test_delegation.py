@@ -206,6 +206,15 @@ def test_a_late_run_does_not_shift_the_cards_of_the_runs_that_arrived() -> None:
     assert {t: [c["draftId"] for c in cards] for t, cards in by_trace.items()} == {"t1": ["drf_1"], "t3": ["drf_3"]}
 
 
+def test_a_stream_without_an_id_and_a_late_run_leave_out_only_themselves() -> None:
+    runs = [_run("r1", "drf_1"), _run("r2", "drf_2"), _run("r3", "drf_3"), _run("r4", "drf_4")]
+    arrived = [_stream("t1", "1", "r1"), _stream("t2", "2"), _stream("t4", "4", "r4")]  # r2 has no id, r3 is late.
+
+    by_trace = cards_by_trace(arrived, runs)
+
+    assert {t: [c["draftId"] for c in cards] for t, cards in by_trace.items()} == {"t1": ["drf_1"], "t4": ["drf_4"]}
+
+
 def test_without_run_ids_a_missing_run_pairs_nothing_and_a_complete_set_pairs_by_order() -> None:
     runs = [_run("r1", "drf_1"), _run("r2", "drf_2")]
 

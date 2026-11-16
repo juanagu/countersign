@@ -9,10 +9,17 @@ from opentelemetry.trace import Link, Status
 from opentelemetry.util.types import Attributes
 
 from app.guardrails.pii import redact, redact_value
+from app.guardrails.stream_timing import RUN_ID_ATTRIBUTE, THREAD_ATTRIBUTE
+
+# Random uuids with no PII, which the evals match against the client's own ids; the phone pattern can read a uuid's
+# digit groups as a number and change them. Every other attribute is redacted.
+OPAQUE_ID_ATTRIBUTES = frozenset({RUN_ID_ATTRIBUTE, THREAD_ATTRIBUTE, "cuj.thread_id", "cuj.discarded_threads"})
 
 
 def redact_attributes(attributes: Attributes) -> dict[str, Any]:
-    return {key: redact_value(value) for key, value in (attributes or {}).items()}
+    return {
+        key: value if key in OPAQUE_ID_ATTRIBUTES else redact_value(value) for key, value in (attributes or {}).items()
+    }
 
 
 def redact_status(status: Status) -> Status:

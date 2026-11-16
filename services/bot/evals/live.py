@@ -32,6 +32,22 @@ class LiveInput(BaseModel):
     reads_trace: bool = False
 
 
+OUT_OF_TURNS = "out_of_turns"
+# The kinds of note a stalled journey produces by itself: the plan did not end because the gateway refused writes.
+STALL_NOTE_KINDS = frozenset({OUT_OF_TURNS})
+
+
+class Note(str):
+    """A harness note: its text, and the kind a retry decision reads instead of matching the text."""
+
+    kind: str
+
+    def __new__(cls, text: str, kind: str = "") -> "Note":
+        note = super().__new__(cls, text)
+        note.kind = kind
+        return note
+
+
 @dataclass
 class ResumeCheck:
     """Scenario 5: what the client had when the connection dropped, and what two reconnects replayed."""
@@ -69,12 +85,6 @@ class LiveOutput:
     discarded: list["DiscardedAttempt"] = field(default_factory=list)  # The attempts that came before this one.
     start_ns: int = 0  # A CUJ trial's wall-clock span, first attempt's start to last attempt's end.
     end_ns: int = 0
-    _calls: list[ObservedCall] | None = field(default=None, init=False, repr=False, compare=False)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("traces", "delegated"):  # What `calls` is built from.
-            object.__setattr__(self, "_calls", None)
-        object.__setattr__(self, name, value)
 
     @property
     def text(self) -> str:
@@ -92,12 +102,9 @@ class LiveOutput:
 
     @property
     def calls(self) -> list[ObservedCall]:
-        """Every call in order with its outcome, the subagent's included. Built once, again after `traces` or
-        `delegated` is set."""
-        if self._calls is None:
-            cancelled = frozenset().union(*(t.cancelled for t in self.traces))
-            object.__setattr__(self, "_calls", with_delegated(client_calls(self.traces, cancelled), self.delegated))
-        return self._calls or []
+        """Every call in order with its outcome, the subagent's included. Built on each read, so it never goes stale."""
+        cancelled = frozenset().union(*(t.cancelled for t in self.traces))
+        return with_delegated(client_calls(self.traces, cancelled), self.delegated)
 
     @property
     def handoffs(self) -> set[str]:

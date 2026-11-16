@@ -16,7 +16,7 @@ import math
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -104,10 +104,9 @@ def tokens_by_thread(stream_spans: list[Span], model_spans: list[Span]) -> dict[
     return dict(totals)
 
 
-def _trial_tokens(trial: dict[str, Any], thread_tokens: dict[str, float]) -> float:
-    """The trial's thread and the threads of its discarded attempts."""
-    threads = [str(trial.get("cuj.thread_id")), *map(str, trial.get(DISCARDED_THREADS) or [])]
-    return sum(thread_tokens.get(thread, 0.0) for thread in threads)
+def trial_tokens(thread_id: str, discarded_threads: Iterable[str], thread_tokens: Mapping[str, float]) -> float:
+    """A trial's tokens: its own thread and the threads of its discarded attempts, which it also paid for."""
+    return sum(thread_tokens.get(thread, 0.0) for thread in [thread_id, *discarded_threads])
 
 
 def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[str]:
@@ -120,7 +119,13 @@ def cuj_rows(trial_spans: list[Span], thread_tokens: dict[str, float]) -> list[s
         passed = sum(bool(t.get("cuj.passed")) for t in trials)
         turns = percentile([float(t.get("cuj.turns") or 0) for t in trials], 0.5)
         refused = sum(int(t.get("cuj.policy_refused") or 0) for t in trials)
-        tokens = percentile([_trial_tokens(t, thread_tokens) for t in trials], 0.5)
+        tokens = percentile(
+            [
+                trial_tokens(str(t.get("cuj.thread_id")), map(str, t.get(DISCARDED_THREADS) or []), thread_tokens)
+                for t in trials
+            ],
+            0.5,
+        )
         rows.append(
             f"  {cuj_id:30} {len(trials):3} trials  pass {passed / len(trials):4.0%}  "
             f"turns p50 {turns or 0:.0f}  tokens p50 {tokens or 0:,.0f}  policy-refused {refused}"

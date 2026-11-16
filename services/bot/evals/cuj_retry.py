@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from evals.calls import ObservedCall
 from evals.cuj import Scenario
 from evals.cuj_evaluators import MISSING, UNEXPECTED, Problem, rule_matches, trajectory_problems, visible_problems
-from evals.live import LiveOutput
+from evals.live import STALL_NOTE_KINDS, LiveOutput
 
 # The gateway allows each customer 20 reversible writes per 10 minutes (ADR 017), and every trial prepares at least
 # one. A trial that was going right until the gateway refused a write says nothing about the bot, so it waits for the
@@ -39,13 +39,24 @@ def _attempted_a_forbidden_tool(scenario: Scenario, refusals: list[ObservedCall]
     return any(rule_matches(rule, c) for rule in scenario.forbid for c in refusals)
 
 
+def _notes_beyond_a_stall(output: LiveOutput) -> list[str]:
+    """The harness notes a stall does not explain: anything but a kind it causes by itself."""
+    return [n for n in output.notes if getattr(n, "kind", "") not in STALL_NOTE_KINDS]
+
+
 def rate_limit_stall(scenario: Scenario, output: LiveOutput) -> Stall | None:
     """The whole attempt, judged first. It is a stall only when a `rate_limited` refusal is there, no run errored, no
-    call (a refused one included) broke `forbid`, `allow` or `requires`, the harness noted nothing, and the only
+    call (a refused one included) broke `forbid`, `allow` or `requires`, the harness noted nothing a stall does
+    not cause (running out of turns), and the only
     problems are steps never reached. A refused call the journey names is not itself unexpected: it is the refusal."""
     calls = output.calls
     refusals = [c for c in calls if c.outcome == RATE_LIMITED]
-    if not refusals or output.errors or output.notes or _attempted_a_forbidden_tool(scenario, refusals):
+    if (
+        not refusals
+        or output.errors
+        or _notes_beyond_a_stall(output)
+        or _attempted_a_forbidden_tool(scenario, refusals)
+    ):
         return None
     named = _tools_the_journey_names(scenario)
     problems = trajectory_problems(calls, scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires)

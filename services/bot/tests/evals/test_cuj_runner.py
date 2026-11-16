@@ -16,7 +16,7 @@ from evals.cuj_report import TrialResult, cuj_gates
 from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall
 from evals.cuj_runner import _trial_span, main, play, run_trial
 from evals.cuj_user import Turn, is_end
-from evals.live import DiscardedAttempt, LiveOutput
+from evals.live import OUT_OF_TURNS, DiscardedAttempt, LiveOutput, Note
 from evals.thresholds import Consistency, Thresholds
 
 
@@ -522,6 +522,23 @@ def test_a_harness_note_beside_a_rate_limit_keeps_the_attempt_as_the_verdict() -
     assert rate_limit_stall(_stalled_scenario(), attempt) is None
 
 
+def test_running_out_of_turns_beside_a_rate_limit_is_still_a_stall() -> None:
+    attempt = _refused()
+    attempt.notes = [Note("ran out of turns (6) before the plan ended", OUT_OF_TURNS)]
+
+    assert rate_limit_stall(_stalled_scenario(), attempt) is not None
+
+
+def test_a_note_a_stall_does_not_cause_beside_out_of_turns_keeps_the_attempt_as_the_verdict() -> None:
+    attempt = _refused()
+    attempt.notes = [
+        Note("ran out of turns (6) before the plan ended", OUT_OF_TURNS),
+        Note("step-up refused with the right PIN: 429 {}", "step_up_refused"),
+    ]
+
+    assert rate_limit_stall(_stalled_scenario(), attempt) is None
+
+
 async def test_a_forbidden_call_after_a_rate_limited_prepare_fails_and_is_not_retried(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -561,9 +578,10 @@ def test_the_trial_span_carries_the_threads_of_its_discarded_attempts() -> None:
     assert _trial_span(result).discarded_threads == ("a", "b")
 
 
-def test_the_calls_are_built_once_and_again_when_the_delegated_calls_are_set() -> None:
+def test_the_calls_follow_the_delegated_calls_and_a_caller_s_copy_changes_nothing() -> None:
     output = _output(ObservedCall("prepare_transfer"))
 
-    assert output.calls is output.calls
+    output.calls.clear()
+    assert [c.name for c in output.calls] == ["ask_payments", "prepare_transfer"]
     output.delegated = [ObservedCall("ask_payments", delegated=True)]
     assert [c.name for c in output.calls] == ["ask_payments"]

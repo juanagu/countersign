@@ -16,7 +16,7 @@
   opening: "Quiero pasarle plata a Ana."
   plan: >
     You are Juan Pérez, a retail customer writing short, informal Spanish. You want to send money to Ana but have
-    not decided the amount. If asked how much, say 50.000 pesos. If asked which Juan or which account, say the one
+    not decided the amount. If asked how much, say 50.000 pesos. If asked which Ana or which account, say the one
     you usually send to. The app asks you to confirm and enter your PIN by itself; you never type a PIN. After the
     assistant says the transfer was sent, ask once how much money you have in your peso account. Once the assistant
     tells you the balance, answer only FIN.

@@ -12,7 +12,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from app.chat.agent import build_agent
 from app.chat.deps import BotDeps
 from app.core.telemetry import agent_instrumentation
-from app.policy.policy_toolset import POLICY_DENIED_ATTRIBUTE
+from app.policy.policy_toolset import POLICY_DENIED_ATTRIBUTE, denied
 from app.skills.registry import SkillRegistry
 from tests.conftest import TEST_SKILLS_DIR, open_guard
 
@@ -50,3 +50,22 @@ async def test_a_denied_calls_tool_span_carries_the_flag_and_an_allowed_one_does
     }
     assert flagged["list_beneficiaries"] is True
     assert not flagged["load_skill"]
+
+
+def test_a_denial_flags_only_the_tool_s_own_span() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("t")
+
+    with tracer.start_as_current_span("agent run"):
+        denied(TOOL, "not allowed")
+        with tracer.start_as_current_span("execute_tool", attributes={"gen_ai.tool.name": TOOL}):
+            denied(TOOL, "not allowed")
+
+    flagged = {
+        s.name: s.attributes.get(POLICY_DENIED_ATTRIBUTE)
+        for s in exporter.get_finished_spans()
+        if s.attributes is not None
+    }
+    assert flagged == {"agent run": None, "execute_tool": True}

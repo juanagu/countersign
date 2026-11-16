@@ -12,7 +12,7 @@ from pydantic_evals.reporting import ReportCase
 
 from evals.cuj import Scenario
 from evals.live import DiscardedAttempt, LiveInput, LiveOutput, Meta
-from evals.metrics import STREAM_SPAN, spans, tokens_by_thread
+from evals.metrics import STREAM_SPAN, spans, tokens_by_thread, trial_tokens
 from evals.run import Gate
 from evals.thresholds import Thresholds
 
@@ -139,8 +139,7 @@ def token_bill(results: list[TrialResult], since: datetime) -> dict[str, float]:
     by_thread = tokens_by_thread(stream, models)
     bill: dict[str, float] = defaultdict(float)
     for r in results:
-        threads = [r.thread_id, *(a.thread_id for a in r.discarded)]
-        bill[r.cuj_id] += sum(by_thread.get(thread, 0.0) for thread in threads)
+        bill[r.cuj_id] += trial_tokens(r.thread_id, (a.thread_id for a in r.discarded), by_thread)
     return dict(bill)
 
 

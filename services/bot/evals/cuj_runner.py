@@ -48,7 +48,16 @@ from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall, trace_gap_verd
 from evals.cuj_spans import Trial, emit_trials
 from evals.cuj_user import Reply, Turn, is_end, simulated_user
 from evals.delegation import CONFIRM_TEMPLATE
-from evals.live import STEP_UP_PIN, DiscardedAttempt, LiveInput, LiveOutput, Meta, attach_delegated
+from evals.live import (
+    OUT_OF_TURNS,
+    STEP_UP_PIN,
+    DiscardedAttempt,
+    LiveInput,
+    LiveOutput,
+    Meta,
+    Note,
+    attach_delegated,
+)
 from evals.live_evaluators import Contains
 from evals.run import print_gates
 from evals.scenario_evaluators import NoRunErrors
@@ -177,7 +186,7 @@ async def play(session: BffSession, scenario: Scenario, reply: Reply | None) -> 
         conversation += [Turn("Cliente", message), Turn("Asistente", " ".join(t.text for t in runs if t.text))]
         message = await _next_message(scenario, scripted, reply, conversation)
     if message is not None:
-        notes.append(f"ran out of turns ({scenario.max_turns}) before the plan ended")
+        notes.append(Note(f"ran out of turns ({scenario.max_turns}) before the plan ended", OUT_OF_TURNS))
     return Journey(traces, notes, turns)
 
 
@@ -253,7 +262,16 @@ async def run_scenario(
 def _trial_span(r: TrialResult) -> Trial:
     discarded = tuple(a.thread_id for a in r.discarded)
     return Trial(
-        r.cuj_id, r.trial, r.passed, r.turns, r.driver, r.thread_id, r.policy_refused, r.start_ns, r.end_ns, discarded
+        cuj_id=r.cuj_id,
+        trial=r.trial,
+        passed=r.passed,
+        turns=r.turns,
+        driver=r.driver,
+        thread_id=r.thread_id,
+        policy_refused=r.policy_refused,
+        start_ns=r.start_ns,
+        end_ns=r.end_ns,
+        discarded_threads=discarded,
     )
 
 

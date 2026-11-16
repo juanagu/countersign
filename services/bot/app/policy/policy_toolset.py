@@ -25,6 +25,7 @@ INPUT_BLOCKED = "the customer's message did not pass the input check"
 # A denial is a normal tool result, so the call's span ends OK; this flag is how a trace tells it from a result. No
 # reason, no content (rule 7).
 POLICY_DENIED_ATTRIBUTE = "policy.denied"
+TOOL_NAME_ATTRIBUTE = "gen_ai.tool.name"  # Set on a tool call's own span.
 
 
 def _without_approval_args(tool: ToolsetTool[BotDeps]) -> ToolsetTool[BotDeps]:
@@ -40,9 +41,17 @@ def tool_tier(tool: ToolsetTool[BotDeps]) -> RiskTier | None:
     return RiskTier.parse(meta.get(RISK_TIER_META_KEY))
 
 
+def _flag_tool_span(name: str) -> None:
+    """Flags the current span only when it is this tool's own span, never a run or a delegate's."""
+    span = trace.get_current_span()
+    attributes = getattr(span, "attributes", None) or {}
+    if attributes.get(TOOL_NAME_ATTRIBUTE) == name:
+        span.set_attribute(POLICY_DENIED_ATTRIBUTE, True)
+
+
 def denied(name: str, reason: str) -> dict[str, str]:
     logger.info("tool call denied", extra={"tool": name, "reason": reason})
-    trace.get_current_span().set_attribute(POLICY_DENIED_ATTRIBUTE, True)
+    _flag_tool_span(name)
     return {"error": "policy_denied", "reason": reason}
 
 

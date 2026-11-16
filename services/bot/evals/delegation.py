@@ -75,14 +75,18 @@ def delegated_calls(trace_spans: Sequence[Span], cards: Mapping[str, Sequence[di
 
 def cards_by_trace(streams: Sequence[Span], runs: Sequence[RunTrace]) -> dict[str, list[dict[str, Any]]]:
     """The confirm cards of the run each arrived trace belongs to. A trace is matched to its run by the run id its
-    `bot.stream` span carries; without ids, by order, and only when every run's trace arrived: a late trace could
-    otherwise take another run's cards, so no trace is paired then."""
+    `bot.stream` span carries; one whose id is missing or matches no run is left out. Only when no trace carries an
+    id, by order, and only when every run's trace arrived: a late trace could otherwise take another run's cards."""
     shown = _cards_per_run(runs)
     ordered = sorted(streams, key=lambda s: str(s.get("start_time")))
     run_ids = [(s.get("attributes") or {}).get(RUN_ID_ATTRIBUTE) for s in ordered]
     by_run_id = {run.run_id: run_cards for run, run_cards in zip(runs, shown, strict=True) if run.run_id}
-    if ordered and all(run_id in by_run_id for run_id in run_ids):
-        return {s["context"]["trace_id"]: by_run_id[run_id] for s, run_id in zip(ordered, run_ids, strict=True)}
+    if any(run_ids):
+        return {
+            s["context"]["trace_id"]: by_run_id[run_id]
+            for s, run_id in zip(ordered, run_ids, strict=True)
+            if run_id in by_run_id
+        }
     if len(ordered) == len(runs):
         return {s["context"]["trace_id"]: run_cards for s, run_cards in zip(ordered, shown, strict=True)}
     return {}
