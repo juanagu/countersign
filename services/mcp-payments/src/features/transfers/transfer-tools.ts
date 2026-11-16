@@ -3,17 +3,11 @@ import { fail, ok, requireScope, toolMeta, type Principal } from '@poc/mcp-kit';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import { Deadline } from './deadline.js';
-import {
-  EXECUTE_CALL_BUDGET_MS,
-  executeTransfer,
-  NOT_EXECUTED_CODE,
-  NOT_EXECUTED_MESSAGE,
-  NotExecutedError,
-} from './execute-transfer.js';
+import { EXECUTE_CALL_BUDGET_MS, executeTransfer } from './execute-transfer.js';
 import { prepareTransfer, type PreparedTransfer } from './prepare-transfer.js';
 import { STEP_UP_SCOPE, type VerifyStepUp } from './step-up-verifier.js';
 import { TRANSFER_LIMITS } from './transfer-rules.js';
-import type { Beneficiary, TransferDraft, TransferReceipt, TransfersRepository } from './transfers-repository.js';
+import type { Beneficiary, TransferReceipt, TransfersRepository } from './transfers-repository.js';
 
 export const SCOPES = {
   readBeneficiaries: 'beneficiaries:read',
@@ -33,7 +27,13 @@ const amount = z
 // Bullets, not asterisks: the model quotes this in markdown, where `**` would open bold.
 const mask = (value: string) => `••••${value.slice(-4)}`;
 
-function publicBeneficiary({ id, fullName, bankName, accountRef, currency }: Beneficiary) {
+function publicBeneficiary({
+  id,
+  fullName,
+  bankName,
+  accountRef,
+  currency,
+}: Pick<Beneficiary, 'id' | 'fullName' | 'bankName' | 'accountRef' | 'currency'>) {
   return { id, name: fullName, bank: bankName, account: mask(accountRef), currency };
 }
 
@@ -51,31 +51,18 @@ function draftView({ draft, total, account, beneficiary }: PreparedTransfer) {
   };
 }
 
-/** The receipt lookup after a commit gets no more than this: the money has moved, the card is a courtesy. */
-const RECEIPT_LOOKUP_CAP_MS = 1000;
-
-/**
- * The receipt of a committed execution. The account and beneficiary only decorate it, so when their lookup fails or
- * is slow the receipt goes out without them: it never turns a transfer that moved money into an error.
- */
-async function receiptView(repo: TransfersRepository, draft: TransferDraft, receipt: TransferReceipt, logger?: Logger) {
-  const deadline = Deadline.after(RECEIPT_LOOKUP_CAP_MS);
-  const [account, beneficiary] = await deadline
-    .bound(Promise.all([repo.findAccount(draft.sourceAccountId), repo.findBeneficiary(draft.beneficiaryId)]))
-    .catch((error: unknown) => {
-      logger?.warn(errorFields(error), 'receipt lookup failed after a committed execute_transfer');
-      return [undefined, undefined] as const;
-    });
+function receiptView(receipt: TransferReceipt) {
+  const { sourceAccount, beneficiary } = receipt;
   return {
     transfer_id: receipt.transferId,
     draft_id: receipt.draftId,
     reference: receipt.reference,
     executed_at: receipt.executedAt,
-    amount: draft.amount,
-    fee: draft.fee,
-    currency: draft.currency,
-    source_account: account && { id: account.id, alias: account.alias, number: mask(account.number) },
-    beneficiary: beneficiary && publicBeneficiary(beneficiary),
+    amount: receipt.amount,
+    fee: receipt.fee,
+    currency: receipt.currency,
+    source_account: { id: sourceAccount.id, alias: sourceAccount.alias, number: mask(sourceAccount.number) },
+    beneficiary: publicBeneficiary({ ...beneficiary, currency: receipt.currency }),
   };
 }
 
@@ -96,7 +83,6 @@ export interface TransferToolsDeps {
 
 /** Only the error's type and a driver code: its message can echo SQL, ids or amounts. */
 function errorFields(error: unknown): Record<string, string> {
-  if (error instanceof NotExecutedError) return errorFields(error.cause);
   const code = (error as { code?: unknown } | null)?.code;
   return { errorType: error instanceof Error ? error.name : typeof error, ...(typeof code === 'string' && { code }) };
 }
@@ -168,12 +154,13 @@ export function buildPaymentsServer(
           step_up_token,
           deadline,
         );
-        if (!result.ok) return fail(result.error.code, result.error.message);
-        return ok(await receiptView(repo, result.value.draft, result.value.receipt, logger));
+        if (!result.ok) {
+          if (result.error.code === 'not_executed') logger?.warn('execute_transfer ran nothing: no answer in time');
+          return fail(result.error.code, result.error.message);
+        }
+        return ok(receiptView(result.value.receipt));
       } catch (error) {
         logger?.error(errorFields(error), 'execute_transfer failed');
-        // Nothing ran before the execution: a definite answer, the draft stays open and no execution is in flight.
-        if (error instanceof NotExecutedError) return fail(NOT_EXECUTED_CODE, NOT_EXECUTED_MESSAGE);
         return fail(INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE);
       }
     },

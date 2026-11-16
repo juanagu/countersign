@@ -9,13 +9,10 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Tool
 from app.guardrails.messages import tool_call_parts, tool_return_parts, tool_returns_in
 from app.policy.tool_policy import DRAFT_BOUND_TOOLS, PREPARE_TRANSFER, prepared_draft_id
 
-# The bank's answers about the draft itself, the only error codes that close it (ADR 023): the draft is over
-# (`draft_expired`, `draft_not_pending`, `draft_not_found`), the balance cannot cover it (`insufficient_funds`) or the
-# token never authorised it (`not_authorised`). Any other code, whoever raised it (the bot's `policy_denied`, a
-# gateway `rate_limited`, `insufficient_scope`, `unknown_tool` or `service_unavailable`, `token_already_used`,
-# `execution_in_progress`, `account_busy`, `upstream_error`, `internal_error`, a code not invented yet) leaves the draft
-# open: nothing was decided, or the outcome is unknown and a fresh confirmation is answered from the record. A result
-# with no error code closes it too: a receipt, the customer's denial or cancel, Pydantic AI's synthesized result.
+# The only error codes that close a draft: the bank's answers about the draft itself. Every other code, whoever raised
+# it, leaves it open, because nothing was decided or the outcome is unknown and a fresh confirmation is answered from
+# the record. A result with no error code closes it too: a receipt, the customer's denial or cancel, Pydantic AI's
+# synthesized result.
 CLOSING_BANK_ERRORS = frozenset(
     {"draft_expired", "draft_not_pending", "draft_not_found", "insufficient_funds", "not_authorised"}
 )

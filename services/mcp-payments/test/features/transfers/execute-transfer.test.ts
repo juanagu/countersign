@@ -2,7 +2,7 @@ import { decodeJwt } from 'jose';
 import { createTestKeys, TEST_ISSUER, type TestKeys } from '@poc/mcp-kit/testing';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Deadline } from '../../../src/features/transfers/deadline.js';
-import { executeTransfer, NotExecutedError } from '../../../src/features/transfers/execute-transfer.js';
+import { executeTransfer } from '../../../src/features/transfers/execute-transfer.js';
 import { createStepUpVerifier } from '../../../src/features/transfers/step-up-verifier.js';
 import type { TransferDraft } from '../../../src/features/transfers/transfers-repository.js';
 import { InMemoryTransfersRepository } from '../../support/in-memory-transfers.js';
@@ -62,9 +62,17 @@ const deps = (now = NOW) => ({
   now: () => now,
 });
 
+const execute = (
+  d: ReturnType<typeof deps>,
+  customerId: string,
+  draftId: string,
+  token: string,
+  deadline = Deadline.after(5000),
+) => executeTransfer(d, customerId, draftId, token, deadline);
+
 describe('executeTransfer', () => {
   it('executes a draft with a matching step-up token and returns the receipt', async () => {
-    const result = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp());
+    const result = await execute(deps(), 'juan', DRAFT.id, await stepUp());
     expect(result.ok).toBe(true);
     expect(repo.debits).toEqual([{ draftId: DRAFT.id, amount: '50000.00' }]);
   });
@@ -85,7 +93,7 @@ describe('executeTransfer', () => {
       ['the step-up token has no scope', { scope: undefined }, {}, 'not_authorised'],
       ['the step-up token lacks transfers:execute', { scope: 'transfers:prepare' }, {}, 'not_authorised'],
     ])('%s', async (_, claims, grant, code) => {
-      const result = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(claims, grant));
+      const result = await execute(deps(), 'juan', DRAFT.id, await stepUp(claims, grant));
       expect(result).toMatchObject({ ok: false, error: { code } });
       expect(repo.debits).toEqual([]);
     });
@@ -101,7 +109,7 @@ describe('executeTransfer', () => {
         },
         -1,
       );
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, token)).toMatchObject({
+      expect(await execute(deps(), 'juan', DRAFT.id, token)).toMatchObject({
         error: { code: 'not_authorised' },
       });
       expect(repo.debits).toEqual([]);
@@ -109,29 +117,29 @@ describe('executeTransfer', () => {
 
     it('the draft expired', async () => {
       const later = new Date('2026-11-13T12:06:00.000Z');
-      const result = await executeTransfer(deps(later), 'juan', DRAFT.id, await stepUp());
+      const result = await execute(deps(later), 'juan', DRAFT.id, await stepUp());
       expect(result).toMatchObject({ ok: false, error: { code: 'draft_expired' } });
       expect(repo.debits).toEqual([]);
     });
 
     it('another customer calls with their own valid token for this draft', async () => {
-      const result = await executeTransfer(deps(), 'ana', DRAFT.id, await stepUp({ sub: 'ana' }));
+      const result = await execute(deps(), 'ana', DRAFT.id, await stepUp({ sub: 'ana' }));
       expect(result).toMatchObject({ ok: false, error: { code: 'draft_not_found' } });
       expect(repo.debits).toEqual([]);
     });
   });
 
   it('is idempotent per draft: a second, fresh token returns the same receipt without a second debit', async () => {
-    const first = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp());
-    const second = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp());
+    const first = await execute(deps(), 'juan', DRAFT.id, await stepUp());
+    const second = await execute(deps(), 'juan', DRAFT.id, await stepUp());
     expect(second).toEqual(first);
     expect(repo.debits).toHaveLength(1);
   });
 
   it('executes once when two confirmations race', async () => {
     const [a, b] = await Promise.all([
-      executeTransfer(deps(), 'juan', DRAFT.id, await stepUp()),
-      executeTransfer(deps(), 'juan', DRAFT.id, await stepUp()),
+      execute(deps(), 'juan', DRAFT.id, await stepUp()),
+      execute(deps(), 'juan', DRAFT.id, await stepUp()),
     ]);
     expect(a.ok && b.ok).toBe(true);
     expect(repo.debits).toHaveLength(1);
@@ -142,8 +150,8 @@ describe('executeTransfer', () => {
 
     it('gives the token that executed the draft the same receipt, and debits once', async () => {
       const token = await stepUp();
-      const first = await executeTransfer(deps(), 'juan', DRAFT.id, token);
-      const replay = await executeTransfer(deps(), 'juan', DRAFT.id, token);
+      const first = await execute(deps(), 'juan', DRAFT.id, token);
+      const replay = await execute(deps(), 'juan', DRAFT.id, token);
       expect(first.ok).toBe(true);
       expect(replay).toEqual(first);
       expect(repo.debits).toHaveLength(1);
@@ -152,8 +160,8 @@ describe('executeTransfer', () => {
     it('executes once when two calls race with one token, and neither is told the token was used', async () => {
       const token = await stepUp();
       const [a, b] = await Promise.all([
-        executeTransfer(deps(), 'juan', DRAFT.id, token),
-        executeTransfer(deps(), 'juan', DRAFT.id, token),
+        execute(deps(), 'juan', DRAFT.id, token),
+        execute(deps(), 'juan', DRAFT.id, token),
       ]);
       expect(a.ok && b.ok).toBe(true);
       expect(a).toEqual(b);
@@ -163,8 +171,8 @@ describe('executeTransfer', () => {
     it('tells a token a rejected attempt spent that the draft is no longer pending once another token executed it', async () => {
       const stale = await stepUp();
       spendOnARejectedAttempt(stale);
-      expect((await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).ok).toBe(true);
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
+      expect((await execute(deps(), 'juan', DRAFT.id, await stepUp())).ok).toBe(true);
+      expect(await execute(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
         ok: false,
         error: { code: 'draft_not_pending' },
       });
@@ -174,7 +182,7 @@ describe('executeTransfer', () => {
     it('answers token_already_used only for a spent token on a draft that is still pending', async () => {
       const stale = await stepUp();
       spendOnARejectedAttempt(stale);
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
+      expect(await execute(deps(), 'juan', DRAFT.id, stale)).toMatchObject({
         error: { code: 'token_already_used' },
       });
       expect(repo.drafts[0]?.status).toBe('pending');
@@ -184,20 +192,20 @@ describe('executeTransfer', () => {
     it('answers draft_expired, not token_already_used, for a spent token on a draft that is past its expiry', async () => {
       const stale = await stepUp();
       spendOnARejectedAttempt(stale);
-      expect(await executeTransfer(deps(later), 'juan', DRAFT.id, stale)).toMatchObject({
+      expect(await execute(deps(later), 'juan', DRAFT.id, stale)).toMatchObject({
         ok: false,
         error: { code: 'draft_expired' },
       });
     });
 
     it('spends no token on a draft that has expired', async () => {
-      await executeTransfer(deps(later), 'juan', DRAFT.id, await stepUp());
+      await execute(deps(later), 'juan', DRAFT.id, await stepUp());
       expect(repo.usedJtis.size).toBe(0);
     });
 
     it('spends nothing when the source account is locked by another transfer, and says so with its own code', async () => {
       repo.accountLockHeldElsewhere = true;
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).toMatchObject({
+      expect(await execute(deps(), 'juan', DRAFT.id, await stepUp())).toMatchObject({
         ok: false,
         error: { code: 'account_busy' },
       });
@@ -207,7 +215,7 @@ describe('executeTransfer', () => {
 
     it('spends nothing when the draft is locked by another call, and fails closed with its own code', async () => {
       repo.lockHeldElsewhere = true;
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp())).toMatchObject({
+      expect(await execute(deps(), 'juan', DRAFT.id, await stepUp())).toMatchObject({
         ok: false,
         error: { code: 'execution_in_progress' },
       });
@@ -217,12 +225,12 @@ describe('executeTransfer', () => {
 
     it('a mismatched grant gets nothing: no receipt for an executed draft, no spent token on a pending one', async () => {
       const tampered = await stepUp({}, { amount: '1.00' });
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, tampered)).toMatchObject({
+      expect(await execute(deps(), 'juan', DRAFT.id, tampered)).toMatchObject({
         error: { code: 'not_authorised' },
       });
       expect(repo.usedJtis.size).toBe(0);
-      await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp());
-      expect(await executeTransfer(deps(), 'juan', DRAFT.id, tampered)).toMatchObject({
+      await execute(deps(), 'juan', DRAFT.id, await stepUp());
+      expect(await execute(deps(), 'juan', DRAFT.id, tampered)).toMatchObject({
         ok: false,
         error: { code: 'not_authorised' },
       });
@@ -230,72 +238,88 @@ describe('executeTransfer', () => {
     });
   });
 
+  it("answers draft_not_found, and spends nothing, for a draft that does not exist or is another customer's", async () => {
+    const missing = await stepUp({}, { draft_id: 'drf_missing' });
+    expect(await execute(deps(), 'juan', 'drf_missing', missing)).toMatchObject({ error: { code: 'draft_not_found' } });
+    expect(await execute(deps(), 'ana', DRAFT.id, await stepUp({ sub: 'ana' }))).toMatchObject({
+      error: { code: 'draft_not_found' },
+    });
+    expect(repo.usedJtis.size).toBe(0);
+    expect(repo.debits).toEqual([]);
+  });
+
+  describe('the receipt', () => {
+    const expected = {
+      draftId: DRAFT.id,
+      amount: '50000.00',
+      fee: '0.00',
+      currency: 'ARS',
+      sourceAccount: { id: 'acc-juan-ars', alias: 'Pesos', number: '0170-0002-7810' },
+      beneficiary: { id: 'ben-juan-ana', fullName: 'Ana Gómez', bankName: 'Banco Demo' },
+    };
+
+    it('carries the account and beneficiary the card shows, on a fresh execution and on a replay', async () => {
+      const token = await stepUp();
+      const first = await execute(deps(), 'juan', DRAFT.id, token);
+      const replay = await execute(deps(), 'juan', DRAFT.id, await stepUp());
+      expect(first).toMatchObject({ ok: true, value: { receipt: expected } });
+      expect(replay).toMatchObject({ ok: true, value: { receipt: expected } });
+    });
+  });
+
   describe('inside one deadline for the whole call', () => {
     const never = () => new Promise<never>(() => undefined);
     const BUDGET_MS = 60;
 
-    async function timed(run: Promise<unknown>) {
+    async function timed<T>(run: Promise<T>) {
       const started = performance.now();
-      const error = await run.then(
-        () => undefined,
-        (failure: unknown) => failure,
-      );
-      return { error, elapsedMs: performance.now() - started };
+      const result = await run;
+      return { result, elapsedMs: performance.now() - started };
     }
 
-    it('stops waiting for a step-up check that outlasts it, before anything ran', async () => {
+    it('answers not_executed, before anything ran, when the step-up check outlasts the budget', async () => {
       const slow = { ...deps(), verifyStepUp: never };
-      const { error, elapsedMs } = await timed(
-        executeTransfer(slow, 'juan', DRAFT.id, await stepUp(), Deadline.after(BUDGET_MS)),
+      const { result, elapsedMs } = await timed(
+        execute(slow, 'juan', DRAFT.id, await stepUp(), Deadline.after(BUDGET_MS)),
       );
-      expect(error).toBeInstanceOf(NotExecutedError);
+      expect(result).toMatchObject({ ok: false, error: { code: 'not_executed' } });
       expect(elapsedMs).toBeLessThan(BUDGET_MS + 200);
       expect(repo.deadlines).toEqual([]);
       expect(repo.usedJtis.size).toBe(0);
     });
 
-    it('stops waiting for a draft read that outlasts it, before anything ran', async () => {
-      repo.findDraft = never;
-      const { error, elapsedMs } = await timed(
-        executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(), Deadline.after(BUDGET_MS)),
-      );
-      expect(error).toBeInstanceOf(NotExecutedError);
-      expect(elapsedMs).toBeLessThan(BUDGET_MS + 200);
+    it('answers not_executed, not not_authorised, when the step-up check cannot be made', async () => {
+      const unreachable = { ...deps(), verifyStepUp: () => Promise.reject(new TypeError('fetch failed')) };
+      expect(await execute(unreachable, 'juan', DRAFT.id, await stepUp())).toMatchObject({
+        ok: false,
+        error: { code: 'not_executed' },
+      });
       expect(repo.deadlines).toEqual([]);
-    });
-
-    it('says a failing draft read ran nothing, and keeps the error for the log', async () => {
-      const failure = new Error('connection terminated');
-      repo.findDraft = () => Promise.reject(failure);
-      const { error } = await timed(executeTransfer(deps(), 'juan', DRAFT.id, await stepUp()));
-      expect(error).toBeInstanceOf(NotExecutedError);
-      expect((error as NotExecutedError).cause).toBe(failure);
     });
 
     it('hands the repository the call own deadline, not a fresh one', async () => {
       const deadline = Deadline.after(5000);
-      await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(), deadline);
+      await execute(deps(), 'juan', DRAFT.id, await stepUp(), deadline);
       expect(repo.deadlines).toEqual([deadline]);
     });
 
     it('lets an execution error through as it is: its outcome is unknown', async () => {
       const failure = new Error('connection terminated');
       repo.failWith = failure;
-      const { error } = await timed(executeTransfer(deps(), 'juan', DRAFT.id, await stepUp()));
-      expect(error).toBe(failure);
+      await expect(execute(deps(), 'juan', DRAFT.id, await stepUp())).rejects.toBe(failure);
     });
 
-    it('answers a budget that ran out before the execution with a refusal, and moves nothing', async () => {
+    it('answers not_executed, and moves nothing, when the budget ran out before the execution', async () => {
       let elapsedMs = 0;
       const deadline = Deadline.after(1000, () => elapsedMs);
-      const find = repo.findDraft.bind(repo);
-      repo.findDraft = async (id) => {
-        const draft = await find(id);
-        elapsedMs = 5000; // The draft read used up the budget.
-        return draft;
+      const checked = createStepUpVerifier({ issuer: TEST_ISSUER, audience: 'mcp-payments', keys: keys.keys });
+      const verifyStepUp: typeof checked = async (token) => {
+        const grant = await checked(token);
+        elapsedMs = 5000; // The step-up check used up the budget.
+        return grant;
       };
-      const result = await executeTransfer(deps(), 'juan', DRAFT.id, await stepUp(), deadline);
-      expect(result).toMatchObject({ ok: false, error: { code: 'execution_in_progress' } });
+      const result = await execute({ ...deps(), verifyStepUp }, 'juan', DRAFT.id, await stepUp(), deadline);
+      expect(result).toMatchObject({ ok: false, error: { code: 'not_executed' } });
       expect(repo.debits).toEqual([]);
       expect(repo.usedJtis.size).toBe(0);
     });

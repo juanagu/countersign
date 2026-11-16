@@ -5,10 +5,7 @@ export class DeadlineExceeded extends Error {
   }
 }
 
-/**
- * One call's time budget, started at its top and handed to every step, so verifying the token, reading the draft,
- * executing it and shaping the receipt share it instead of each having a limit of its own (ADR 023).
- */
+/** One call's time budget, started at its top and handed to every step, so none has a limit of its own. */
 export class Deadline {
   private constructor(
     private readonly at: number,

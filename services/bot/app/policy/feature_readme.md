@@ -41,8 +41,8 @@ customer's denial or cancel, the bank's answer about the draft (`CLOSING_BANK_ER
 a cut-off call. The list names what **closes** a draft (ADR 023); every other error code leaves it open, whoever raised
 it: the bot's `policy_denied` and `service_unavailable`, the gateway's `rate_limited`, `insufficient_scope` and
 `unknown_tool`, `token_already_used` (spent with nothing moved on a pending draft), `execution_in_progress` and
-`account_busy` (another call holds the draft or the account, nothing spent), `not_executed` (a step before the execution
-failed), `upstream_error` and `internal_error` (the outcome is unknown and a fresh confirmation is answered from the
+`account_busy` (another call holds the draft or the account, nothing spent), `not_executed` (nothing ran: the deadline,
+a connection or the step-up check), `upstream_error` and `internal_error` (the outcome is unknown and a fresh confirmation is answered from the
 record), a code not invented yet, and a failed result with no readable code. The draft stays open, so asking again
 raises a new interrupt and the approval sends a fresh step-up token, never the spent one. After `execution_in_progress`,
 `account_busy`, `upstream_error` and `internal_error` the first execution may still be running, so `PolicyToolset`

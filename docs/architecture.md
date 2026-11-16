@@ -261,9 +261,10 @@ sequenceDiagram
   transfer records it. A replay is answered from that record: the token that executed gets the same receipt, a spent
   token on an executed draft `draft_not_pending`, and `token_already_used` means only "spent, nothing moved, draft
   still pending". A lock wait that runs out answers `execution_in_progress` (the draft) or `account_busy` (the source
-  account), and the whole call (step-up check, draft read, execution, receipt lookup) shares one 6 s deadline under the
-  gateway's 10 s; a failure before the execution answers `not_executed`, a thrown error inside it a generic
-  `internal_error`. The bot closes a draft only on the bank's answers about the draft itself (a receipt, `draft_expired`,
+  account). The whole call (step-up check, pool connection, every statement of the transaction) shares one 6 s
+  deadline under the gateway's 10 s, checked before each statement; every path where nothing ran answers
+  `not_executed`, a thrown error inside the transaction a generic `internal_error`. The receipt (account and
+  beneficiary included) is read inside the transaction, so the receipt card always renders. The bot closes a draft only on the bank's answers about the draft itself (a receipt, `draft_expired`,
   `draft_not_pending`, `draft_not_found`, `insufficient_funds`, `not_authorised`) and the customer's denial; every other
   code leaves it open. Idempotent per draft.
 - **The approved exchange.** No session token ever holds `transfers:execute`. `SkillGatedMCPToolset` asks the IdP for

@@ -91,7 +91,7 @@ export class InMemoryTransfersRepository implements TransfersRepository {
   /** Spent step-up tokens and the draft each was spent on. */
   readonly usedJtis = new Map<string, string>();
   /** Each executed draft's receipt and the token that executed it. */
-  readonly executions = new Map<string, { receipt: TransferReceipt; jti: string }>();
+  readonly executions = new Map<string, { transferId: string; reference: string; executedAt: string; jti: string }>();
   /** Every debit applied, so tests can assert a draft moved money exactly once. */
   readonly debits: { draftId: string; amount: string }[] = [];
   /** Set while another call holds the draft's lock past the wait limit. */
@@ -103,23 +103,19 @@ export class InMemoryTransfersRepository implements TransfersRepository {
   /** The error `executeDraft` throws, as a driver failure would: the caller cannot know whether it committed. */
   failWith: Error | undefined;
 
-  async findDraft(id: string) {
-    return this.drafts.find((d) => d.id === id);
-  }
-
   /** The same contract as the Postgres repository; the body has no await, so a call is atomic like the locked transaction. */
   async executeDraft(
-    { draftId, jti, isAuthorised, deadline }: ExecuteDraftRequest,
+    { draftId, customerId, jti, isAuthorised, deadline }: ExecuteDraftRequest,
     clock: () => Date,
   ): Promise<ExecuteDraftOutcome> {
     this.deadlines.push(deadline);
     if (this.failWith) throw this.failWith;
-    if (deadline.remainingMs() < 1) return refused('execution_in_progress');
+    if (deadline.remainingMs() < 1) return refused('not_executed');
     if (this.lockHeldElsewhere) return refused('execution_in_progress');
     const draft = this.drafts.find((d) => d.id === draftId);
-    if (!draft) return refused('draft_not_pending');
+    if (draft?.customerId !== customerId) return refused('draft_not_found');
     if (!isAuthorised(draft)) return refused('not_authorised');
-    if (draft.status === 'executed') return this.replay(draftId, jti);
+    if (draft.status === 'executed') return this.replay(draft, jti);
     if (draft.status !== 'pending') return refused('draft_not_pending');
     const now = clock();
     if (new Date(draft.expiresAt).getTime() <= now.getTime()) return refused('draft_expired');
@@ -130,14 +126,38 @@ export class InMemoryTransfersRepository implements TransfersRepository {
     if (draft.amount === INSUFFICIENT_AMOUNT) return refused('insufficient_funds');
     draft.status = 'executed';
     this.debits.push({ draftId, amount: draft.amount });
-    const receipt = { transferId: `trf_${draftId}`, draftId, reference: 'BD-TEST', executedAt: now.toISOString() };
-    this.executions.set(draftId, { receipt, jti });
-    return { status: 'executed', receipt };
+    const executed = { transferId: `trf_${draftId}`, reference: 'BD-TEST', executedAt: now.toISOString() };
+    this.executions.set(draftId, { ...executed, jti });
+    return { status: 'executed', receipt: this.receiptOf(draft, executed) };
   }
 
-  private replay(draftId: string, jti: string): ExecuteDraftOutcome {
-    const execution = this.executions.get(draftId);
+  private replay(draft: TransferDraft, jti: string): ExecuteDraftOutcome {
+    const execution = this.executions.get(draft.id);
     if (!execution || (this.usedJtis.has(jti) && execution.jti !== jti)) return refused('draft_not_pending');
-    return { status: 'already_executed', receipt: execution.receipt };
+    const { transferId, reference, executedAt } = execution;
+    return { status: 'already_executed', receipt: this.receiptOf(draft, { transferId, reference, executedAt }) };
+  }
+
+  /** The receipt carries what the draft names, as the Postgres adapter reads it under the lock. */
+  private receiptOf(
+    draft: TransferDraft,
+    executed: Pick<TransferReceipt, 'transferId' | 'reference' | 'executedAt'>,
+  ): TransferReceipt {
+    const account = ACCOUNTS.find((a) => a.id === draft.sourceAccountId) as SourceAccount;
+    const beneficiary = BENEFICIARIES.find((b) => b.id === draft.beneficiaryId) as Beneficiary;
+    return {
+      ...executed,
+      draftId: draft.id,
+      amount: draft.amount,
+      fee: draft.fee,
+      currency: draft.currency,
+      sourceAccount: { id: account.id, alias: account.alias, number: account.number },
+      beneficiary: {
+        id: beneficiary.id,
+        fullName: beneficiary.fullName,
+        bankName: beneficiary.bankName,
+        accountRef: beneficiary.accountRef,
+      },
+    };
   }
 }

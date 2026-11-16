@@ -20,9 +20,11 @@ and made the message say "start again", which told a customer whose money had mo
 time. F72 recorded that as a stopgap.
 
 ## Decision
-- **One transaction, one lock.** `executeDraft(draftId, jti, now)` takes the draft's row lock (`FOR UPDATE`) first and
-  does everything under it: the grant check, the status check, expiry (with the clock read after the lock), spending
-  the token, debit, movements, the transfer. Concurrent calls on a draft serialise on that lock, so the second call of a double click
+- **One transaction, one lock.** `executeDraft({ draftId, customerId, jti, isAuthorised, deadline }, now)` takes the
+  draft's row lock (`FOR UPDATE`) first, with no read of the draft before it, and does everything under it: the
+  ownership check, the grant check, the status check, expiry (with the clock read after the lock), spending the token,
+  debit, movements, the transfer. A draft that is missing or belongs to another customer answers `draft_not_found`,
+  checked on the row the lock returns. Concurrent calls on a draft serialise on that lock, so the second call of a double click
   waits for the first and then sees its result instead of racing it.
 - **The record.** `used_jtis` gains `draft_id` (the draft the token was spent on), and `transfers` gains
   `step_up_jti NOT NULL UNIQUE REFERENCES used_jtis (jti)`: the token that executed the draft, and the database refuses
@@ -44,7 +46,8 @@ time. F72 recorded that as a stopgap.
 | executed | the one that executed it (`transfers.step_up_jti`) | the same receipt, no second debit |
 | executed | spent elsewhere (a rejected attempt on this draft) | `draft_not_pending` |
 | executed | not spent | the receipt; the token stays unspent (it can authorise nothing on a finished draft) |
-| expired, cancelled or missing | any | `draft_not_pending` |
+| missing, or another customer's | any | `draft_not_found` |
+| expired or cancelled | any | `draft_not_pending` |
 | pending, past its expiry | any | `draft_expired`, nothing spent |
 | pending | already spent | `token_already_used` |
 | pending | new | spent, then executes, or `insufficient_funds` |
@@ -54,36 +57,40 @@ time. F72 recorded that as a stopgap.
   and gets the receipt of what already happened.
 - **The invariant.** `token_already_used` means "this token was spent, nothing moved with it, and the draft is still
   pending", and nothing else.
-- **In flight, and the call's deadline.** One deadline starts at the top of the `execute_transfer` callback
-  (`Deadline`, 6 s) and every step shares it: the step-up check (bounded to 2 s of it, since a cold JWKS cache fetches
-  the IdP's keys), the draft read, the transaction, and, after a commit, the receipt lookup (at most 1 s, outside the
-  deadline because the money has moved). Inside the transaction the repository sets `lock_timeout = min(5 s, what is left)`
-  and `statement_timeout = what is left + 250 ms` once after `BEGIN` (before the draft lock) and again before the account
-  debit, the only two lock waits, so the waits cannot add up past the deadline (a 5 s wait on the draft and a 5 s wait on
-  the account would have been 10 s). The statement timeout sits above the lock timeout so a lock wait always ends by
-  `lock_timeout` (55P03, a lock refusal) and a 57014 only means a statement that was slow for another reason or was
-  cancelled, which is an error, not a refusal. `statement_timeout` is reset to 0 before `COMMIT`: a commit is never
-  cancelled by the budget. If the deadline is already spent before a guarded step, the repository does not start it:
-  it rolls back and refuses (`execution_in_progress` before the draft lock, `account_busy` before the account), a
-  definite outcome. The pg pool adds `connectionTimeoutMillis = 2 s`. The worst case is about 6 s + 0.25 s + 1 s, so a
-  call the gateway abandons at 10 s has long since rolled back or committed.
-  - A lock wait on the **draft** that runs out answers `execution_in_progress` ("La transferencia se está
-    procesando. Esperá unos segundos y confirmá de nuevo con tu PIN."): another call on this draft holds it.
-  - A lock wait on the **source account's row** that runs out answers `account_busy` ("La cuenta de origen está
-    ocupada con otra operación. Esperá unos segundos y confirmá de nuevo con tu PIN."): another transfer holds the
-    account, not this draft. It comes after the token insert, which rolls back with the rest, so the token stays
-    unspent.
+- **The receipt comes from the transaction.** The receipt card needs the source account's alias and number and the
+  beneficiary's name, bank and account, and the money has already moved by the time anyone could look them up, so no
+  lookup exists after the commit. The locking read joins the draft to its account and beneficiary (`FOR UPDATE OF` the
+  draft, so only the draft is locked), and the fresh execution and the replay both build the receipt from that row and
+  the transfer's own row: amount, fee and currency from the draft, reference and time from the transfer. A fresh run
+  and a replay therefore answer the same receipt, whole, whatever the database does next, and the bot's receipt
+  card (security rule 4) is never starved of a field.
+- **One deadline, checked before every statement.** The deadline starts once, at the top of the `execute_transfer`
+  callback (`Deadline`, 6 s, a required parameter below it) and every step shares it: the step-up check (2 s of it at
+  most, since a cold JWKS cache fetches the IdP's keys), the pool's `connect()` (raced against what is left), and each
+  statement of the transaction. Before every statement the repository reads what is left; with nothing left it rolls
+  back and answers `not_executed`, since nothing was committed. Otherwise it sets `statement_timeout` to what is left
+  and `lock_timeout` to the lesser of 5 s and what is left (a `set_config` round trip per statement: the waits of one
+  call cannot add up past the deadline, which one `SET` after `BEGIN` could not promise). The commit gets no statement
+  timeout (it is reset first): cancelling it would leave the outcome unknown for a transaction that was fine. The
+  pg pool adds `connectionTimeoutMillis = 2 s`. A cancel that fires because the deadline ran out (`55P03` or `57014`
+  with nothing left) is `not_executed`; a lock wait that ends at its own 5 s limit with time left is a real wait
+  on a row another call holds:
+  - on the **draft**: `execution_in_progress` ("La transferencia se está procesando. Esperá unos segundos y confirmá
+    de nuevo con tu PIN.");
+  - on the **source account's row**: `account_busy` ("La cuenta de origen está ocupada con otra operación. Esperá unos
+    segundos y confirmá de nuevo con tu PIN."), which comes after the token insert and rolls it back, so the token
+    stays unspent.
   Both fail closed and confirming again is safe: a finished execution answers with its receipt.
-- **Failures around the execution.** A failure of the step-up check or the draft read, or either running past the
-  deadline, happens before anything was spent or moved: `NotExecutedError`, answered `not_executed` ("No pude
-  procesar la confirmación y no se ejecutó nada. Confirmá de nuevo con tu PIN en unos segundos."). The draft stays open
-  and, nothing being in flight, the bot may ask again at once. After a confirmed commit the receipt always goes out: if
-  the account or beneficiary lookup fails or is slow, it goes out without those two fields (so the bot's receipt card,
-  which needs them, is not shown, and the model still has the reference), and the failure is logged as a warning.
-  Known residual: `createStepUpVerifier` still reads any verification failure, a JWKS fetch error included, as an
-  invalid token (`not_authorised`, which closes the draft); only a hang past the 2 s bound is `not_executed`.
-- **Unknown outcome.** When the execution itself throws (a driver error, a statement cancelled for another reason, a
-  lost connection, a failed commit) the tool callback logs the error type and driver code, no message or values, and
+- **`not_executed`: every path where nothing ran.** The deadline spent before the transaction, a pool that gives no
+  connection in time (or fails to give one: nothing was sent), the deadline running out before or during a statement
+  of the transaction (rolled back, never committed), and a step-up check that could not be made: a JWKS fetch error or
+  timeout, or any failure that is not jose's verdict on the token. A bad signature, an expired token, a wrong
+  audience or issuer, an unknown key id and malformed claims stay `not_authorised`, which closes the draft; the
+  verifier tells the two apart by jose's error classes and rejects for everything else. `not_executed` ("No pude
+  procesar la confirmación y no se ejecutó nada. Confirmá de nuevo con tu PIN en unos segundos.") leaves the draft
+  open, is not held, and the bot may ask again at once, because nothing is in flight.
+- **Unknown outcome.** When the execution itself throws after something may have been sent (a driver error, a statement
+  cancelled with time still left, a lost connection, a failed commit) the tool callback logs the error type and driver code, no message or values, and
   answers the generic `internal_error` ("No pude confirmar si la transferencia se realizó. Confirmá de nuevo con tu PIN
   en unos segundos: si ya se hizo, vas a recibir el mismo comprobante."), never the driver's text. A client that
   threw is released with the error, so the pool drops it. The gateway answers `upstream_error` when the backend times
@@ -139,15 +146,19 @@ time. F72 recorded that as a stopgap.
   provided: a `transfers` row cannot be given a real `step_up_jti` after the fact. Rebuild and restart `mcp-payments`
   with the re-seed: the old image against the new schema fails on `used_jtis.draft_id NOT NULL`, the new image against
   the old schema on the missing columns.
-- **Repository port.** `claimTokenId` and `findReceipt` leave `TransfersRepository`; `executeDraft` takes the `jti`
-  and the authorised grant and returns the receipt or `refused` with the wire error code itself, so there is one
-  vocabulary from the repository to the tool.
+- **Repository port.** `claimTokenId`, `findReceipt` and `findDraft` leave `TransfersRepository`; `executeDraft`
+  takes the caller, the `jti`, the grant check and the deadline, and returns the receipt (whole) or `refused` with the
+  wire error code itself, so there is one vocabulary from the repository to the tool. The use case has no failure to
+  signal besides a result: `not_executed` is an answer, not an exception.
 - **Tests.** Repository tests run against Postgres (`TEST_DATABASE_URL`) for the races, both lock timeouts (each
-  waits for a real blocked backend before releasing the holder) and the deadline; a scripted connection checks the
-  transaction's plumbing (no timeout on the commit, a spent deadline refused before a guarded step, 57014 not read as a
-  lock refusal, the client released with its error); the use-case tests run on an in-memory repository with the
+  waits for a real blocked backend before releasing the holder), the deadline, the whole receipt on a fresh run and a
+  replay, ownership and a starved pool; a scripted connection checks the transaction's plumbing (every statement armed
+  from what is left and none started with nothing left, several slow statements stopping at the budget, no timeout on
+  the commit, a pool that gives no connection, 57014 with time left not read as a lock refusal, the client released
+  with its error); a contract test reads the receipt fields `TransferReceiptData` requires from the schema; the use-case tests run on an in-memory repository with the
   same contract.
 - **Residual.** A rejected `insufficient_funds` attempt spends its token, and the bot closes the draft on it, so a
   customer short on balance prepares the transfer again (new draft, new PIN) after topping up; the same token is never
-  sent twice anyway. The lock wait (5 s) and the call's deadline (6 s) are constants, not configuration. Only the commit can
-  leave the outcome unknown to a caller, and the record answers that.
+  sent twice anyway. The lock wait (5 s) and the call's deadline (6 s) are constants, not configuration. After the commit is sent
+  the outcome can be unknown to a caller, and the record answers that. A `not_executed` is logged without its cause (the
+  use case and the repository answer with a code only), so a database that stays down shows as a run of those warnings.

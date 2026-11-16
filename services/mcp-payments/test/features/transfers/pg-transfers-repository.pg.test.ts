@@ -69,11 +69,12 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
     jti: string,
     clock: () => Date,
     authorised = GRANT,
-    { target = repo, budgetMs = BUDGET_MS } = {},
+    { target = repo, budgetMs = BUDGET_MS, customerId = 'juan' } = {},
   ): Promise<ExecuteDraftOutcome> =>
     target.executeDraft(
       {
         draftId,
+        customerId,
         jti,
         isAuthorised: (draft) => grantMatchesDraft(draft, authorised),
         deadline: Deadline.after(budgetMs),
@@ -157,6 +158,65 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
       });
       expect(await jtiRows(draftId)).toHaveLength(2);
     });
+  });
+
+  it('returns the receipt from the transaction itself, the same for the fresh execution and the replay', async () => {
+    await withDraft({ fee: '1.50' }, async (draftId, bookedAt) => {
+      const account = (await db.query(`SELECT alias, number FROM bank.accounts WHERE id = $1`, [ACCOUNT])).rows[0];
+      const payee = (
+        await db.query(`SELECT full_name, bank_name, account_ref FROM bank.beneficiaries WHERE id = 'ben-juan-ana'`)
+      ).rows[0];
+      const jti = `jti-${draftId}`;
+      const executed = await execute(draftId, jti, () => bookedAt);
+      const replay = await execute(draftId, jti, () => bookedAt);
+      expect(executed).toMatchObject({
+        status: 'executed',
+        receipt: {
+          draftId,
+          amount: '10.00',
+          fee: '1.50',
+          currency: 'ARS',
+          sourceAccount: { id: ACCOUNT, alias: account.alias, number: account.number },
+          beneficiary: {
+            id: 'ben-juan-ana',
+            fullName: payee.full_name,
+            bankName: payee.bank_name,
+            accountRef: payee.account_ref,
+          },
+        },
+      });
+      expect(replay).toEqual({ status: 'already_executed', receipt: (executed as { receipt: unknown }).receipt });
+    });
+  });
+
+  it('answers draft_not_found, spending nothing, for a draft of another customer or one that does not exist', async () => {
+    await withDraft({}, async (draftId, bookedAt) => {
+      const before = await balance();
+      const foreign = await execute(draftId, `jti-${draftId}`, () => bookedAt, GRANT, { customerId: 'ana' });
+      expect(foreign).toEqual(refused('draft_not_found'));
+      expect(await execute('drf_missing', `jti-missing-${draftId}`, () => bookedAt)).toEqual(
+        refused('draft_not_found'),
+      );
+      expect(await jtiRows(draftId)).toEqual([]);
+      expect(await balance()).toBe(before);
+    });
+  });
+
+  it('answers not_executed, with nothing sent, when the pool has no connection within the budget', async () => {
+    const busy = new pg.Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 100 });
+    const holder = await busy.connect();
+    try {
+      await withDraft({}, async (draftId, bookedAt) => {
+        const target = new PgTransfersRepository(busy);
+        expect(await execute(draftId, `jti-${draftId}`, () => bookedAt, GRANT, { target })).toEqual(
+          refused('not_executed'),
+        );
+        expect(await jtiRows(draftId)).toEqual([]);
+      });
+    } finally {
+      holder.release();
+      await busy.end();
+    }
   });
 
   it('answers a spent token on a pending draft token_already_used, and moves nothing', async () => {
@@ -314,7 +374,7 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
           await untilWaitingOnLock('transfer_drafts');
           await new Promise((resolve) => setTimeout(resolve, 800)); // Most of the draft wait: 1000 ms is allowed.
           await draftHolder.release();
-          expect(await execution).toEqual(refused('account_busy'));
+          expect(await execution).toEqual(refused('not_executed'));
           // Unbudgeted, the account wait would run its own full 1000 ms after the 800 ms already spent.
           expect(performance.now() - started).toBeLessThan(SHORT_BUDGET_MS + 150);
           expect(await jtiRows(draftId)).toEqual([]);
@@ -332,7 +392,7 @@ describe.skipIf(!reachable)('PgTransfersRepository (seeded Postgres)', () => {
         try {
           const started = performance.now();
           expect(await execute(draftId, `jti-${draftId}`, () => bookedAt, GRANT, longWaits)).toEqual(
-            refused('execution_in_progress'),
+            refused('not_executed'),
           );
           expect(performance.now() - started).toBeLessThan(1500);
         } finally {
