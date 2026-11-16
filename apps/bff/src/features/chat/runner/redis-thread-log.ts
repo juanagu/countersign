@@ -2,8 +2,12 @@ import type { BaseEvent } from '@ag-ui/client';
 import { createClient } from 'redis';
 import type { LoggedEvent, ThreadLog } from './thread-log.js';
 
-export function createRedisClient(url: string) {
-  return createClient({ url });
+/**
+ * `disableOfflineQueue` makes a command issued while Redis is down fail at once instead of waiting, so an outage
+ * can neither pile stale commands up nor replay them on reconnect (the revocation store's client sets it).
+ */
+export function createRedisClient(url: string, options: { disableOfflineQueue?: boolean } = {}) {
+  return createClient({ url, ...options });
 }
 
 export type RedisClient = ReturnType<typeof createRedisClient>;

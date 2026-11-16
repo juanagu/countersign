@@ -15,7 +15,7 @@ describe('the fail-closed helpers', () => {
     expect(lines).toEqual([]);
   });
 
-  it.each(['session', 'exchange', 'logout', 'login'] as const)(
+  it.each(['session', 'exchange', 'logout', 'login', 'history'] as const)(
     'refuse and log one structured line for %s, without the sid even when the driver put it in its message',
     async (check) => {
       const { logger, lines } = capturingLogger();

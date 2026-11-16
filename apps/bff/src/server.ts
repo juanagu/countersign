@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './core/logger.js';
 import { createRedisClient, RedisThreadLog } from './features/chat/runner/redis-thread-log.js';
 import { BOT_CLIENT, GATEWAY_CLIENT } from './features/idp/client-policies.js';
-import { createRevocationRedis, RedisRevocationStore } from './features/idp/redis-revocation-store.js';
+import { RedisRevocationStore } from './features/idp/redis-revocation-store.js';
 import { TokenIssuer } from './features/idp/token-issuer.js';
 
 const MINUTE_MS = 60_000;
@@ -20,7 +20,7 @@ const issuer = await TokenIssuer.create(config.idpIssuer);
 const redis = createRedisClient(config.redisUrl);
 redis.on('error', (error: unknown) => logger.error({ err: String(error) }, 'redis error'));
 await redis.connect();
-const revocationRedis = createRevocationRedis(config.redisUrl);
+const revocationRedis = createRedisClient(config.redisUrl, { disableOfflineQueue: true });
 revocationRedis.on('error', (error: unknown) => logger.error({ err: String(error) }, 'revocation redis error'));
 await revocationRedis.connect();
 const app = createApp({

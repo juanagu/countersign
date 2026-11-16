@@ -21,9 +21,15 @@ The cookie's attributes, the same-origin proxy and the CSRF reasoning in 006 sta
   nothing to extend, so nothing is re-issued and the session ends at the cap. `verifySession` also refuses a token whose
   `auth_time` is past the cap whatever its `exp`.
 - `requireSession` does the re-issue, so every route behind it slides: `/auth/me`, step-up and the whole
-  `/copilotkit/*` mount. The cookie is attached to the response the route returns, before a byte of a streamed body is
-  read, so a long SSE run still carries it. It is re-issued only when that response is a success (`2xx`): never for a
-  request that failed authentication, and never for one that failed after it.
+  `/copilotkit/*` mount. The slide follows a successful response start (`2xx`): never for a request that failed
+  authentication or answered an error status. A stream that fails after its `200` still slides, bounded by the 8-hour
+  cap. After `next()` the middleware re-checks that the `sid` is not revoked and only then signs and attaches the new
+  session, so a logout that raced the request is not undone; if the store errors there, the slide is skipped (no
+  cookie) and the response is not failed.
+- **The browser keeps the cookie `DOWNSTREAM_TOKEN_TAIL_SECONDS` (5 minutes) past the JWT's `exp`**: its `Max-Age` is
+  `exp - now + tail`. Otherwise the browser deletes the cookie at `exp` and a logout a minute later carries nothing to
+  revoke. The JWT's own `exp` still makes every route behind `requireSession` reject it after `exp`; only logout and
+  login apply the tolerance.
 
 **`sid` on everything minted from a session.** The bot token, the step-up token, the history-restore token and every
 exchanged token (gateway and backends) carry the session's `sid`. The exchange copies the subject's `sid` onto what it
@@ -55,16 +61,18 @@ the header and no thread restores.
   lifetime of an `aud=bot` token, because a token minted from the session just before the cap could be presented for
   exchange that long after it.
 - Checks: `requireSession`, and the `identifyUser` and per-request agent callbacks of the CopilotKit runtime, refuse a
-  revoked `sid` with 401; `/token` refuses a subject whose `sid` is revoked with `invalid_grant`, at both hops (bot to
+  revoked `sid` with 401; history restore checks the caller's `sid` itself after verifying its token (a revoked or unverifiable one restores nothing); `/token` refuses a subject whose `sid` is revoked with `invalid_grant`, at both hops (bot to
   gateway, gateway to backend). A bot run already under way when the customer logs out keeps the tokens it already
   holds, each at most 5 minutes, and mints no new one once the logout is recorded. An exchange whose check was answered
   a moment before the logout still gets its token, which lives at most 5 minutes like the others; a run therefore
   can mint nothing only from the instant the denylist write completes, not from the instant the customer clicks.
-- **Fail closed.** If the store cannot answer, the session check answers 401 and the exchange `invalid_grant`, and each
-  logs one structured line (`event: revocation_store_unavailable`, `check: session | exchange | logout | login`, the
+- **Fail closed.** If the store cannot answer, the session check answers 503 `{ "error": "session_check_unavailable" }`
+  (not 401: the session may be valid, and the web app signs out only on a 401, so an outage does not show the login
+  screen), the exchange answers `invalid_grant`, and each logs one structured line (`event: revocation_store_unavailable`,
+  `check: session | exchange | logout | login | history`, the
   error message; never the `sid` or the cookie). One helper (`revocation-guard.ts`) holds that try/catch and the log
   for all four callers, and strips the `sid` from the message in case a driver put the key in it. The Redis store has
-  its own client with the offline queue disabled, so while Redis is down a command fails at once and no stale command
+  its own client (`createRedisClient` with `disableOfflineQueue`), so while Redis is down a command fails at once and no stale command
   piles up to run when it returns; every command also has a 1-second deadline, for a Redis that is connected but
   hung. A logout the store could not record answers 503 and keeps the cookie, so the customer can retry and the
   session is not mistaken for gone.
@@ -74,7 +82,7 @@ the header and no thread restores.
   would hand over as a different object (not the case in the multi-route mode this uses) falls back to checking again.
 
 ## Consequences
-- A Redis outage signs every customer out of the chat (401 on every authenticated request) until it returns. That is the
+- A Redis outage makes every authenticated request answer 503 until it returns; the web app keeps the user signed in and the chat is down. That is the
   price of refusing to guess; the thread log already depends on the same Redis, so the chat was down in that case anyway.
 - An authenticated chat request does one denylist lookup, and the 401-or-500 split between the middleware and the
   runtime's callbacks is gone: a session valid at the door stays valid for that request, a logout landing after the
@@ -90,7 +98,7 @@ the header and no thread restores.
 - A BFF restart still rotates the signing key and ends every session (ADR 006), so the denylist only has to cover the
   life of one key; it is kept in Redis anyway so that several BFF replicas would agree.
 - Contracts: no HTTP shape changes for the browser. `POST /auth/logout` and `POST /auth/login` gain a 503 (the cookie
-  is left as it was), and a session cookie may now arrive on any successful authenticated response. The web app needs no change; the cookie travels by itself.
+  is left as it was), the authenticated routes answer 503 `session_check_unavailable` during a store outage, and a session cookie may now arrive on any successful authenticated response. The web app needs no change; the cookie travels by itself.
 - The session is only as long-lived as the activity: an idle tab is signed out 30 minutes after its last request, and
   nobody stays signed in past 8 hours, which is also the length of the longest denylist entry.
 

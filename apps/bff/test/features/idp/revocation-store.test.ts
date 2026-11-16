@@ -1,11 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  createRevocationRedis,
-  RedisRevocationStore,
-  revocationKey,
-} from '../../../src/features/idp/redis-revocation-store.js';
+import { RedisRevocationStore, revocationKey } from '../../../src/features/idp/redis-revocation-store.js';
 import type { RevocationStore } from '../../../src/features/idp/revocation-store.js';
+import { createRedisClient } from '../../../src/features/chat/runner/redis-thread-log.js';
 import { MemoryRevocationStore } from '../../support/memory-revocation-store.js';
 import { connectTestRedis } from '../../support/redis.js';
 
@@ -75,7 +72,7 @@ describe('redis revocation store', () => {
   });
 
   it('fails at once while disconnected, instead of queueing the command until the deadline', async () => {
-    const offline = createRevocationRedis('redis://127.0.0.1:1');
+    const offline = createRedisClient('redis://127.0.0.1:1', { disableOfflineQueue: true });
     offline.on('error', () => undefined);
     void offline.connect().catch(() => undefined); // Connecting, never connected: what an outage looks like.
     const store = new RedisRevocationStore(offline, { commandTimeoutMs: 1000 });

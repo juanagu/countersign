@@ -1,6 +1,8 @@
 import type { Message } from '@ag-ui/client';
 import type { Logger } from 'pino';
 import { z } from 'zod';
+import { isRevokedOrUnknown } from '../../idp/revocation-guard.js';
+import type { RevocationStore } from '../../idp/revocation-store.js';
 import type { TokenIssuer } from '../../idp/token-issuer.js';
 
 /** A thread's stored conversation, for a restore after the replay window. Scoped to the owner by the bot. */
@@ -31,6 +33,7 @@ const historySchema = z.object({
 export class BotThreadHistory implements ThreadHistory {
   constructor(
     private readonly issuer: TokenIssuer,
+    private readonly revocations: RevocationStore,
     private readonly botAgentUrl: string,
     private readonly logger: Logger,
     private readonly fetchImpl: typeof fetch = fetch,
@@ -39,6 +42,10 @@ export class BotThreadHistory implements ThreadHistory {
   private async restoreToken(bearer: string, owner: string): Promise<string> {
     const caller = await this.issuer.verifyBotToken(bearer);
     if (caller.sub !== owner) throw new Error('caller token belongs to another user');
+    // The caller token may predate a logout by up to its lifetime; a revoked or unverifiable session restores nothing.
+    if (await isRevokedOrUnknown(this.revocations, this.logger, 'history', caller.sid)) {
+      throw new Error('caller session revoked or unverifiable');
+    }
     return this.issuer.issueBotToken(caller, caller.exp);
   }
 

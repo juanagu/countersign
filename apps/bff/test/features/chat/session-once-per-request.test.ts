@@ -29,9 +29,10 @@ const post = (app: Awaited<ReturnType<typeof buildTestApp>>['app'], path: string
 
 describe('the session is resolved once per request', () => {
   it.each([
-    ['a chat run', RUN],
-    ['a connect', CONNECT],
-  ])('looks the sid up once for %s', async (_, path) => {
+    ['a chat run', RUN, 1],
+    // A connect also restores history, which checks the caller's sid itself (the one extra, deliberate lookup).
+    ['a connect', CONNECT, 2],
+  ])('looks the sid up the expected number of times for %s', async (_, path, lookups) => {
     const bot = await startFakeBot({ delayMs: 1, deltas: ['hola'] });
     const revocations = new CountingRevocationStore();
     const { app } = await buildTestApp(bot.url, { revocations });
@@ -41,7 +42,7 @@ describe('the session is resolved once per request', () => {
     await res.text();
 
     expect(res.status).toBe(200);
-    expect(revocations.lookups).toBe(1);
+    expect(revocations.lookups).toBe(lookups);
     bot.server.close();
   });
 

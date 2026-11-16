@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { DEMO_USERS, findDemoUser } from './demo-users.js';
-import { recordRevocation } from './revocation-guard.js';
+import { recordRevocation, type RevocationCheck } from './revocation-guard.js';
 import { DOWNSTREAM_TOKEN_TAIL_SECONDS, nowSeconds, revocationTtlSeconds } from './session-lifetime.js';
 import {
   clearSessionCookie,
@@ -11,7 +11,6 @@ import {
   type SessionDeps,
   type SessionEnv,
 } from './session.js';
-import type { RevocationCheck } from './revocation-guard.js';
 import type { SessionClaims } from './token-issuer.js';
 
 const loginBody = z.object({ username: z.string().min(1).max(64) });

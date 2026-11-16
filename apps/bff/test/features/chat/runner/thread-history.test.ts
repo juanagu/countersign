@@ -3,15 +3,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { BotThreadHistory } from '../../../../src/features/chat/runner/thread-history.js';
 import { TokenIssuer } from '../../../../src/features/idp/token-issuer.js';
 import { silentLogger, TEST_ISSUER, testSession } from '../../../support/build-app.js';
-import { capturingLogger } from '../../../support/revocation-doubles.js';
+import { MemoryRevocationStore } from '../../../support/memory-revocation-store.js';
+import { capturingLogger, UnavailableRevocationStore } from '../../../support/revocation-doubles.js';
 
 const MESSAGES = [{ id: 'm1', role: 'user', content: 'hola' }];
 
-async function setup(logger = silentLogger) {
+async function setup(logger = silentLogger, revocations = new MemoryRevocationStore()) {
   const issuer = await TokenIssuer.create(TEST_ISSUER);
   const fetchImpl = vi.fn(async () => Response.json({ messages: MESSAGES }));
-  const history = new BotThreadHistory(issuer, 'http://bot.invalid/agent', logger, fetchImpl as typeof fetch);
-  return { issuer, fetchImpl, history };
+  const history = new BotThreadHistory(
+    issuer,
+    revocations,
+    'http://bot.invalid/agent',
+    logger,
+    fetchImpl as typeof fetch,
+  );
+  return { issuer, fetchImpl, history, revocations };
 }
 
 const sentToken = (fetchImpl: ReturnType<typeof vi.fn>) =>
@@ -20,6 +27,20 @@ const sentToken = (fetchImpl: ReturnType<typeof vi.fn>) =>
   ).authorization?.replace('Bearer ', '') ?? '';
 
 describe('BotThreadHistory', () => {
+  it('restores nothing for a caller whose session was logged out, and none when the store cannot say', async () => {
+    const { issuer, fetchImpl, history, revocations } = await setup();
+    const caller = testSession('ana');
+    const headers = { Authorization: `Bearer ${await issuer.issueBotToken(caller)}` };
+    await revocations.revoke(caller.sid, 60);
+
+    expect(await history.messagesFor('t1', 'ana', headers)).toEqual([]);
+
+    const down = await setup(silentLogger, new UnavailableRevocationStore() as unknown as MemoryRevocationStore);
+    expect(await down.history.messagesFor('t1', 'ana', headers)).toEqual([]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(down.fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("restores with a token for the owner in the caller's session, read from the connect headers", async () => {
     const { issuer, fetchImpl, history } = await setup();
     const caller = testSession('ana');

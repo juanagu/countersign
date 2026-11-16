@@ -36,7 +36,7 @@ async function sessionOrThrow(deps: SessionDeps, request: Request) {
 
 export function chatRoutes(options: ChatRoutesOptions): Hono<SessionEnv> {
   const { issuer, botAgentUrl, threadLog, logger } = options;
-  const history = new BotThreadHistory(issuer, botAgentUrl, logger);
+  const history = new BotThreadHistory(issuer, options.revocations, botAgentUrl, logger);
   const runtime = new CopilotRuntime({
     runner: new DurableAgentRunner({ log: threadLog, history, logger }),
     // One agent per request, carrying a bot token minted for this user only.

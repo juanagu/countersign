@@ -243,12 +243,16 @@ describe('when the revocation store is unavailable it fails closed', () => {
     return { ...t, cookie, lines };
   }
 
-  it('answers 401 at the session check on every route', async () => {
+  it('answers 503 session_check_unavailable, not 401, at the session check on every route', async () => {
     const t = await down();
-    expect((await t.me(t.cookie)).status).toBe(401);
-    expect((await t.post(RUN, t.cookie, chatBody())).status).toBe(401);
-    expect((await t.post(CONNECT, t.cookie, chatBody())).status).toBe(401);
-    expect((await t.stepUp(t.cookie)).status).toBe(401);
+    const unavailable = async (res: Response) => {
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'session_check_unavailable' });
+    };
+    await unavailable(await t.me(t.cookie));
+    await unavailable(await t.post(RUN, t.cookie, chatBody()));
+    await unavailable(await t.post(CONNECT, t.cookie, chatBody()));
+    await unavailable(await t.stepUp(t.cookie));
     expect(t.bot.runs).toBe(0);
     t.bot.server.close();
   });

@@ -1,11 +1,14 @@
 import { decodeJwt } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  DOWNSTREAM_TOKEN_TAIL_SECONDS,
   SESSION_ABSOLUTE_TTL_SECONDS,
   SESSION_IDLE_TTL_SECONDS,
   SESSION_SLIDE_BELOW_SECONDS,
 } from '../../../src/features/idp/session-lifetime.js';
 import { buildTestApp, loginCookie } from '../../support/build-app.js';
+import { CountingRevocationStore } from '../../support/revocation-doubles.js';
+import { MemoryRevocationStore } from '../../support/memory-revocation-store.js';
 
 const T0 = new Date('2026-03-02T09:00:00Z');
 const MINUTE_MS = 60_000;
@@ -62,7 +65,7 @@ describe('sliding session', () => {
     expect(after.sid).toBe(before.sid);
     expect(after.auth_time).toBe(before.auth_time);
     expect(after.exp).toBe(nowSeconds() + SESSION_IDLE_TTL_SECONDS);
-    expect(slid.setCookie).toContain(`Max-Age=${SESSION_IDLE_TTL_SECONDS}`);
+    expect(slid.setCookie).toContain(`Max-Age=${SESSION_IDLE_TTL_SECONDS + DOWNSTREAM_TOKEN_TAIL_SECONDS}`);
   });
 
   it('keeps an active user signed in past the idle lifetime, and signs an idle one out', async () => {
@@ -157,5 +160,48 @@ describe('sliding session', () => {
     const res = await app.request('/auth/me');
     expect(res.status).toBe(401);
     expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('keeps the browser cookie for the downstream tail past exp, on login and on a slide, so a late logout carries it', async () => {
+    const { app } = await buildTestApp();
+    const login = await app.request('/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"username":"ana"}',
+    });
+    expect(login.headers.get('set-cookie')).toContain(
+      `Max-Age=${SESSION_IDLE_TTL_SECONDS + DOWNSTREAM_TOKEN_TAIL_SECONDS}`,
+    );
+  });
+
+  it('does not slide for a response that raced a logout: the revocation is re-checked before the cookie is set', async () => {
+    const store = new CountingRevocationStore(1); // The session check passes; every later lookup sees the logout.
+    const { app } = await buildTestApp(undefined, { revocations: store });
+    const cookie = await loginCookie(app);
+    advanceMinutes(SESSION_SLIDE_BELOW_SECONDS / 60 + 1);
+
+    const result = await me(app, cookie);
+
+    expect(result.status).toBe(200);
+    expect(result.setCookie).toBeNull();
+  });
+
+  it('skips the slide, without failing the response, when the store errors after the request ran', async () => {
+    class FailsAfterFirst extends MemoryRevocationStore {
+      lookups = 0;
+      override async isRevoked(sid: string): Promise<boolean> {
+        this.lookups += 1;
+        if (this.lookups > 1) throw new Error('redis down');
+        return super.isRevoked(sid);
+      }
+    }
+    const { app } = await buildTestApp(undefined, { revocations: new FailsAfterFirst() });
+    const cookie = await loginCookie(app);
+    advanceMinutes(SESSION_SLIDE_BELOW_SECONDS / 60 + 1);
+
+    const result = await me(app, cookie);
+
+    expect(result.status).toBe(200);
+    expect(result.setCookie).toBeNull();
   });
 });
