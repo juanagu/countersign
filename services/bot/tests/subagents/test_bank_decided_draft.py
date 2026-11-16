@@ -1,7 +1,9 @@
 """After the bank answers an approved `execute_transfer` with an error that decides its draft, that draft raises no
-second interrupt: not later in the resumed run, nor on the next turn (rule 3). `token_already_used` and
-`execution_in_progress` decide nothing (ADR 023: nothing moved with the spent token, or nothing was spent), so the
-draft stays open and the next approval is a fresh interrupt that needs a new step-up token, never the spent one.
+second interrupt: not later in the resumed run, nor on the next turn (rule 3). The answers in
+`UNDECIDING_BANK_ERRORS` decide nothing (ADR 023: nothing moved with the spent token, nothing was spent, or the
+outcome is unknown), so the draft stays open and the next approval is a fresh interrupt that needs a new step-up
+token, never the spent one. After the ones that may leave an execution running the same run raises no second
+interrupt; the customer's next message does.
 
 The most realistic path the tests allow: the real `/agent` route and agent tree, a JSON round-tripping conversation
 store, and the real `MCPToolset` over HTTP to a fake gateway that answers as mcp-payments does (`isError` with
@@ -32,6 +34,7 @@ from app.banking.mcp_toolsets import banking_toolset
 from app.banking.token_exchange import TokenExchanger
 from app.core.clock import BankClock
 from app.main import build_agent_tree, create_app
+from app.policy.policy_toolset import DRAFT_HELD
 from evals.agui_client import fold
 from tests.conftest import SigningKey, open_guardrails
 from tests.subagents.fakes import (
@@ -61,9 +64,17 @@ BANK_ERRORS = {
     "execution_in_progress": (
         "La transferencia se está procesando. Esperá unos segundos y confirmá de nuevo con tu PIN."
     ),
+    "account_busy": "La cuenta de origen está ocupada con otra operación. Esperá unos segundos y confirmá de nuevo.",
+    "internal_error": "No pude confirmar si la transferencia se realizó. Confirmá de nuevo con tu PIN.",
+    # The gateway's own answer when mcp-payments timed out (the message is the fake bank's, the code the gateway's).
+    "upstream_error": "El servicio de transferencias no respondió a tiempo.",
 }
-LEAVES_OPEN = ("token_already_used", "execution_in_progress")
-DECIDES = sorted(set(BANK_ERRORS) - set(LEAVES_OPEN))
+# The first execution ended without moving anything: asking again at once is right.
+LEAVES_OPEN = ("token_already_used",)
+# The first execution may still be running or may have committed: open, but not again in the same run.
+HELD_OPEN = ("execution_in_progress", "account_busy", "internal_error", "upstream_error")
+DECIDES = sorted(set(BANK_ERRORS) - set(LEAVES_OPEN) - set(HELD_OPEN))
+HELD = {"error": "policy_denied", "reason": DRAFT_HELD}
 
 
 class SerializingStore(InMemoryConversationStore):
@@ -298,4 +309,32 @@ async def test_a_draft_the_bank_left_pending_pauses_again_and_needs_a_fresh_step
     assert _execute_results(started, resumed) == [{"error": gateway.error, "message": BANK_ERRORS[gateway.error]}]
     [receipt] = _execute_results(started, confirmed)
     assert receipt["untrusted_data"] == RECEIPT  # The bank's receipt, wrapped as data like any tool result.
+    assert _interrupts(confirmed) == []
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.parametrize("gateway", HELD_OPEN, indirect=True)
+async def test_a_draft_whose_execution_may_still_run_raises_no_second_interrupt_until_the_next_message(
+    gateway: Gateway, chat: Chat
+) -> None:
+    first = await chat.post("r1")
+    [interrupt] = _interrupts(first)
+    resumed = await chat.approve("r2", interrupt, STEP_UP)
+
+    # The model asks again in the same run: no second PIN card, nothing sent to the bank.
+    assert _interrupts(resumed) == []
+    assert gateway.executed == [(DRAFT_ID, STEP_UP)]
+    started = [*first, *resumed]
+    assert _execute_results(started, resumed) == [{"error": gateway.error, "message": BANK_ERRORS[gateway.error]}, HELD]
+
+    # The customer confirms on their next message: the draft is open, and the approval needs a fresh token.
+    chat.messages.append({"id": "u2", "role": "user", "content": AGAIN})
+    next_turn = await chat.post("r3")
+    [again] = _interrupts(next_turn)
+    assert again["metadata"]["draft_id"] == DRAFT_ID
+    confirmed = await chat.approve("r4", again, FRESH_STEP_UP)
+
+    assert gateway.executed == [(DRAFT_ID, STEP_UP), (DRAFT_ID, FRESH_STEP_UP)]
+    [receipt] = _execute_results([*started, *next_turn, *confirmed], confirmed)
+    assert receipt["untrusted_data"] == RECEIPT
     assert _interrupts(confirmed) == []

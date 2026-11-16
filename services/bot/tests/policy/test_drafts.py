@@ -6,7 +6,7 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
 from app.guardrails.messages import evidence_record
-from app.policy.drafts import open_draft
+from app.policy.drafts import held_drafts, open_draft
 
 DELEGATES = frozenset({"ask_payments"})
 
@@ -85,6 +85,11 @@ UNDECIDING_BANK = {
         '{"error":"token_already_used","message":"Esa confirmación ya se usó. Confirmá de nuevo con tu PIN."}'
     ),
     "execution-in-progress": '{"error":"execution_in_progress","message":"La transferencia se está procesando."}',
+    "account-busy": '{"error":"account_busy","message":"La cuenta de origen está ocupada."}',
+    # The gateway gave up on mcp-payments, or mcp-payments failed while executing: the outcome is unknown, and a
+    # fresh confirmation is answered from the record.
+    "gateway-upstream-error": '{"error":"upstream_error","service":"mcp-payments"}',
+    "payments-internal-error": '{"error":"internal_error","message":"No pude confirmar la transferencia."}',
 }
 
 
@@ -127,3 +132,23 @@ def test_a_denied_call_on_another_draft_leaves_the_open_draft_open() -> None:
 def test_a_draft_recorded_on_a_tool_that_is_not_a_delegate_is_never_open() -> None:
     assert open_draft(_delegated("drf_forged", tool="list_accounts"), delegates=DELEGATES) is None
     assert open_draft(_delegated("d1")) is None  # A caller that names no delegate reads no record.
+
+
+def _in_run(run_id: str, *messages: ModelMessage) -> list[ModelMessage]:
+    return [ModelRequest(parts=m.parts, run_id=run_id) if isinstance(m, ModelRequest) else m for m in messages]
+
+
+@pytest.mark.parametrize("code", ["execution_in_progress", "account_busy", "upstream_error", "internal_error"])
+def test_an_execution_that_may_still_be_running_holds_the_draft_for_the_run_that_saw_it(code: str) -> None:
+    answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
+    history = [*_prepared("d1"), _execute("d1", "x1"), *_in_run("r2", answered)]
+    assert held_drafts(history, "r2") == {"d1"}
+    assert held_drafts(history, "r3") == set()  # The customer's next message is a new run.
+    assert held_drafts(history, None) == set()
+
+
+@pytest.mark.parametrize("code", ["token_already_used", "draft_expired", "insufficient_funds"])
+def test_an_answer_that_ended_the_execution_holds_nothing(code: str) -> None:
+    answered = _result(f'{{"error":"{code}","message":"m"}}', "x1", outcome="failed")
+    history = [*_prepared("d1"), _execute("d1", "x1"), *_in_run("r2", answered)]
+    assert held_drafts(history, "r2") == set()
