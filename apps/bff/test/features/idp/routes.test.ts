@@ -1,6 +1,6 @@
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { buildTestApp, loginCookie, TEST_ISSUER } from '../../support/build-app.js';
+import { buildTestApp, loginCookie, TEST_ISSUER, testSession } from '../../support/build-app.js';
 
 describe('mock IdP', () => {
   it('logs in a demo user with an HttpOnly, SameSite=Strict session cookie', async () => {
@@ -91,7 +91,7 @@ describe('mock IdP', () => {
 
   it('does not accept a bot token as a session', async () => {
     const { app, issuer } = await buildTestApp();
-    const botToken = await issuer.issueBotToken({ sub: 'ana', name: 'Ana Gómez' });
+    const botToken = await issuer.issueBotToken(testSession());
     const res = await app.request('/auth/me', { headers: { cookie: `session=${botToken}` } });
     expect(res.status).toBe(401);
   });

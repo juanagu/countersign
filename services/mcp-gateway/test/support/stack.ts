@@ -5,7 +5,11 @@ import { createLocalJWKSet, decodeJwt } from 'jose';
 import { Hono } from 'hono';
 import { pino } from 'pino';
 import { tokenExchangeRoutes } from '../../../../apps/bff/src/features/idp/token-exchange.js';
+import { MemoryRevocationStore } from '../../../../apps/bff/src/features/idp/revocation-store.js';
 import { TokenIssuer } from '../../../../apps/bff/src/features/idp/token-issuer.js';
+
+/** The gateway never reads `sid`; the tokens it sees carry one, as the IdP always issues them. */
+export const SESSION_ID = 'sid-gateway-tests';
 import {
   ALLOWED_ACTOR_CHAINS as ACCOUNTS_CHAINS,
   createApp as createAccountsApp,
@@ -67,6 +71,7 @@ export async function createStack(options: StackOptions = {}) {
     tokenExchangeRoutes({
       issuer,
       clients: { bot: BOT_SECRET, 'mcp-gateway': GATEWAY_SECRET },
+      revocations: new MemoryRevocationStore(),
       logger: pino({ level: 'silent' }),
     }),
   );
@@ -131,7 +136,7 @@ export async function createStack(options: StackOptions = {}) {
    * what a run that loaded accounts and payments holds; the IdP refuses the bot a request with no scope.
    */
   async function gatewayToken(sub: string, scope = PRE_APPROVAL_SCOPES): Promise<string> {
-    return exchangeAs('bot', BOT_SECRET, await issuer.issueBotToken({ sub, name: sub }), AUDIENCE, scope);
+    return exchangeAs('bot', BOT_SECRET, await issuer.issueBotToken({ sub, sid: SESSION_ID }), AUDIENCE, scope);
   }
 
   async function exchangeAs(client: string, secret: string, subject: string, audience: string, scope?: string) {

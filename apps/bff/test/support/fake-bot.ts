@@ -18,6 +18,10 @@ export interface FakeBot {
   requests: { messages?: unknown[]; resume?: unknown[] }[];
   /** `sub` of every history request, in order. */
   historyCallers: string[];
+  /** The claims of the bearer token on every run request, in order. */
+  runClaims: Record<string, unknown>[];
+  /** The claims of the token on every history request, in order. */
+  historyClaims: Record<string, unknown>[];
 }
 
 export const DEFAULT_DELTAS = Array.from({ length: 20 }, (_, i) => `parte ${i + 1}. `);
@@ -49,17 +53,29 @@ async function streamRun(
 /** A stand-in bot: streams a run slowly (so a test can cut it) and serves per-user stored history. */
 export async function startFakeBot(options: FakeBotOptions = {}): Promise<FakeBot> {
   const { deltas = DEFAULT_DELTAS, delayMs = 15, history = {} } = options;
-  const bot: FakeBot = { url: '', server: createServer(), runs: 0, requests: [], historyCallers: [] };
+  const bot: FakeBot = {
+    url: '',
+    server: createServer(),
+    runs: 0,
+    requests: [],
+    historyCallers: [],
+    historyClaims: [],
+    runClaims: [],
+  };
   bot.server.on('request', (req, res) => {
     const match = /^\/threads\/([^/]+)\/messages$/.exec(req.url ?? '');
     if (req.method === 'GET' && match) {
-      const sub = String(decodeJwt((req.headers.authorization ?? '').replace(/^Bearer /, '')).sub);
+      const claims = decodeJwt((req.headers.authorization ?? '').replace(/^Bearer /, ''));
+      const sub = String(claims.sub);
       bot.historyCallers.push(sub);
+      bot.historyClaims.push(claims);
       const messages = history[`${sub}:${decodeURIComponent(match[1] ?? '')}`] ?? [];
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ messages }));
       return;
     }
     bot.runs += 1;
+    const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '');
+    bot.runClaims.push(bearer ? decodeJwt(bearer) : {});
     let raw = '';
     req.on('data', (chunk: Buffer) => (raw += chunk.toString()));
     req.on('end', () => {

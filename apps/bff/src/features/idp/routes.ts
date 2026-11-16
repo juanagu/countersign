@@ -1,18 +1,22 @@
 import { Hono } from 'hono';
-import { deleteCookie, setCookie } from 'hono/cookie';
 import { z } from 'zod';
 import { DEMO_USERS, findDemoUser } from './demo-users.js';
-import { requireSession, SESSION_COOKIE, type SessionEnv } from './session.js';
-import { SESSION_TTL_SECONDS, type TokenIssuer } from './token-issuer.js';
+import { revocationTtlSeconds, nowSeconds } from './session-lifetime.js';
+import {
+  clearSessionCookie,
+  requireSession,
+  setSessionCookie,
+  verifySessionCookie,
+  type SessionDeps,
+  type SessionEnv,
+} from './session.js';
 
 const loginBody = z.object({ username: z.string().min(1).max(64) });
 
-export interface IdpRoutesOptions {
-  issuer: TokenIssuer;
-  cookieSecure: boolean;
-}
+export type IdpRoutesOptions = SessionDeps;
 
-export function idpRoutes({ issuer, cookieSecure }: IdpRoutesOptions): Hono<SessionEnv> {
+export function idpRoutes(deps: IdpRoutesOptions): Hono<SessionEnv> {
+  const { issuer, revocations, cookieSecure, logger } = deps;
   const app = new Hono<SessionEnv>();
 
   app.get('/.well-known/jwks.json', async (c) => c.json(await issuer.jwks()));
@@ -23,22 +27,34 @@ export function idpRoutes({ issuer, cookieSecure }: IdpRoutesOptions): Hono<Sess
     const body = loginBody.safeParse(await c.req.json().catch(() => null));
     const user = body.success ? findDemoUser(body.data.username) : undefined;
     if (!user) return c.json({ error: 'unknown_user' }, 401);
-    setCookie(c, SESSION_COOKIE, await issuer.issueSession(user), {
-      httpOnly: true,
-      sameSite: 'Strict',
-      secure: cookieSecure,
-      path: '/',
-      maxAge: SESSION_TTL_SECONDS,
-    });
+    const session = await issuer.issueSession(user);
+    setSessionCookie(c, session.token, session.exp, cookieSecure);
     return c.json({ id: user.id, name: user.name });
   });
 
-  app.post('/auth/logout', (c) => {
-    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+  // Always clears the cookie and answers 204 without a session. With one, the `sid` is revoked first; if the store
+  // cannot record it the answer is 503, so the caller does not believe a still-valid session is gone.
+  app.post('/auth/logout', async (c) => {
+    const session = await verifySessionCookie(issuer, c.req.raw);
+    clearSessionCookie(c);
+    if (!session) return c.body(null, 204);
+    try {
+      await revocations.revoke(session.sid, revocationTtlSeconds(session.authTime, nowSeconds()));
+    } catch (error) {
+      logger.error(
+        {
+          event: 'revocation_store_unavailable',
+          check: 'logout',
+          err: error instanceof Error ? error.message : String(error),
+        },
+        'logout could not revoke the session',
+      );
+      return c.json({ error: 'logout_not_recorded' }, 503);
+    }
     return c.body(null, 204);
   });
 
-  app.get('/auth/me', requireSession(issuer), (c) => {
+  app.get('/auth/me', requireSession(deps), (c) => {
     const { sub, name } = c.get('session');
     return c.json({ id: sub, name });
   });

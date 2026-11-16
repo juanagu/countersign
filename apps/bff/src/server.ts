@@ -4,11 +4,15 @@ import { loadConfig } from './config.js';
 import { createLogger } from './core/logger.js';
 import { createRedisClient, RedisThreadLog } from './features/chat/runner/redis-thread-log.js';
 import { BOT_CLIENT, GATEWAY_CLIENT } from './features/idp/client-policies.js';
+import { RedisRevocationStore } from './features/idp/redis-revocation-store.js';
 import { TokenIssuer } from './features/idp/token-issuer.js';
 
 const MINUTE_MS = 60_000;
 /** Replay window, owner memory and run lease (docs/decisions/015-resumable-streams.md). */
 const THREAD_LOG_OPTIONS = { replayWindowMs: 15 * MINUTE_MS, ownerTtlMs: 24 * 60 * MINUTE_MS, runLeaseMs: 15_000 };
+
+/** Longer than a healthy Redis ever takes; a slower answer counts as the store being down (ADR 024). */
+const REVOCATION_COMMAND_TIMEOUT_MS = 1_000;
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -25,6 +29,7 @@ const app = createApp({
     ...(config.mcpGatewayClientSecret && { [GATEWAY_CLIENT]: config.mcpGatewayClientSecret }),
   },
   stepUpPin: config.stepUpPin,
+  revocations: new RedisRevocationStore(redis, { commandTimeoutMs: REVOCATION_COMMAND_TIMEOUT_MS }),
   threadLog: new RedisThreadLog(redis, THREAD_LOG_OPTIONS),
   logger,
 });

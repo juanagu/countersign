@@ -1,8 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { requireSession, type SessionEnv } from './session.js';
-import { STEP_UP_TTL_SECONDS, type TokenIssuer } from './token-issuer.js';
+import { requireSession, type SessionDeps, type SessionEnv } from './session.js';
+import { STEP_UP_TTL_SECONDS } from './token-issuer.js';
 
 const MAX_FAILURES = 3;
 const LOCKOUT_MS = 5 * 60 * 1000;
@@ -17,8 +17,7 @@ const stepUpBody = z.object({
   pin: z.string().regex(/^[0-9]{6}$/),
 });
 
-export interface StepUpOptions {
-  issuer: TokenIssuer;
+export interface StepUpOptions extends SessionDeps {
   /** The mock IdP's PIN for every demo user (the brief fixes it at 123456). */
   pin: string;
   now?: () => number;
@@ -75,12 +74,13 @@ function samePin(given: string, expected: string): boolean {
 }
 
 /** `POST /auth/step-up`: the customer re-authenticates with their PIN to approve one transfer draft. */
-export function stepUpRoutes({ issuer, pin, now = Date.now }: StepUpOptions): Hono<SessionEnv> {
+export function stepUpRoutes({ pin, now = Date.now, ...session }: StepUpOptions): Hono<SessionEnv> {
+  const { issuer } = session;
   const app = new Hono<SessionEnv>();
   const attempts = new PinAttempts(now);
 
-  app.post('/auth/step-up', requireSession(issuer), async (c) => {
-    const { sub } = c.get('session');
+  app.post('/auth/step-up', requireSession(session), async (c) => {
+    const { sub, sid } = c.get('session');
     if (attempts.locked(sub)) return c.json({ error: 'locked' }, 429);
     const body = stepUpBody.safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: 'invalid_request' }, 400);
@@ -92,7 +92,7 @@ export function stepUpRoutes({ issuer, pin, now = Date.now }: StepUpOptions): Ho
       return c.json({ error: 'invalid_pin' }, 401);
     }
     attempts.reset(sub);
-    const token = await issuer.issueStepUp(sub, { type: 'transfer', ...draft });
+    const token = await issuer.issueStepUp({ sub, sid }, { type: 'transfer', ...draft });
     return c.json({ step_up_token: token, expires_in: STEP_UP_TTL_SECONDS });
   });
 

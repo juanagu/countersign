@@ -51,7 +51,12 @@ export class DurableAgentRunner extends AgentRunner {
 
   connect(request: AgentRunnerConnectRequest): Observable<BaseEvent> {
     const { log, history, followWaitMs = DEFAULT_FOLLOW_WAIT_MS } = this.options;
-    return replayThread({ log, history, followWaitMs }, request.threadId, ɵresolveThreadOwner(request.ownerId));
+    return replayThread(
+      { log, history, followWaitMs },
+      request.threadId,
+      ɵresolveThreadOwner(request.ownerId),
+      request.headers ?? {},
+    );
   }
 
   async isRunning(request: AgentRunnerIsRunningRequest): Promise<boolean> {

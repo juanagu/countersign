@@ -14,6 +14,7 @@ export interface ReplayDeps {
 }
 
 type Emit = (event: BaseEvent) => void;
+type Headers = Readonly<Record<string, string>>;
 type RunStartedEvent = BaseEvent & { input?: { messages?: Message[] } };
 
 const hasHistory = (owner: string) => owner !== '' && owner !== ɵSERVER_THREAD_OWNER;
@@ -26,9 +27,9 @@ function emitSnapshot(threadId: string, messages: Message[], emit: Emit) {
 }
 
 /** Past the replay window, the bot's stored conversation comes back as one snapshot. */
-async function emitRestored(history: ThreadHistory, threadId: string, owner: string, emit: Emit) {
+async function emitRestored(history: ThreadHistory, threadId: string, owner: string, headers: Headers, emit: Emit) {
   if (!hasHistory(owner)) return;
-  const messages = await history.messagesFor(threadId, owner);
+  const messages = await history.messagesFor(threadId, owner, headers);
   if (messages.length > 0) emitSnapshot(threadId, messages, emit);
 }
 
@@ -41,6 +42,7 @@ async function restoreEarlierTurns(
   history: ThreadHistory,
   threadId: string,
   owner: string,
+  headers: Headers,
   logged: LoggedEvent[],
   emit: Emit,
 ): Promise<LoggedEvent[]> {
@@ -50,7 +52,7 @@ async function restoreEarlierTurns(
   const carried = started.input?.messages ?? [];
   const turnStart = carried.findLastIndex((message) => message.role === 'user');
   if (turnStart <= 0) return logged;
-  const stored = await history.messagesFor(threadId, owner);
+  const stored = await history.messagesFor(threadId, owner, headers);
   const earlier = stored.findIndex((message) => message.id === carried[turnStart]?.id);
   if (earlier <= 0) return logged;
   emitSnapshot(threadId, stored.slice(0, earlier), emit);
@@ -85,12 +87,19 @@ async function followLive(
   }
 }
 
-async function streamThread(deps: ReplayDeps, threadId: string, owner: string, emit: Emit, signal: AbortSignal) {
+async function streamThread(
+  deps: ReplayDeps,
+  threadId: string,
+  owner: string,
+  headers: Headers,
+  emit: Emit,
+  signal: AbortSignal,
+) {
   const holder = await deps.log.ownerOf(threadId);
   if (holder !== null && holder !== owner) return; // Another user's thread is unknown here: nothing at all.
   const fullLog = holder === null ? [] : await deps.log.readAfter(threadId, 0);
-  if (fullLog.length === 0) await emitRestored(deps.history, threadId, owner, emit);
-  const logged = await restoreEarlierTurns(deps.history, threadId, owner, fullLog, emit);
+  if (fullLog.length === 0) await emitRestored(deps.history, threadId, owner, headers, emit);
+  const logged = await restoreEarlierTurns(deps.history, threadId, owner, headers, fullLog, emit);
   const state = new RunState();
   for (const { event } of logged) {
     state.observe(event);
@@ -104,10 +113,15 @@ async function streamThread(deps: ReplayDeps, threadId: string, owner: string, e
  * The thread as a client should rebuild it: every logged event in order, then the live run's events as
  * they are written, read from the last replayed `seq` so nothing repeats and nothing is skipped.
  */
-export function replayThread(deps: ReplayDeps, threadId: string, owner: string): Observable<BaseEvent> {
+export function replayThread(
+  deps: ReplayDeps,
+  threadId: string,
+  owner: string,
+  headers: Headers,
+): Observable<BaseEvent> {
   return new Observable<BaseEvent>((subscriber) => {
     const abort = new AbortController();
-    streamThread(deps, threadId, owner, (event) => subscriber.next(event), abort.signal).then(
+    streamThread(deps, threadId, owner, headers, (event) => subscriber.next(event), abort.signal).then(
       () => subscriber.complete(),
       (error: unknown) => subscriber.error(error),
     );
