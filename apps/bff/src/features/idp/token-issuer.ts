@@ -34,7 +34,7 @@ export interface ExchangeSubject {
   /** Seconds since epoch. */
   exp: number;
   scopes: readonly string[];
-  /** The session the token descends from; every token minted from a session carries it (ADR 024). */
+  /** The session the token descends from; every token minted from a session carries it. */
   sid: string;
   act?: ActClaim;
 }
@@ -129,9 +129,15 @@ export class TokenIssuer {
     return { token, sid, authTime, exp };
   }
 
-  /** Short-lived token the BFF forwards to the bot, so the bot never sees the session token. */
-  issueBotToken(session: Pick<SessionClaims, 'sub' | 'sid'>): Promise<string> {
-    return this.sign({ scope: 'chat', sid: session.sid }, session.sub, BOT_AUDIENCE, BOT_TOKEN_TTL_SECONDS);
+  /**
+   * Short-lived token the BFF forwards to the bot, so the bot never sees the session token. `notAfter` (seconds
+   * since epoch) caps its expiry; with less than a second left no token is minted.
+   */
+  issueBotToken(session: Pick<SessionClaims, 'sub' | 'sid'>, notAfter?: number): Promise<string> {
+    const now = nowSeconds();
+    const ttl = Math.min(BOT_TOKEN_TTL_SECONDS, (notAfter ?? Infinity) - now);
+    if (ttl < 1) return Promise.reject(new Error('bot token would already be expired'));
+    return this.sign({ scope: 'chat', sid: session.sid }, session.sub, BOT_AUDIENCE, ttl, randomUUID(), now);
   }
 
   /**
@@ -173,24 +179,30 @@ export class TokenIssuer {
   }
 
   /** Verifies an `aud=bot` token this IdP issued; the history restore reads the session it descends from. */
-  async verifyBotToken(token: string): Promise<Pick<SessionClaims, 'sub' | 'sid'>> {
-    const { sub, sid } = await this.verifyExchangeSubject(token, BOT_AUDIENCE);
-    return { sub, sid };
+  async verifyBotToken(token: string): Promise<Pick<SessionClaims, 'sub' | 'sid' | 'exp'>> {
+    const { sub, sid, exp } = await this.verifyExchangeSubject(token, BOT_AUDIENCE);
+    return { sub, sid, exp };
   }
 
-  async verifySession(token: string): Promise<SessionClaims> {
+  /**
+   * Verifies a session token. `toleranceSeconds` accepts one that expired (or passed the absolute cap) up to that
+   * long ago: only logout asks for it, to revoke a session whose downstream tokens may still be live.
+   */
+  async verifySession(token: string, toleranceSeconds = 0): Promise<SessionClaims> {
     const { payload } = await jwtVerify(token, this.publicKey, {
       issuer: this.issuer,
       audience: SESSION_AUDIENCE,
       algorithms: [ALG],
       requiredClaims: ['sub', 'exp'],
+      clockTolerance: toleranceSeconds,
     });
     const { sub, name, sid, auth_time: authTime, exp } = payload;
     if (!isNonEmptyString(sub) || typeof name !== 'string' || !isNonEmptyString(sid)) {
       throw new Error('malformed session');
     }
     if (typeof authTime !== 'number' || typeof exp !== 'number') throw new Error('malformed session');
-    if (isPastAbsoluteCap(authTime, nowSeconds())) throw new Error('session past its absolute lifetime');
+    if (isPastAbsoluteCap(authTime, nowSeconds() - toleranceSeconds))
+      throw new Error('session past its absolute lifetime');
     return { sub, name, sid, authTime, exp };
   }
 

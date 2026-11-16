@@ -18,7 +18,7 @@ export interface AppDeps {
   /** Confidential clients of the token endpoint: client_id → secret. */
   clients: Readonly<Record<string, string>>;
   stepUpPin: string;
-  /** Logged-out session ids (Redis in the stack, ADR 024). */
+  /** Logged-out session ids (Redis in the stack). */
   revocations: RevocationStore;
   threadLog: ThreadLog;
   logger: Logger;

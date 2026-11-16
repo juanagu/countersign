@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { pino } from 'pino';
 import { createApp, type AppDeps } from '../../src/app.js';
-import { MemoryRevocationStore } from '../../src/features/idp/revocation-store.js';
+import { MemoryRevocationStore } from './memory-revocation-store.js';
 import { TokenIssuer } from '../../src/features/idp/token-issuer.js';
 import { MemoryThreadLog } from './memory-thread-log.js';
 

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { RedisRevocationStore, revocationKey } from '../../../src/features/idp/redis-revocation-store.js';
-import { MemoryRevocationStore, type RevocationStore } from '../../../src/features/idp/revocation-store.js';
+import {
+  createRevocationRedis,
+  RedisRevocationStore,
+  revocationKey,
+} from '../../../src/features/idp/redis-revocation-store.js';
+import type { RevocationStore } from '../../../src/features/idp/revocation-store.js';
+import { MemoryRevocationStore } from '../../support/memory-revocation-store.js';
 import { connectTestRedis } from '../../support/redis.js';
 
 const redis = await connectTestRedis();
@@ -67,6 +72,21 @@ describe('redis revocation store', () => {
     await vi.advanceTimersByTimeAsync(60);
     await outcome;
     vi.useRealTimers();
+  });
+
+  it('fails at once while disconnected, instead of queueing the command until the deadline', async () => {
+    const offline = createRevocationRedis('redis://127.0.0.1:1');
+    offline.on('error', () => undefined);
+    void offline.connect().catch(() => undefined); // Connecting, never connected: what an outage looks like.
+    const store = new RedisRevocationStore(offline, { commandTimeoutMs: 1000 });
+    const started = Date.now();
+
+    const failure = await store.isRevoked('sid').catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toContain('timeout');
+    expect(Date.now() - started).toBeLessThan(300);
+    offline.destroy();
   });
 
   it('passes a client error through so callers can fail closed', async () => {

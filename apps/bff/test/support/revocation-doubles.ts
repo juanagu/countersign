@@ -1,6 +1,7 @@
 import { Writable } from 'node:stream';
 import { pino } from 'pino';
-import { MemoryRevocationStore, type RevocationStore } from '../../src/features/idp/revocation-store.js';
+import type { RevocationStore } from '../../src/features/idp/revocation-store.js';
+import { MemoryRevocationStore } from './memory-revocation-store.js';
 
 /** A memory store that remembers what was revoked and for how long. */
 export class RecordingRevocationStore extends MemoryRevocationStore {
@@ -9,6 +10,35 @@ export class RecordingRevocationStore extends MemoryRevocationStore {
   override async revoke(sid: string, ttlSeconds: number): Promise<void> {
     this.calls.push({ sid, ttlSeconds });
     return super.revoke(sid, ttlSeconds);
+  }
+}
+
+/** A memory store that can be taken down and brought back, to retry what failed during the outage. */
+export class SwitchableRevocationStore extends MemoryRevocationStore {
+  down = false;
+
+  override async revoke(sid: string, ttlSeconds: number): Promise<void> {
+    if (this.down) throw new Error('redis down');
+    return super.revoke(sid, ttlSeconds);
+  }
+
+  override async isRevoked(sid: string): Promise<boolean> {
+    if (this.down) throw new Error('redis down');
+    return super.isRevoked(sid);
+  }
+}
+
+/** Counts lookups, and answers "revoked" to every one after the first `freshFor`: a logout landing mid-request. */
+export class CountingRevocationStore extends MemoryRevocationStore {
+  lookups = 0;
+
+  constructor(private readonly freshFor = Infinity) {
+    super();
+  }
+
+  override async isRevoked(sid: string): Promise<boolean> {
+    this.lookups += 1;
+    return this.lookups > this.freshFor || super.isRevoked(sid);
   }
 }
 

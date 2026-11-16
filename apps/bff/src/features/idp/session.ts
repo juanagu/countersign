@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { parse } from 'hono/utils/cookie';
 import type { Logger } from 'pino';
+import { isRevokedOrUnknown } from './revocation-guard.js';
 import type { RevocationStore } from './revocation-store.js';
 import { nowSeconds, shouldSlide } from './session-lifetime.js';
 import type { SessionClaims, TokenIssuer } from './token-issuer.js';
@@ -33,37 +34,44 @@ export function clearSessionCookie(c: Context): void {
   deleteCookie(c, SESSION_COOKIE, { path: '/' });
 }
 
-/** The session token's signature and lifetime, without the revocation check: logout uses this one. */
-export async function verifySessionCookie(issuer: TokenIssuer, request: Request): Promise<SessionClaims | undefined> {
+/**
+ * The session token's signature and lifetime, without the revocation check. Logout and login use it, with a
+ * `toleranceSeconds` for a session that just ended whose downstream tokens are still live.
+ */
+export async function verifySessionCookie(
+  issuer: TokenIssuer,
+  request: Request,
+  toleranceSeconds = 0,
+): Promise<SessionClaims | undefined> {
   const token = parse(request.headers.get('cookie') ?? '', SESSION_COOKIE)[SESSION_COOKIE];
   if (!token) return undefined;
-  return issuer.verifySession(token).catch(() => undefined);
+  return issuer.verifySession(token, toleranceSeconds).catch(() => undefined);
+}
+
+/** Sessions already verified and checked against revocation, by the request they came in on: once per request. */
+const verifiedSessions = new WeakMap<Request, SessionClaims>();
+
+/** Makes `session` the answer of `readSession` for `request`, for a request object that replaced the original. */
+export function bindSession(request: Request, session: SessionClaims): void {
+  verifiedSessions.set(request, session);
 }
 
 /**
  * Verifies the session cookie from a raw request and that its `sid` was not logged out; undefined when absent,
- * invalid or revoked. When the revocation store cannot answer the session is refused (fail closed), and the log
- * line never carries the `sid`.
+ * invalid or revoked. When the revocation store cannot answer the session is refused (fail closed). A request that
+ * was verified before is not checked again, so every reader on it sees the same answer.
  */
 export async function readSession(
   { issuer, revocations, logger }: Pick<SessionDeps, 'issuer' | 'revocations' | 'logger'>,
   request: Request,
 ): Promise<SessionClaims | undefined> {
+  const known = verifiedSessions.get(request);
+  if (known) return known;
   const session = await verifySessionCookie(issuer, request);
   if (!session) return undefined;
-  try {
-    return (await revocations.isRevoked(session.sid)) ? undefined : session;
-  } catch (error) {
-    logger.error(
-      {
-        event: 'revocation_store_unavailable',
-        check: 'session',
-        err: error instanceof Error ? error.message : String(error),
-      },
-      'session refused: revocation store unavailable',
-    );
-    return undefined;
-  }
+  if (await isRevokedOrUnknown(revocations, logger, 'session', session.sid)) return undefined;
+  verifiedSessions.set(request, session);
+  return session;
 }
 
 /**
@@ -78,7 +86,8 @@ export function requireSession(deps: SessionDeps): MiddlewareHandler<SessionEnv>
     c.set('session', session);
     const slid = shouldSlide(session, nowSeconds()) ? await slideSession(deps.issuer, session) : undefined;
     await next();
-    if (slid) setSessionCookie(c, slid.token, slid.exp, deps.cookieSecure);
+    // A failed request is not activity worth extending the session for.
+    if (slid && c.res.ok) setSessionCookie(c, slid.token, slid.exp, deps.cookieSecure);
   };
 }
 

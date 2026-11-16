@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import type { Logger } from 'pino';
 import { AUDIENCE_SCOPES, CLIENT_POLICIES, type ClientPolicy } from './client-policies.js';
+import { isRevokedOrUnknown } from './revocation-guard.js';
 import type { RevocationStore } from './revocation-store.js';
 import type { ExchangeSubject, TokenIssuer } from './token-issuer.js';
 
@@ -13,7 +14,7 @@ export interface TokenExchangeOptions {
   issuer: TokenIssuer;
   /** client_id → secret. Only confidential clients may exchange tokens. */
   clients: Readonly<Record<string, string>>;
-  /** Logged-out sessions: a subject whose `sid` is here gets no new token (ADR 024). */
+  /** Logged-out sessions: a subject whose `sid` is here gets no new token. */
   revocations: RevocationStore;
   logger: Logger;
 }
@@ -87,23 +88,6 @@ function sameChain(subject: ExchangeSubject, expected: readonly string[]): boole
   return chain.length === expected.length && chain.every((actor, index) => actor === expected[index]);
 }
 
-/** A logged-out session, or a store that cannot say: either way no new token (fail closed, no `sid` in the log). */
-async function isRevokedOrUnknown(revocations: RevocationStore, sid: string, logger: Logger): Promise<boolean> {
-  try {
-    return await revocations.isRevoked(sid);
-  } catch (error) {
-    logger.error(
-      {
-        event: 'revocation_store_unavailable',
-        check: 'exchange',
-        err: error instanceof Error ? error.message : String(error),
-      },
-      'token exchange refused: revocation store unavailable',
-    );
-    return true;
-  }
-}
-
 /**
  * RFC 8693-shaped token exchange: a subject token for an audience-bound downstream token. Each client
  * presents one kind of subject token and asks for a fixed set of audiences (`CLIENT_POLICIES`).
@@ -140,7 +124,7 @@ export function tokenExchangeRoutes({ issuer, clients, revocations, logger }: To
 
     const subject = await issuer.verifyExchangeSubject(subjectToken, policy.subjectAudience).catch(() => undefined);
     if (!subject || !sameChain(subject, policy.subjectActors)) return oauthError(c, 'invalid_grant');
-    if (await isRevokedOrUnknown(revocations, subject.sid, logger)) return oauthError(c, 'invalid_grant');
+    if (await isRevokedOrUnknown(revocations, logger, 'exchange', subject.sid)) return oauthError(c, 'invalid_grant');
     const scopes = grantedScopes(audience, requestedScope, subject, policy);
     if (!scopes) return oauthError(c, 'invalid_scope');
 

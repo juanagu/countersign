@@ -120,6 +120,38 @@ describe('sliding session', () => {
     expect((await me(app, `session=${forged}`)).status).toBe(401);
   });
 
+  it('re-issues nothing for a request that fails after authenticating', async () => {
+    const { app } = await buildTestApp();
+    const cookie = await loginCookie(app);
+    advanceMinutes(SESSION_SLIDE_BELOW_SECONDS / 60 + 1);
+
+    const res = await app.request('/auth/step-up', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ pin: 'not-a-pin' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('gives a cookie re-issued before logout the same 401 as the one it replaced', async () => {
+    const { app } = await buildTestApp();
+    const original = await loginCookie(app);
+    advanceMinutes(SESSION_SLIDE_BELOW_SECONDS / 60 + 1);
+    const slid = (await me(app, original)).cookie ?? '';
+    expect(claimsOf(slid).sid).toBe(claimsOf(original).sid);
+
+    const logout = await app.request('/auth/logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: slid },
+    });
+
+    expect(logout.status).toBe(204);
+    expect((await me(app, slid)).status).toBe(401);
+    expect((await me(app, original)).status).toBe(401);
+  });
+
   it('does not re-issue for a request that has no valid session', async () => {
     const { app } = await buildTestApp();
     const res = await app.request('/auth/me');

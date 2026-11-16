@@ -1,3 +1,4 @@
+import { createClient } from 'redis';
 import type { RevocationStore } from './revocation-store.js';
 
 /** The two commands the store uses, so it never holds a client that can do anything else. */
@@ -7,8 +8,16 @@ export interface RevocationRedis {
 }
 
 export interface RedisRevocationStoreOptions {
-  /** A command that takes longer fails, so a Redis that is down (commands queue offline) cannot hang a request. */
+  /** A command that takes longer fails, so a connected but unresponsive Redis cannot hang a request. */
   commandTimeoutMs: number;
+}
+
+/**
+ * The store's own client. With no offline queue a command issued while Redis is down fails at once instead of
+ * waiting, so an outage can neither pile stale commands up nor replay them when the connection comes back.
+ */
+export function createRevocationRedis(url: string) {
+  return createClient({ url, disableOfflineQueue: true });
 }
 
 export const revocationKey = (sid: string): string => `auth:revoked:${sid}`;

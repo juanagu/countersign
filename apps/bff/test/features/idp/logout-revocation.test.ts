@@ -16,6 +16,7 @@ import { startFakeBot } from '../../support/fake-bot.js';
 import {
   capturingLogger,
   RecordingRevocationStore,
+  SwitchableRevocationStore,
   UnavailableRevocationStore,
 } from '../../support/revocation-doubles.js';
 
@@ -61,6 +62,8 @@ async function setup(overrides: Parameters<typeof buildTestApp>[1] = {}, history
   const stepUp = (cookie: string) => post('/auth/step-up', cookie, JSON.stringify(DRAFT));
   const logout = (cookie?: string) =>
     env.app.request('/auth/logout', { method: 'POST', headers: { ...json, ...(cookie && { cookie }) } });
+  const login = (cookie: string) =>
+    env.app.request('/auth/login', { method: 'POST', headers: { ...json, cookie }, body: '{"username":"ana"}' });
   const me = (cookie: string) => env.app.request('/auth/me', { headers: { cookie } });
   const exchange = (client: string, secret: string, subject: string, audience: string, scope: string) =>
     env.app.request('/token', {
@@ -77,7 +80,7 @@ async function setup(overrides: Parameters<typeof buildTestApp>[1] = {}, history
   const botExchange = (subject: string) => exchange('bot', TEST_BOT_SECRET, subject, 'mcp-gateway', PRE_APPROVAL);
   const gatewayExchange = (subject: string) =>
     exchange('mcp-gateway', TEST_GATEWAY_SECRET, subject, 'mcp-accounts', 'accounts:read');
-  return { ...env, bot, revocations, post, stepUp, logout, me, botExchange, gatewayExchange };
+  return { ...env, bot, revocations, post, stepUp, logout, login, me, botExchange, gatewayExchange };
 }
 
 describe('logout revokes the session', () => {
@@ -107,8 +110,9 @@ describe('logout revokes the session', () => {
     expect(t.revocations.calls).toHaveLength(1);
     const [entry] = t.revocations.calls;
     expect(entry?.sid).toBe(sidOf(cookie));
-    expect(entry?.ttlSeconds).toBeGreaterThan(SESSION_ABSOLUTE_TTL_SECONDS - 5);
-    expect(entry?.ttlSeconds).toBeLessThanOrEqual(SESSION_ABSOLUTE_TTL_SECONDS + DOWNSTREAM_TOKEN_TAIL_SECONDS);
+    const fullTtl = SESSION_ABSOLUTE_TTL_SECONDS + DOWNSTREAM_TOKEN_TAIL_SECONDS;
+    expect(entry?.ttlSeconds).toBeGreaterThan(fullTtl - 5);
+    expect(entry?.ttlSeconds).toBeLessThanOrEqual(fullTtl);
     t.bot.server.close();
   });
 
@@ -264,9 +268,10 @@ describe('when the revocation store is unavailable it fails closed', () => {
     await t.me(t.cookie);
     await t.botExchange(await t.issuer.issueBotToken({ sub: 'ana', sid }));
     await t.logout(t.cookie);
+    await t.login(t.cookie);
 
     const events = t.lines.map((line) => JSON.parse(line) as { event?: string; check?: string });
-    expect(events.map((e) => e.check)).toEqual(['session', 'exchange', 'logout']);
+    expect(events.map((e) => e.check)).toEqual(['session', 'exchange', 'logout', 'login']);
     expect(events.every((e) => e.event === 'revocation_store_unavailable')).toBe(true);
     const log = t.lines.join('');
     expect(log).not.toContain(sid);
@@ -274,11 +279,27 @@ describe('when the revocation store is unavailable it fails closed', () => {
     t.bot.server.close();
   });
 
-  it('refuses a logout it could not record with 503, but still clears the cookie', async () => {
+  it('refuses a logout it could not record with 503 and keeps the cookie, so a retry can still revoke', async () => {
     const t = await down();
     const res = await t.logout(t.cookie);
     expect(res.status).toBe(503);
-    expect(res.headers.get('set-cookie')).toMatch(/^session=;/);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    t.bot.server.close();
+  });
+
+  it('revokes on the retry once the store is back, with the cookie the first attempt left in place', async () => {
+    const revocations = new SwitchableRevocationStore();
+    const t = await setup({ revocations });
+    const cookie = await loginCookie(t.app);
+    revocations.down = true;
+    expect((await t.logout(cookie)).status).toBe(503);
+    revocations.down = false;
+
+    const retry = await t.logout(cookie);
+
+    expect(retry.status).toBe(204);
+    expect(retry.headers.get('set-cookie')).toMatch(/^session=;/);
+    expect((await t.me(cookie)).status).toBe(401);
     t.bot.server.close();
   });
 });

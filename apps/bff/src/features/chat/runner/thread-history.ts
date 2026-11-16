@@ -23,8 +23,10 @@ const historySchema = z.object({
 
 /**
  * Reads the bot's Postgres-backed history with an `aud=bot` token minted for the thread's owner, in the session
- * the caller's own bot token descends from (so it carries that `sid`). A caller token that does not verify, or
- * belongs to another user, gets no history.
+ * the caller's own bot token descends from (so it carries that `sid`) and never outliving it. The runner hands
+ * `connect` only headers, and the runtime lets the agent's own `Authorization` (the token the agent factory minted
+ * from the verified session) win over the client's, so that header is the one channel to the session. A caller
+ * token that does not verify, or belongs to another user, gets no history.
  */
 export class BotThreadHistory implements ThreadHistory {
   constructor(
@@ -34,18 +36,22 @@ export class BotThreadHistory implements ThreadHistory {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  private async callerSession(headers: Readonly<Record<string, string>>, owner: string) {
-    const bearer = bearerOf(headers);
-    if (!bearer) throw new Error('no caller token');
+  private async restoreToken(bearer: string, owner: string): Promise<string> {
     const caller = await this.issuer.verifyBotToken(bearer);
     if (caller.sub !== owner) throw new Error('caller token belongs to another user');
-    return caller;
+    return this.issuer.issueBotToken(caller, caller.exp);
   }
 
   async messagesFor(threadId: string, owner: string, headers: Readonly<Record<string, string>>): Promise<Message[]> {
+    const bearer = bearerOf(headers);
+    if (!bearer) {
+      // The runtime always forwards the agent's token; its absence means that changed and no thread restores.
+      this.logger.error({ event: 'thread_history_no_caller_token' }, 'connect carried no caller token: no restore');
+      return [];
+    }
     const url = new URL(`/threads/${encodeURIComponent(threadId)}/messages`, this.botAgentUrl);
     try {
-      const token = await this.issuer.issueBotToken(await this.callerSession(headers, owner));
+      const token = await this.restoreToken(bearer, owner);
       const res = await this.fetchImpl(url, { headers: { authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`history request failed: ${res.status}`);
       return historySchema.parse(await res.json()).messages as Message[];

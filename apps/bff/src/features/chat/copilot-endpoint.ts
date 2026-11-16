@@ -2,7 +2,7 @@ import { HttpAgent } from '@ag-ui/client';
 import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime/v2';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { readSession, requireSession, type SessionDeps, type SessionEnv } from '../idp/session.js';
+import { bindSession, readSession, requireSession, type SessionDeps, type SessionEnv } from '../idp/session.js';
 import { DurableAgentRunner } from './runner/durable-agent-runner.js';
 import { BotThreadHistory } from './runner/thread-history.js';
 import type { ThreadLog } from './runner/thread-log.js';
@@ -59,6 +59,11 @@ export function chatRoutes(options: ChatRoutesOptions): Hono<SessionEnv> {
   app.use(`${COPILOT_BASE_PATH}/*`, async (c, next) => (isDebugFeed(c.req.raw) ? c.notFound() : next()));
   app.use(`${COPILOT_BASE_PATH}/*`, requireSession(options));
   app.use(`${COPILOT_BASE_PATH}/*`, bodyLimit({ maxSize: MAX_RUN_BODY_BYTES }));
-  app.all(`${COPILOT_BASE_PATH}/*`, (c) => handler(c.req.raw));
+  app.all(`${COPILOT_BASE_PATH}/*`, (c) => {
+    // bodyLimit swaps in a new Request, and the runtime's callbacks see the one passed here: bind the verified
+    // session to it so they reuse it instead of checking again.
+    bindSession(c.req.raw, c.get('session'));
+    return handler(c.req.raw);
+  });
   return app;
 }

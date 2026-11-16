@@ -1,16 +1,23 @@
+import { decodeJwt } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
 import { BotThreadHistory } from '../../../../src/features/chat/runner/thread-history.js';
 import { TokenIssuer } from '../../../../src/features/idp/token-issuer.js';
 import { silentLogger, TEST_ISSUER, testSession } from '../../../support/build-app.js';
+import { capturingLogger } from '../../../support/revocation-doubles.js';
 
 const MESSAGES = [{ id: 'm1', role: 'user', content: 'hola' }];
 
-async function setup() {
+async function setup(logger = silentLogger) {
   const issuer = await TokenIssuer.create(TEST_ISSUER);
   const fetchImpl = vi.fn(async () => Response.json({ messages: MESSAGES }));
-  const history = new BotThreadHistory(issuer, 'http://bot.invalid/agent', silentLogger, fetchImpl as typeof fetch);
+  const history = new BotThreadHistory(issuer, 'http://bot.invalid/agent', logger, fetchImpl as typeof fetch);
   return { issuer, fetchImpl, history };
 }
+
+const sentToken = (fetchImpl: ReturnType<typeof vi.fn>) =>
+  (
+    (fetchImpl.mock.calls[0] as unknown as [URL, RequestInit])[1].headers as Record<string, string>
+  ).authorization?.replace('Bearer ', '') ?? '';
 
 describe('BotThreadHistory', () => {
   it("restores with a token for the owner in the caller's session, read from the connect headers", async () => {
@@ -20,9 +27,30 @@ describe('BotThreadHistory', () => {
 
     expect(await history.messagesFor('t1', 'ana', headers)).toEqual(MESSAGES);
 
-    const sent = (fetchImpl.mock.calls[0] as unknown as [URL, RequestInit])[1].headers as Record<string, string>;
-    const minted = await issuer.verifyBotToken(sent.authorization?.replace('Bearer ', '') ?? '');
-    expect(minted).toEqual(caller);
+    const minted = await issuer.verifyBotToken(sentToken(fetchImpl));
+    expect(minted).toMatchObject(caller);
+  });
+
+  it('never mints a restore token that outlives the caller token it came from', async () => {
+    const { issuer, fetchImpl, history } = await setup();
+    const callerExp = Math.floor(Date.now() / 1000) + 60;
+    const headers = { Authorization: `Bearer ${await issuer.issueBotToken(testSession('ana'), callerExp)}` };
+
+    await history.messagesFor('t1', 'ana', headers);
+
+    expect(decodeJwt(sentToken(fetchImpl)).exp).toBeLessThanOrEqual(callerExp);
+  });
+
+  it('mints no bot token under a cap that has already passed', async () => {
+    const { issuer } = await setup();
+    await expect(issuer.issueBotToken(testSession('ana'), Math.floor(Date.now() / 1000))).rejects.toThrow('expired');
+  });
+
+  it('logs at error, not warn, when the connect carries no caller token at all', async () => {
+    const { logger, lines } = capturingLogger();
+    const { history } = await setup(logger);
+    expect(await history.messagesFor('t1', 'ana', {})).toEqual([]);
+    expect(lines.map((line) => JSON.parse(line) as { level: number })).toMatchObject([{ level: 50 }]);
   });
 
   it.each([
