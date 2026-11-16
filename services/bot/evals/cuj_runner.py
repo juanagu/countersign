@@ -7,27 +7,23 @@ ANTHROPIC_API_KEY. Trials run one at a time, because they share one ledger. Exit
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 import time
-from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import httpx
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator
-from pydantic_evals.reporting import EvaluationReport, ReportCase
+from pydantic_evals.reporting import EvaluationReport
 
 from app.config import Settings
 from evals.agui_client import BffSession, RunTrace, bff_client
 from evals.bank_db import expire_draft, read_ledger, restore_balance
-from evals.calls import ObservedCall
 from evals.cuj import Scenario, load_scenarios
 from evals.cuj_evaluators import (
     BalanceMatchesLedger,
@@ -38,29 +34,28 @@ from evals.cuj_evaluators import (
     LedgerDelta,
     StepUpAttempts,
     Trajectory,
-    trajectory_problems,
 )
+from evals.cuj_report import (
+    TrialResult,
+    cuj_gates,
+    error_result,
+    print_results,
+    token_bill,
+    trial_result,
+    write_summary,
+)
+from evals.cuj_retry import RATE_LIMIT_RETRIES, rate_limit_stall
 from evals.cuj_spans import Trial, emit_trials
 from evals.cuj_user import Reply, Turn, is_end, simulated_user
-from evals.delegation import read_delegated
-from evals.live import STEP_UP_PIN, DiscardedAttempt, LiveInput, LiveOutput, Meta
+from evals.delegation import CONFIRM_TEMPLATE
+from evals.live import STEP_UP_PIN, DiscardedAttempt, LiveInput, LiveOutput, Meta, attach_delegated
 from evals.live_evaluators import Contains
-from evals.metrics import spans, tokens_by_thread
-from evals.run import Gate, print_gates
+from evals.run import print_gates
 from evals.scenario_evaluators import NoRunErrors
-from evals.thresholds import Thresholds, load_thresholds
+from evals.thresholds import load_thresholds
 
-CONFIRM_TEMPLATE = "transfer-confirm"
 WRONG_PIN = "000000"
 CANCEL_PAYLOAD = {"approved": False, "reason": "El cliente canceló la transferencia."}  # As the web's Cancelar sends.
-# The gateway allows each customer 20 reversible writes per 10 minutes (ADR 017), and every trial prepares at least
-# one. A trial that was going right until the gateway refused a write says nothing about the bot, so it waits for the
-# gateway's `retry_after_seconds` (never longer than the window) and runs again.
-RATE_LIMITED = "error:rate_limited"
-RATE_LIMIT_WINDOW_SECONDS = 600.0
-RATE_LIMIT_WAIT_SECONDS = 60.0  # When the refusal names no `retry_after_seconds`.
-RATE_LIMIT_RETRIES = 12
-MISSING = "missing"  # How `trajectory_problems` words a step never reached.
 
 CujEvaluator = Evaluator[LiveInput, LiveOutput, Meta]
 Report = EvaluationReport[LiveInput, LiveOutput, Meta]
@@ -185,35 +180,6 @@ async def _next_message(scenario: Scenario, scripted: Any, reply: Reply | None, 
     return None if is_end(message) else message
 
 
-@dataclass(frozen=True)
-class Stall:
-    """An attempt the gateway's write limit stopped, with nothing else wrong before it."""
-
-    verdict: str
-    wait_seconds: float
-
-
-def rate_limit_stall(scenario: Scenario, output: LiveOutput) -> Stall | None:
-    """The attempt, judged first: only when a `rate_limited` refusal is why it could not go on, and what it did before
-    it broke no rule, does the trial deserve another attempt. A forbidden or unexpected call, or a run error, is the
-    bot's and stays the verdict."""
-    calls = output.calls
-    limited = [i for i, c in enumerate(calls) if c.outcome == RATE_LIMITED]
-    if not limited or output.errors:
-        return None
-    before = calls[: limited[0]]
-    problems = trajectory_problems(before, scenario.trajectory, scenario.allow, scenario.forbid, scenario.requires)
-    if not problems or any(not p.startswith(MISSING) for p in problems):
-        return None
-    refusals = [calls[i] for i in limited]
-    return Stall(f"rate limited at {refusals[0].name} after {len(before)} calls", _wait_seconds(refusals))
-
-
-def _wait_seconds(refusals: list[ObservedCall]) -> float:
-    named = [c.retry_after_seconds for c in refusals if c.retry_after_seconds is not None]
-    return min(float(max(named)), RATE_LIMIT_WINDOW_SECONDS) if named else RATE_LIMIT_WAIT_SECONDS
-
-
 async def run_trial(scenario: Scenario, reply: Reply | None, starting: Mapping[str, Decimal]) -> LiveOutput:
     """One trial: the source account's balance restored, then the journey, run again on a fresh thread while the
     gateway's write limit stops it. Every discarded attempt stays in the output with its verdict."""
@@ -253,59 +219,8 @@ async def run_attempt(scenario: Scenario, reply: Reply | None) -> LiveOutput:
         turns=journey.turns,
     )
     if scenario.handoffs or any(c.is_handoff for c in output.calls):
-        delegated = await read_delegated(session.thread_id, since, output.cards, runs=len(output.traces))
-        output.delegated = delegated or []
-        output.notes += [] if delegated is not None else ["no trace for the thread in Phoenix"]
+        await attach_delegated(output, session.thread_id, since)
     return output
-
-
-@dataclass(frozen=True)
-class TrialResult:
-    cuj_id: str
-    group: str
-    trial: int
-    passed: bool
-    failed: dict[str, str | None]
-    seconds: float
-    turns: int
-    thread_id: str
-    text: str
-    calls: list[str]
-    driver: str
-    attempts: int
-    start_ns: int
-    end_ns: int
-    discarded: list[DiscardedAttempt] = field(default_factory=list)
-
-
-def trial_result(case: ReportCase[LiveInput, LiveOutput, Meta], trial: int) -> TrialResult:
-    meta = case.metadata or {}
-    failed = {name: a.reason for name, a in case.assertions.items() if not a.value}
-    failed |= {f.name: f.error_message for f in case.evaluator_failures}
-    return TrialResult(
-        cuj_id=meta.get("id", case.name),
-        group=meta.get("group", ""),
-        trial=trial,
-        passed=not failed,
-        failed=failed,
-        seconds=round(case.task_duration, 1),
-        turns=case.output.turns,
-        thread_id=case.output.thread_id or "",
-        text=case.output.text[:300],
-        calls=[f"{c.name}:{c.outcome}" for c in case.output.calls],
-        driver=meta.get("driver", ""),
-        attempts=case.output.attempts,
-        start_ns=case.output.start_ns,
-        end_ns=case.output.end_ns,
-        discarded=case.output.discarded,
-    )
-
-
-def error_result(scenario: Scenario, trial: int, message: str) -> TrialResult:
-    now = time.time_ns()
-    return TrialResult(
-        scenario.id, scenario.group, trial, False, {"task": message}, 0.0, 0, "", "", [], scenario.driver, 1, now, now
-    )
 
 
 async def run_scenario(
@@ -319,63 +234,6 @@ async def run_scenario(
     results = [trial_result(case, n) for n, case in enumerate(report.cases, 1)]
     results += [error_result(scenario, len(results) + n, f.error_message) for n, f in enumerate(report.failures, 1)]
     return results
-
-
-def cuj_gates(results: list[TrialResult], thresholds: Thresholds) -> list[Gate]:
-    """Per group: the share of trials that passed, and, where the group allows misses, each journey's passing trials."""
-    gates: list[Gate] = []
-    for group in sorted({r.group for r in results}):
-        trials = [r for r in results if r.group == group]
-        passed = sum(r.passed for r in trials)
-        if group in thresholds.pass_rates:
-            detail = f"{passed}/{len(trials)} trials"
-            gates.append(Gate(group, passed / len(trials), thresholds.pass_rates[group], detail))
-        else:
-            gates.append(Gate(f"{group} (no threshold)", 0.0, 1.0, f"{group!r} has no pass_rates entry; add one"))
-        minimum = thresholds.consistency.min_trials_passing.get(group)
-        if minimum is not None:
-            per_journey: dict[str, int] = defaultdict(int)
-            for r in trials:
-                per_journey[r.cuj_id] += r.passed
-            detail = f"passing trials per journey {dict(per_journey)}"
-            gates.append(Gate(f"{group} consistency", float(min(per_journey.values())), float(minimum), detail))
-    return gates
-
-
-def print_results(results: list[TrialResult]) -> None:
-    for r in results:
-        mark = "PASS" if r.passed else "FAIL"
-        retried = f", {r.attempts} attempts" if r.attempts > 1 else ""
-        print(f"{mark} {r.cuj_id} trial {r.trial} ({r.seconds}s, {r.turns} turns{retried}) calls: {r.calls}")
-        for attempt in r.discarded:
-            print(f"     discarded attempt: {attempt.verdict}; calls: {attempt.calls}")
-        for name, reason in r.failed.items():
-            print(f"     failed {name}: {reason}")
-
-
-def token_bill(results: list[TrialResult], since: datetime) -> dict[str, float]:
-    """Tokens per journey id (orchestrator, subagent and guard models together, discarded attempts included) from
-    Phoenix; empty without it."""
-    try:
-        stream = list(spans(since, name="bot.stream"))
-        models = list(spans(since, span_kind="LLM"))
-    except httpx.HTTPError:
-        return {}
-    by_thread = tokens_by_thread(stream, models)
-    bill: dict[str, float] = defaultdict(float)
-    for r in results:
-        threads = [r.thread_id, *(a.thread_id for a in r.discarded)]
-        bill[r.cuj_id] += sum(by_thread.get(thread, 0.0) for thread in threads)
-    return dict(bill)
-
-
-def write_summary(path: Path, gates: list[Gate], results: list[TrialResult], bill: dict[str, float]) -> None:
-    summary = {
-        "gates": [g.__dict__ | {"ok": g.ok} for g in gates],
-        "trials": [asdict(r) for r in results],
-        "tokens": bill,
-    }
-    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 async def main(out: Path | None, only: str | None, trials: int | None) -> int:

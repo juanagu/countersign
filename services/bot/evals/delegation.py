@@ -5,6 +5,7 @@ made: the n-th successful prepare, in start order, owns the n-th distinct confir
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -66,16 +67,16 @@ def delegated_calls(trace_spans: Sequence[Span], cards: Sequence[dict[str, Any]]
 
 
 def _outcome(call: Span, trace_spans: Sequence[Span]) -> tuple[str, int | None]:
-    """`error:<code>` (and the gateway's `retry_after_seconds`) when the call's span or one of its descendants ended
-    in an error carrying a code."""
+    """The call's own span decides: `result` unless it ended in ERROR. Then `error:<code>` (and the gateway's
+    `retry_after_seconds`), the code read from the span's message or, when it has none, from the ERROR spans below it
+    (the MCP transport's). An ERROR in a descendant of a successful call changes nothing."""
+    if call.get("status_code") != "ERROR":
+        return RESULT, None
     family = {call["context"]["span_id"]}
     for span in sorted(trace_spans, key=lambda s: str(s.get("start_time"))):
         if span.get("parent_id") in family:
             family.add(span["context"]["span_id"])
-    failed = [s for s in trace_spans if s["context"]["span_id"] in family and s.get("status_code") == "ERROR"]
-    if not failed:
-        return RESULT, None
-    # The tool's own span ends in ERROR with no message; the MCP transport span below it carries the code.
+    failed = [call, *(s for s in trace_spans if s["context"]["span_id"] in family and s.get("status_code") == "ERROR")]
     errors = [e for span in failed if (e := parse_error(str(span.get("status_message") or "")))]
     if not errors:
         return f"{ERROR_PREFIX}{UNKNOWN_ERROR}", None
@@ -91,11 +92,18 @@ def _tool(span: Span) -> str | None:
     return value if isinstance(value, str) else None
 
 
-async def read_delegated(
-    thread_id: str, since: datetime, cards: Sequence[dict[str, Any]], runs: int
-) -> list[ObservedCall] | None:
-    """The thread's delegated calls since `since`, once all of its `runs` runs reached Phoenix (a span is exported at
-    its run's end, children first), or None when they never did."""
+@dataclass(frozen=True)
+class Delegated:
+    """The delegated calls of the runs that reached Phoenix, and a note when some run did not."""
+
+    calls: list[ObservedCall]
+    note: str = ""
+
+
+async def read_delegated(thread_id: str, since: datetime, cards: Sequence[dict[str, Any]], runs: int) -> Delegated:
+    """The thread's delegated calls since `since`: from all of its `runs` runs once they reached Phoenix (a span is
+    exported at its run's end, children first), else from the traces that did arrive when the wait ran out, with a
+    note naming how many are missing."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + EXPORT_WAIT_SECONDS
     while True:
@@ -103,9 +111,10 @@ async def read_delegated(
         traces = {
             s["context"]["trace_id"] for s in streams if (s.get("attributes") or {}).get(THREAD_ATTRIBUTE) == thread_id
         }
-        if len(traces) >= runs:
-            every = await asyncio.to_thread(lambda: list(spans(since)))
-            return delegated_calls([s for s in every if s["context"]["trace_id"] in traces], cards)
-        if loop.time() > deadline:
-            return None
+        if len(traces) >= runs or loop.time() > deadline:
+            break
         await asyncio.sleep(POLL_SECONDS)
+    every = await asyncio.to_thread(lambda: list(spans(since))) if traces else []
+    calls = delegated_calls([s for s in every if s["context"]["trace_id"] in traces], cards)
+    note = f"only {len(traces)} of {runs} runs reached Phoenix for the thread" if len(traces) < runs else ""
+    return Delegated(calls, note)

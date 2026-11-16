@@ -18,6 +18,7 @@ from evals.cuj_evaluators import (
     Handoffs,
     Interrupts,
     LedgerDelta,
+    Problem,
     StepUpAttempts,
     Trajectory,
     trajectory_problems,
@@ -125,7 +126,7 @@ def test_an_extra_prepare_transfer_fails_through_the_evaluator() -> None:
 def test_a_missing_step_is_reported() -> None:
     problems = trajectory_problems([ObservedCall("ask_payments")], STEPS, ALLOW, FORBID)
 
-    assert [p for p in problems if p.startswith("missing")] == [
+    assert [str(p) for p in problems if p.kind == "missing"] == [
         "missing prepare_transfer (result)",
         "missing execute_transfer (paused)",
         "missing execute_transfer (result)",
@@ -137,7 +138,7 @@ def test_arguments_are_compared_numerically() -> None:
 
     problems = trajectory_problems([wrong], [Step(tool="prepare_transfer", args={"amount": 50000})], [], [])
 
-    assert any("unexpected prepare_transfer" in p for p in problems)
+    assert any("unexpected prepare_transfer" in str(p) for p in problems)
 
 
 def test_a_refused_interrupt_is_cancelled_not_a_result() -> None:
@@ -212,7 +213,11 @@ def test_the_balance_read_must_show_the_ledgers_balance() -> None:
     assert not _ok(BalanceMatchesLedger().evaluate(_ctx(LiveOutput([balance], ledger_after=stale))))
 
 
-EXPIRED_RETRY_RULE = ["execute_transfer:paused <- prepare_transfer"]
+EXPIRED_RETRY_RULE = ["execute_transfer:paused <- prepare_transfer:result"]
+
+
+def _texts(problems: list[Problem]) -> list[str]:
+    return [str(p) for p in problems]
 
 
 def _paused_execute() -> ObservedCall:
@@ -231,15 +236,31 @@ def test_a_second_approval_card_needs_a_new_prepare_transfer() -> None:
     retry_with_prepare = [PREPARE, _paused_execute(), expired, ObservedCall("ask_payments"), PREPARE, _paused_execute()]
 
     assert trajectory_problems(retry_with_prepare, steps, allow, [], EXPIRED_RETRY_RULE) == []
-    assert trajectory_problems(retry_without_prepare, steps, allow, [], EXPIRED_RETRY_RULE) == [
-        "execute_transfer (paused) without a new prepare_transfer (execute_transfer:paused <- prepare_transfer)"
-    ]
+    [problem] = trajectory_problems(retry_without_prepare, steps, allow, [], EXPIRED_RETRY_RULE)
+    assert str(problem) == f"execute_transfer (paused) without a new prepare_transfer:result ({EXPIRED_RETRY_RULE[0]})"
 
 
 def test_allow_can_name_an_outcome() -> None:
     steps = [Step(tool="prepare_transfer")]
 
     assert trajectory_problems([PREPARE, _paused_execute()], steps, ["execute_transfer:paused"], []) == []
-    assert trajectory_problems([PREPARE, ObservedCall("execute_transfer")], steps, ["execute_transfer:paused"], []) == [
-        "unexpected execute_transfer (result) after 1 of 1 steps"
+    assert _texts(
+        trajectory_problems([PREPARE, ObservedCall("execute_transfer")], steps, ["execute_transfer:paused"], [])
+    ) == ["unexpected execute_transfer (result) after 1 of 1 steps"]
+
+
+def test_a_failed_re_prepare_is_not_a_fresh_draft() -> None:
+    steps = [Step(tool="prepare_transfer"), Step(tool="execute_transfer", outcome="paused")]
+    allow = [
+        "ask_payments",
+        "prepare_transfer:error:insufficient_funds",
+        "execute_transfer:paused",
+        "execute_transfer:error:draft_expired",
     ]
+    failed_prepare = ObservedCall("prepare_transfer", outcome="error:insufficient_funds")
+    expired = ObservedCall("execute_transfer", outcome="error:draft_expired")
+    calls = [PREPARE, _paused_execute(), expired, failed_prepare, _paused_execute()]
+
+    problems = trajectory_problems(calls, steps, allow, [], EXPIRED_RETRY_RULE)
+
+    assert [p.kind for p in problems] == ["unmet"]

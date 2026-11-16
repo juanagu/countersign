@@ -3,6 +3,9 @@
 from decimal import Decimal
 from typing import Any
 
+import pytest
+
+from evals import delegation
 from evals.calls import ObservedCall
 from evals.delegation import delegated_calls
 
@@ -53,7 +56,7 @@ def test_the_mcp_transport_span_does_not_count_as_a_second_call_and_carries_the_
     transport["attributes"]["mcp.method.name"] = "tools/call"
     spans = [
         _span("ask", None, "ask_payments", "1"),
-        _span("prep", "ask", "prepare_transfer", "2"),
+        _span("prep", "ask", "prepare_transfer", "2", status="ERROR"),
         transport,
     ]
 
@@ -107,3 +110,34 @@ def test_the_gateways_retry_after_is_read_from_the_error() -> None:
     [_, prepare] = delegated_calls(spans, [])
 
     assert (prepare.outcome, prepare.retry_after_seconds) == ("error:rate_limited", 37)
+
+
+def test_an_error_in_a_child_span_does_not_fail_a_call_that_succeeded() -> None:
+    child = _span("rpc", "prep", "prepare_transfer", "3", status="ERROR", message='{"error":"insufficient_funds"}')
+    child["attributes"]["mcp.method.name"] = "tools/call"
+    spans = [_span("ask", None, "ask_payments", "1"), _span("prep", "ask", "prepare_transfer", "2", status="OK"), child]
+
+    [_, prepare] = delegated_calls(spans, [CONFIRM])
+
+    assert prepare.outcome == "result"
+    assert prepare.args["amount"] == Decimal("10000.00")  # It keeps its card.
+
+
+async def test_the_runs_that_reached_phoenix_are_read_and_the_missing_one_is_noted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = {"context": {"trace_id": "t"}, "attributes": {delegation.THREAD_ATTRIBUTE: "thr"}}
+    handoff = _span("ask", None, "ask_payments", "1")
+
+    def fake_spans(_since: object, **filters: object) -> list[dict[str, Any]]:
+        return [stream] if filters.get("name") == "bot.stream" else [handoff]
+
+    monkeypatch.setattr(delegation, "spans", fake_spans)
+    monkeypatch.setattr(delegation, "EXPORT_WAIT_SECONDS", 0.0)
+
+    from datetime import UTC, datetime
+
+    result = await delegation.read_delegated("thr", datetime.now(UTC), [], runs=2)
+
+    assert [c.name for c in result.calls] == ["ask_payments"]
+    assert "1 of 2 runs" in result.note

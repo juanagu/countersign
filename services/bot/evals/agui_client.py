@@ -149,6 +149,17 @@ def fold(events: list[dict[str, Any]], messages: list[dict[str, Any]]) -> list[d
     return messages
 
 
+def _response_object(res: httpx.Response) -> tuple[dict[str, Any], str]:
+    """The response's JSON object, or an empty one and a note naming what the body was instead."""
+    if not res.content:
+        return {}, ""
+    try:
+        body = res.json()
+    except ValueError:
+        return {}, f"a body that is not JSON: {res.text[:80]!r}"
+    return (body, "") if isinstance(body, dict) else ({}, f"a JSON body that is not an object: {res.text[:80]!r}")
+
+
 @dataclass(frozen=True)
 class StepUpAttempt:
     """One PIN entry: the BFF's status and, only when the PIN was right, the single-use step-up token."""
@@ -156,6 +167,7 @@ class StepUpAttempt:
     status: int
     token: str | None
     body: dict[str, Any]
+    note: str = ""  # Why a success came back without a token: a body that is not JSON, or has no `step_up_token`.
 
 
 @dataclass
@@ -209,15 +221,18 @@ class BffSession:
         grant = {"amount": data["amount"], "currency": data["currency"], "beneficiary_id": data["beneficiaryId"]}
         res = await self.http.post(STEP_UP_PATH, json={"draft_id": data["draftId"], "pin": pin, **grant})
         self.step_up_statuses.append(res.status_code)
-        body = res.json() if res.content else {}
-        token = str(body["step_up_token"]) if res.is_success else None
-        return StepUpAttempt(res.status_code, token, body)
+        body, note = _response_object(res)
+        token = body.get("step_up_token") if res.is_success else None
+        if res.is_success and not isinstance(token, str):
+            note = note or "a success without a step_up_token"
+            token = None
+        return StepUpAttempt(res.status_code, token, body, note)
 
     async def step_up(self, card: Event, pin: str) -> str:
         """`try_step_up` for the right PIN: anything but a token is an error."""
         attempt = await self.try_step_up(card, pin)
         if attempt.token is None:
-            raise RuntimeError(f"step-up refused: {attempt.status} {attempt.body}")
+            raise RuntimeError(f"step-up refused: {attempt.status} {attempt.body} {attempt.note}".rstrip())
         return attempt.token
 
     async def say_until(self, text: str, stop: StopWhen) -> list[Event]:

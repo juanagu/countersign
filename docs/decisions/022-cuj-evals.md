@@ -257,7 +257,7 @@ Written after ADR 021 was built, so trajectories are in what the client and the 
   outcome from the resume (which has no start event).
 - **`requires`, and outcomes in `allow`.** A retry after `draft_expired` is acceptable when it starts from a new draft
   and not otherwise ("no retry by the model without a new `prepare_transfer`"). Two additions express it: `allow`
-  entries may name an outcome (`execute_transfer:paused`), and `requires: ["execute_transfer:paused <- prepare_transfer"]`
+  entries may name an outcome (`execute_transfer:paused`), and `requires: ["execute_transfer:paused <- prepare_transfer:result"]`
   fails a pause that has no `prepare_transfer` since the previous one. The first exploratory run of CUJ 08 showed
   the bot doing exactly that retry (below).
 - **Format changes from section 4's example.** `ledger: none | once` replaces `ledger_delta: 0` (a debit of
@@ -270,13 +270,25 @@ Written after ADR 021 was built, so trajectories are in what the client and the 
   have loaded twice). `--only`, `--trials`, `--out` as designed. Trials run one at a time: they share one ledger.
 - **The gateway's write limit decides how long a run takes.** The gateway allows 20 T2 calls per customer per
   10 minutes (ADR 017). Fifteen trials prepare at least fifteen drafts, and every journey is Juan's, so a run, or two
-  runs in a row, hit `rate_limited` at `prepare_transfer`. The attempt is judged first: it is run again on a fresh
-  thread only when the refusal is why it could not go on (every call before it broke no rule, and only steps are
-  missing). A forbidden or unexpected call, a run error, or a refusal after the steps were done keeps the attempt as the
-  verdict. The wait is the gateway's own `retry_after_seconds` from the parsed error, capped at the 10 minute window
-  (60 s when the error names none); the gateway gets no reset hook. Up to 12 retries. Every discarded attempt stays in
-  `--out` (`discarded`: thread, verdict, calls) and its tokens are in the bill. A journey that could run as Ana would
-  spread the budget; the ADR fixes the users, so it stays as is.
+  runs in a row, hit `rate_limited` at `prepare_transfer`. The **whole attempt** is judged first (`evals/cuj_retry.py`),
+  every call counted, the refused ones too, because an attempted forbidden call is a violation: a refused call whose
+  tool a `forbid` rule names (any outcome) fails the trial, and so does any forbidden, unexpected or unmet-`requires`
+  call before or after a refusal. Only when the sole problems are steps never reached (`Problem.kind == "missing"`; a
+  refused call the journey names is not itself unexpected) is the attempt run again on a fresh thread. A run error also
+  keeps the attempt as the verdict. Problems are structured (`kind`, `call`, `detail`; the printed text derives from
+  them) so the rule never reads wording. The wait is the gateway's own `retry_after_seconds` from the parsed error, capped
+  at the 10 minute window (60 s when the error names none); the gateway gets no reset hook. Up to 12 retries. Every
+  discarded attempt stays in `--out` (`discarded`: thread, verdict, calls) and its tokens are in the bill. A journey that
+  could run as Ana would spread the budget; the ADR fixes the users, so it stays as is.
+- **Fixes after the second review** (F64). `requires` honours the outcome on its right side, and CUJ 08 now reads
+  `execute_transfer:paused <- prepare_transfer:result`: a failed re-prepare is not a fresh draft. A delegated call's
+  outcome is its **own** span's status; a descendant (the MCP transport span) only supplies the error code when the
+  call's span is ERROR, so a successful prepare with an ERROR child keeps its result and its card. `read_delegated`
+  returns the calls of the traces that arrived plus a note ("only k of n runs reached Phoenix") instead of nothing. A
+  step-up answer that is not JSON, or a 2xx with no `step_up_token`, is a `StepUpAttempt` with its status and a `note`.
+  **`--trials` below `min_trials_passing`:** the consistency minimum is clamped to the fewest trials a journey ran, and
+  the gate's detail says `WEAKENED` (chosen over refusing the run, so a one-trial smoke run stays possible). The runner
+  is split: `cuj_runner.py` (journey and trial), `cuj_retry.py` (stall), `cuj_report.py` (results, gates, tokens, JSON).
 - **Every trial starts from the same ledger.** Juan's balance is read once when `make cuj` starts, and
   `bank_db.restore_balance` sets it back before each attempt, so `--trials` above 4 no longer drains the account. It is
   the second named write to the synthetic bank, next to `expire_draft`; movements and transfers stay (the ledger
@@ -314,6 +326,15 @@ about 93k for CUJ 04, 47k to 49k for 05, 51k for 06, 31k for 07 and 51k for 08. 
 `make cuj` yet: the runs were stable in two of three and the third was a harness bug, but the ADR asks for a week of
 stable runs and the rate limit means `make cuj` cannot follow `make eval` straight away (its scenario 3 and tool
 cases spend the same customer's budget). Backlog note: F70.
+
+### Live run after the second review fixes
+`make cuj` at default trials: cuj_money 13/15 (gate FAIL at 1.0), 709k tokens. CUJ 05, 06 and 07 3/3 each; CUJ 08 2/3;
+CUJ 04 2/3. Failures: CUJ 04 trial 1, no delegated trace reached Phoenix within 30 s ("only 0 of 4 runs", a harness
+or exporter delay, which now fails loudly with the note; `--only cuj-04` run again passed 3/3, one trial after a
+rate-limit retry, 355k tokens). CUJ 08 trial 2, the bot's own: after `draft_expired` it re-prepared properly but called
+`execute_transfer` on the new draft before approval; the policy refused it (`error:policy_denied`, no money moved), then it
+paused correctly. The journey does not allow that call, so the trial fails; whether a policy-denied attempt should be
+allowed is the user's call.
 
 ### What the journeys showed about the bot
 - **CUJ 08, first exploratory run (before `requires`):** after `draft_expired` the orchestrator called `ask_payments`

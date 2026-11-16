@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from evals.agui_client import BffSession, Event, RunTrace, bff_client
 from evals.bank_db import Ledger, read_ledger
 from evals.calls import ObservedCall, client_calls, with_delegated
-from evals.delegation import read_delegated
+from evals.delegation import CONFIRM_TEMPLATE, read_delegated
 
 STEP_UP_PIN = "123456"  # The mock IdP's synthetic PIN (AGENTS.md, rule 3).
 KNOWLEDGE_TOOL = "search_knowledge"
@@ -131,7 +131,7 @@ async def _transfer(session: BffSession, case: LiveInput) -> LiveOutput:
     account = case.source_account or ""
     before = await read_ledger(account)
     first = await session.say(case.turns[0])
-    confirm = [c for c in first.cards if c.get("template") == "transfer-confirm"]
+    confirm = [c for c in first.cards if c.get("template") == CONFIRM_TEMPLATE]
     if not (first.interrupts and confirm):
         return LiveOutput([first], notes=["no interrupt or confirm card"])
     token = await session.step_up(confirm[0], STEP_UP_PIN)
@@ -157,13 +157,18 @@ async def _resume(session: BffSession, case: LiveInput) -> LiveOutput:
 FLOWS = {"chat": _chat, "transfer": _transfer, "resume": _resume}
 
 
+async def attach_delegated(output: LiveOutput, thread_id: str, since: datetime) -> None:
+    """Reads the subagents' calls from the thread's Phoenix spans into `output`, noting any run with no trace."""
+    delegated = await read_delegated(thread_id, since, output.cards, runs=len(output.traces))
+    output.delegated = delegated.calls
+    output.notes += [delegated.note] if delegated.note else []
+
+
 async def run_live(case: LiveInput) -> LiveOutput:
     since = datetime.now(UTC)
     async with bff_client() as http:
         session = await BffSession.login(http, case.user)
         output = await FLOWS[case.flow](session, case)
     if case.reads_trace:
-        delegated = await read_delegated(session.thread_id, since, output.cards, runs=len(output.traces))
-        output.delegated = delegated or []
-        output.notes += [] if delegated is not None else ["no trace for the thread in Phoenix"]
+        await attach_delegated(output, session.thread_id, since)
     return output

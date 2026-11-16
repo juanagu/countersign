@@ -13,7 +13,7 @@ from pydantic_evals.otel._errors import SpanTreeRecordingError
 
 from evals.agui_client import RunTrace
 from evals.bank_db import Ledger
-from evals.calls import ObservedCall
+from evals.delegation import Delegated
 from evals.golden import build_dataset, month_range
 from evals.live import FLOWS, LiveInput, LiveOutput, ResumeCheck, run_live
 from evals.live_evaluators import AnswersInText, CalledTool, Cites, Contains, SpendingMatches
@@ -146,9 +146,9 @@ async def test_run_live_reads_the_spans_of_every_run_of_the_thread(monkeypatch: 
     async def flow(_session: object, _case: LiveInput) -> LiveOutput:
         return LiveOutput([RunTrace([]), RunTrace([])])
 
-    async def read(_thread: str, _since: object, _cards: object, runs: int) -> list[ObservedCall]:
+    async def read(_thread: str, _since: object, _cards: object, runs: int) -> Delegated:
         seen.append(runs)
-        return []
+        return Delegated([])
 
     monkeypatch.setattr("evals.live.bff_client", client)
     monkeypatch.setattr("evals.live.BffSession", Session)

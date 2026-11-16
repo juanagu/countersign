@@ -93,3 +93,23 @@ async def test_expiring_a_draft_moves_its_expiry_into_the_past(
 async def test_expiring_an_unknown_draft_fails_loudly() -> None:
     with pytest.raises(LookupError):
         await expire_draft("drf_does-not-exist")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(502, text="<html>bad gateway</html>"),
+        httpx.Response(200, text="ok"),
+        httpx.Response(200, json={}),
+    ],
+)
+async def test_a_step_up_answer_that_is_not_a_token_comes_back_as_an_attempt_with_a_note(
+    response: httpx.Response,
+) -> None:
+    session = _session(httpx.MockTransport(lambda _: response))
+
+    attempt = await session.try_step_up(CARD, "123456")
+
+    assert (attempt.status, attempt.token) == (response.status_code, None)
+    assert attempt.note if response.is_success else True
+    assert session.step_up_statuses == [response.status_code]

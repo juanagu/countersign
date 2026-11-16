@@ -11,7 +11,9 @@ import pytest
 from evals.agui_client import RUN_PATH, STEP_UP_PATH, BffSession, RunTrace
 from evals.calls import ObservedCall
 from evals.cuj import Scenario
-from evals.cuj_runner import TrialResult, cuj_gates, main, play, rate_limit_stall, run_trial
+from evals.cuj_report import TrialResult, cuj_gates
+from evals.cuj_retry import rate_limit_stall
+from evals.cuj_runner import main, play, run_trial
 from evals.cuj_user import Turn, is_end
 from evals.live import DiscardedAttempt, LiveOutput
 from evals.thresholds import Consistency, Thresholds
@@ -263,7 +265,7 @@ async def test_a_trial_the_gateway_rate_limited_runs_again_and_keeps_the_discard
 
     monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
     monkeypatch.setattr("evals.cuj_runner.restore_balance", _no_restore)
-    monkeypatch.setattr("evals.cuj_runner.RATE_LIMIT_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr("evals.cuj_retry.RATE_LIMIT_WAIT_SECONDS", 0.0)
 
     output = await run_trial(_stalled_scenario(), None, STARTING)
 
@@ -288,7 +290,7 @@ async def test_an_attempt_with_a_forbidden_call_and_then_a_rate_limit_fails_and_
 
     monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
     monkeypatch.setattr("evals.cuj_runner.restore_balance", _no_restore)
-    monkeypatch.setattr("evals.cuj_runner.RATE_LIMIT_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr("evals.cuj_retry.RATE_LIMIT_WAIT_SECONDS", 0.0)
 
     output = await run_trial(_stalled_scenario(forbid=["list_beneficiaries"]), None, STARTING)
 
@@ -328,7 +330,7 @@ async def test_a_trial_that_stays_rate_limited_is_returned_to_fail_not_looped_fo
 
     monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
     monkeypatch.setattr("evals.cuj_runner.restore_balance", _no_restore)
-    monkeypatch.setattr("evals.cuj_runner.RATE_LIMIT_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr("evals.cuj_retry.RATE_LIMIT_WAIT_SECONDS", 0.0)
     monkeypatch.setattr("evals.cuj_runner.RATE_LIMIT_RETRIES", 2)
 
     output = await run_trial(_stalled_scenario(), None, STARTING)
@@ -408,3 +410,60 @@ def test_discarded_attempts_are_part_of_a_trials_record() -> None:
     attempt = DiscardedAttempt("t1", "rate limited at prepare_transfer after 1 calls", ["ask_payments:result"])
 
     assert attempt.thread_id == "t1"
+
+
+async def _run_with(monkeypatch: pytest.MonkeyPatch, scenario: Scenario, output: LiveOutput) -> tuple[int, LiveOutput]:
+    attempts = 0
+
+    async def attempt(_scenario: Scenario, _reply: object) -> LiveOutput:
+        nonlocal attempts
+        attempts += 1
+        return output
+
+    monkeypatch.setattr("evals.cuj_runner.run_attempt", attempt)
+    monkeypatch.setattr("evals.cuj_runner.restore_balance", _no_restore)
+    monkeypatch.setattr("evals.cuj_retry.RATE_LIMIT_WAIT_SECONDS", 0.0)
+    return attempts, await run_trial(scenario, None, STARTING)
+
+
+async def test_a_rate_limited_forbidden_call_fails_and_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    refused_execute = _output(
+        ObservedCall("prepare_transfer"), ObservedCall("execute_transfer", outcome="error:rate_limited")
+    )
+    scenario = _stalled_scenario(forbid=["execute_transfer:result"])
+
+    assert rate_limit_stall(scenario, refused_execute) is None
+    _, output = await _run_with(monkeypatch, scenario, refused_execute)
+    assert (output.attempts, output.discarded) == (1, [])
+
+
+async def test_a_forbidden_call_after_a_rate_limited_prepare_fails_and_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempt = _output(
+        ObservedCall("prepare_transfer", outcome="error:rate_limited"), ObservedCall("list_beneficiaries")
+    )
+    scenario = _stalled_scenario(forbid=["list_beneficiaries"])
+
+    assert rate_limit_stall(scenario, attempt) is None
+    _, output = await _run_with(monkeypatch, scenario, attempt)
+    assert (output.attempts, output.discarded) == (1, [])
+
+
+def test_a_rate_limited_call_the_journey_never_names_is_not_a_stall() -> None:
+    attempt = _output(ObservedCall("send_money", outcome="error:rate_limited"))
+
+    assert rate_limit_stall(_stalled_scenario(), attempt) is None
+
+
+def test_fewer_trials_than_the_consistency_minimum_clamp_it_and_say_so() -> None:
+    thresholds = Thresholds(
+        pass_rates={"cuj_money": 1.0}, judge_averages={}, consistency=Consistency(min_trials_passing={"cuj_money": 2})
+    )
+
+    _, consistency = cuj_gates([_trial("a", "cuj_money", 1, True)], thresholds)
+
+    assert consistency.ok
+    assert "WEAKENED" in consistency.detail
+    _, failing = cuj_gates([_trial("a", "cuj_money", 1, False)], thresholds)
+    assert not failing.ok

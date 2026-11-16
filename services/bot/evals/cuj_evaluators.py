@@ -29,9 +29,33 @@ def _rule_matches(rule: str, call: ObservedCall) -> bool:
     return call.name == tool and (not outcome or outcome == call.outcome)
 
 
-def _unmet_requirements(calls: list[ObservedCall], requires: list[str]) -> list[str]:
+FORBIDDEN, UNEXPECTED, MISSING, UNMET = "forbidden", "unexpected", "missing", "unmet"
+
+
+@dataclass(frozen=True)
+class Problem:
+    """One way a trajectory broke its rules: `kind`, the `call` ("name (outcome)", or the step's) and the `detail`."""
+
+    kind: str
+    call: str
+    detail: str = ""
+
+    @property
+    def tool(self) -> str:
+        return self.call.split(" ", 1)[0]
+
+    def __str__(self) -> str:
+        head = self.call if self.kind == UNMET else f"{self.kind} {self.call}"
+        return f"{head} {self.detail}".strip()
+
+
+def _label(call: ObservedCall) -> str:
+    return f"{call.name} ({call.outcome})"
+
+
+def _unmet_requirements(calls: list[ObservedCall], requires: list[str]) -> list[Problem]:
     """For each `A <- B` rule, the A calls with no B call since the previous A."""
-    problems: list[str] = []
+    problems: list[Problem] = []
     for rule in requires:
         needing, _, needed = rule.partition(" <- ")
         fresh = False
@@ -40,26 +64,26 @@ def _unmet_requirements(calls: list[ObservedCall], requires: list[str]) -> list[
                 fresh = True
             elif _rule_matches(needing, call):
                 if not fresh:
-                    problems.append(f"{call.name} ({call.outcome}) without a new {needed} ({rule})")
+                    problems.append(Problem(UNMET, _label(call), f"without a new {needed} ({rule})"))
                 fresh = False
     return problems
 
 
 def trajectory_problems(
     calls: list[ObservedCall], steps: list[Step], allow: list[str], forbid: list[str], requires: list[str] | None = None
-) -> list[str]:
+) -> list[Problem]:
     """Calls must follow `steps` in order. Others are fine only when listed in `allow`; a forbidden call fails even if
     it is also allowed. Steps never reached are missing."""
-    problems: list[str] = []
+    problems: list[Problem] = []
     next_step = 0
     for call in calls:
         if any(_rule_matches(rule, call) for rule in forbid):
-            problems.append(f"forbidden {call.name} ({call.outcome})")
+            problems.append(Problem(FORBIDDEN, _label(call)))
         elif next_step < len(steps) and _step_matches(steps[next_step], call):
             next_step += 1
         elif not any(_rule_matches(rule, call) for rule in allow):
-            problems.append(f"unexpected {call.name} ({call.outcome}) after {next_step} of {len(steps)} steps")
-    problems += [f"missing {s.tool} ({s.outcome})" for s in steps[next_step:]]
+            problems.append(Problem(UNEXPECTED, _label(call), f"after {next_step} of {len(steps)} steps"))
+    problems += [Problem(MISSING, f"{s.tool} ({s.outcome})") for s in steps[next_step:]]
     return problems + _unmet_requirements(calls, requires or [])
 
 
@@ -74,7 +98,7 @@ class Trajectory(Evaluator[LiveInput, LiveOutput, Meta]):
         calls = ctx.output.calls
         problems = trajectory_problems(calls, self.steps, self.allow, self.forbid, self.requires)
         seen = [f"{c.name}:{c.outcome}" for c in calls]
-        return reason_for(not problems, f"{'; '.join(problems)}. Calls: {seen}")
+        return reason_for(not problems, f"{'; '.join(map(str, problems))}. Calls: {seen}")
 
 
 @dataclass
