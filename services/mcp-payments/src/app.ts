@@ -27,7 +27,12 @@ export function createApp({ verify, transfers, verifyStepUp, now, logger }: AppD
     mcpRoute({
       verify,
       buildServer: (principal) =>
-        buildPaymentsServer(principal, { repo: transfers, verifyStepUp, ...(now && { now }) }),
+        buildPaymentsServer(principal, {
+          repo: transfers,
+          verifyStepUp,
+          ...(now && { now }),
+          ...(logger && { logger }),
+        }),
       onRejected: (reason) => logger?.warn({ reason }, 'rejected access token'),
     }),
   );

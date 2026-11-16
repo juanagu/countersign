@@ -54,15 +54,18 @@ CREATE TABLE transfer_drafts (
   expires_at         timestamptz NOT NULL
 );
 
+-- Single-use step-up tokens. A token is spent inside the transaction that evaluates its draft,
+-- so a row here with no transfer naming it means the attempt moved no money.
+CREATE TABLE used_jtis (
+  jti        text PRIMARY KEY,
+  draft_id   text NOT NULL REFERENCES transfer_drafts (id),
+  used_at    timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE transfers (
   id               text PRIMARY KEY,
   draft_id         text NOT NULL UNIQUE REFERENCES transfer_drafts (id), -- one execution per draft
+  step_up_jti      text NOT NULL UNIQUE REFERENCES used_jtis (jti),      -- the token that executed it
   executed_at      timestamptz NOT NULL DEFAULT now(),
   reference        text NOT NULL
-);
-
--- Single-use step-up tokens (Phase 5).
-CREATE TABLE used_jtis (
-  jti        text PRIMARY KEY,
-  used_at    timestamptz NOT NULL DEFAULT now()
 );

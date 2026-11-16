@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied, ToolFailed
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -50,7 +50,7 @@ PREPARE_ARGS = {"beneficiary_id": "ben-juan-ana", "amount": 50000, "currency": "
 
 
 class FakePayments:
-    def __init__(self) -> None:
+    def __init__(self, execute_error: str | None = None) -> None:
         self.executed: list[dict[str, Any]] = []
         self.toolset: FunctionToolset[BotDeps] = FunctionToolset()
 
@@ -62,6 +62,8 @@ class FakePayments:
         @self.toolset.tool_plain(metadata={"meta": {"bank/riskTier": "T3"}})
         def execute_transfer(draft_id: str, step_up_token: str = "") -> dict[str, Any]:
             self.executed.append({"draft_id": draft_id, "step_up_token": step_up_token})
+            if execute_error:
+                raise ToolFailed(json.dumps({"error": execute_error, "message": "m"}, separators=(",", ":")))
             return RECEIPT
 
 
@@ -121,6 +123,109 @@ async def test_executes_once_with_the_apps_token_after_approval() -> None:
 
     assert fake.executed == [{"draft_id": DRAFT_ID, "step_up_token": "step-up-from-the-app"}]
     assert "BD-1" in str(resumed.output)
+
+
+def _model_that_asks_again() -> FunctionModel:
+    """Prepares, executes, and when the execution fails calls execute_transfer once more in the same run."""
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        last_parts = getattr(messages[-1], "parts", [])
+        confirms_again = any(isinstance(p, UserPromptPart) and "Confirmá" in str(p.content) for p in last_parts)
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart("load_skill", {"name": "payments"})])
+        if len(returns) == 1:
+            return ModelResponse(parts=[ToolCallPart("prepare_transfer", PREPARE_ARGS)])
+        if (
+            len(returns) <= 3 or confirms_again
+        ):  # The execution, the same call again after its failure, then a new turn.
+            return ModelResponse(parts=[ToolCallPart("execute_transfer", {"draft_id": DRAFT_ID})])
+        return ModelResponse(parts=[TextPart(json.dumps(returns[-1].content, default=str))])
+
+    return FunctionModel(respond)
+
+
+@pytest.mark.parametrize("code", ["execution_in_progress", "upstream_error", "internal_error"])
+async def test_an_answer_that_may_still_be_running_raises_no_second_approval_in_the_same_run(code: str) -> None:
+    fake = FakePayments(execute_error=code)
+    agent = build_agent(
+        _model_that_asks_again(), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[fake.toolset]
+    )
+    paused = await agent.run("Mandale 50.000 a Ana", deps=_deps())
+    assert isinstance(paused.output, DeferredToolRequests)
+    call_id = paused.output.approvals[0].tool_call_id
+
+    approved = ToolApproved(override_args={"draft_id": DRAFT_ID, "step_up_token": "step-up-from-the-app"})
+    resumed = await agent.run(
+        message_history=paused.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={call_id: approved}),
+        deps=_deps("payments"),
+    )
+
+    # No new interrupt, no second call: the customer confirms again on their next message.
+    assert not isinstance(resumed.output, DeferredToolRequests)
+    assert len(fake.executed) == 1
+    assert "policy_denied" in str(resumed.output)
+
+    # The draft is still open for that next message.
+    again = await agent.run("Confirmá de nuevo", message_history=resumed.all_messages(), deps=_deps("payments"))
+    assert isinstance(again.output, DeferredToolRequests)
+
+
+async def test_a_pin_spent_on_an_answer_that_ended_the_execution_asks_again_at_once() -> None:
+    fake = FakePayments(execute_error="token_already_used")
+    agent = build_agent(
+        _model_that_asks_again(), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[fake.toolset]
+    )
+    paused = await agent.run("Mandale 50.000 a Ana", deps=_deps())
+    assert isinstance(paused.output, DeferredToolRequests)
+    call_id = paused.output.approvals[0].tool_call_id
+    approved = ToolApproved(override_args={"draft_id": DRAFT_ID, "step_up_token": "step-up-from-the-app"})
+    resumed = await agent.run(
+        message_history=paused.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={call_id: approved}),
+        deps=_deps("payments"),
+    )
+    # Nothing is still running after a spent token, so a fresh approval is raised right away.
+    assert isinstance(resumed.output, DeferredToolRequests)
+
+
+async def test_two_executions_of_one_draft_in_one_response_raise_one_approval() -> None:
+    fake = FakePayments()
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart("load_skill", {"name": "payments"})])
+        if len(returns) == 1:
+            return ModelResponse(parts=[ToolCallPart("prepare_transfer", PREPARE_ARGS)])
+        if len(returns) == 2:
+            calls = [ToolCallPart("execute_transfer", {"draft_id": DRAFT_ID}, tool_call_id=f"exec-{n}") for n in (1, 2)]
+            return ModelResponse(parts=calls)
+        return ModelResponse(parts=[TextPart("listo")])
+
+    agent = build_agent(
+        FunctionModel(respond), skills=SkillRegistry.from_dir(TEST_SKILLS_DIR), domain_tools=[fake.toolset]
+    )
+    paused = await agent.run("Mandale 50.000 a Ana", deps=_deps())
+
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert [approval.tool_call_id for approval in paused.output.approvals] == ["exec-1"]  # One PIN card, not two.
+    denials = [
+        p.content
+        for m in paused.all_messages()
+        for p in getattr(m, "parts", [])
+        if isinstance(p, ToolReturnPart) and p.tool_call_id == "exec-2"
+    ]
+    assert [d["error"] for d in denials] == ["policy_denied"]
+
+    approved = ToolApproved(override_args={"draft_id": DRAFT_ID, "step_up_token": "step-up-from-the-app"})
+    await agent.run(
+        message_history=paused.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={"exec-1": approved}),
+        deps=_deps("payments"),
+    )
+    assert fake.executed == [{"draft_id": DRAFT_ID, "step_up_token": "step-up-from-the-app"}]  # Once, with the token.
 
 
 async def test_a_denial_executes_nothing() -> None:

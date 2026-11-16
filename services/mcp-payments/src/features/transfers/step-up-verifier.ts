@@ -1,4 +1,4 @@
-import { jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { errors, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 
 /** The single transfer a step-up token authorises (RFC 9396 `authorization_details`). */
@@ -15,6 +15,7 @@ export interface StepUpGrant {
   authorization: TransferAuthorization;
 }
 
+/** Undefined when the token is not a valid step-up grant. Rejects when the check itself could not be made. */
 export type VerifyStepUp = (token: string) => Promise<StepUpGrant | undefined>;
 
 export const STEP_UP_SCOPE = 'transfers:execute';
@@ -43,7 +44,24 @@ export interface StepUpVerifierOptions {
   keys: JWTVerifyGetKey;
 }
 
-/** Verifies signature, issuer, audience and expiry, then the step-up claims and scope. Undefined for any failure. */
+/** What jose throws when the token itself is bad; anything else (the IdP's keys unreachable or malformed) is not. */
+const TOKEN_REJECTIONS = [
+  errors.JWTClaimValidationFailed,
+  errors.JWTExpired,
+  errors.JWTInvalid,
+  errors.JWSInvalid,
+  errors.JWSSignatureVerificationFailed,
+  errors.JOSEAlgNotAllowed,
+  errors.JOSENotSupported,
+  errors.JWKSNoMatchingKey,
+  errors.JWKSMultipleMatchingKeys,
+];
+
+/**
+ * Verifies signature, issuer, audience and expiry, then the step-up claims and scope. Undefined for a token that
+ * fails them. A failure to reach the IdP's keys rejects instead: it says nothing about the token, so the caller
+ * must not treat it as a refusal of the token.
+ */
 export function createStepUpVerifier({ issuer, audience, keys }: StepUpVerifierOptions): VerifyStepUp {
   return async (token) => {
     const verified = await jwtVerify(token, keys, {
@@ -51,7 +69,10 @@ export function createStepUpVerifier({ issuer, audience, keys }: StepUpVerifierO
       audience,
       algorithms: ['ES256'],
       requiredClaims: ['exp'],
-    }).catch(() => undefined);
+    }).catch((error: unknown) => {
+      if (TOKEN_REJECTIONS.some((rejection) => error instanceof rejection)) return undefined;
+      throw error;
+    });
     const claims = claimsSchema.safeParse(verified?.payload);
     if (!claims.success) return undefined;
     const [details] = claims.data.authorization_details;

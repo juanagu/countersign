@@ -1,5 +1,7 @@
 # 013 — Transfer approval: AG-UI interrupt, step-up token in the approved arguments, RAR binding checked by the resource server
 
+**Status:** accepted; amended by [ADR 023](023-step-up-token-replay-semantics.md): the `jti` is no longer claimed first but spent inside the execute transaction, and a replay is answered from what happened (see "Execute" below).
+
 ## Context
 Security rule 3: `execute_transfer` needs human approval plus step-up, and `mcp-payments` executes only if
 the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` all match the stored draft.
@@ -35,12 +37,12 @@ the token's signature, `aud`, `exp`, unused `jti` and `authorization_details` al
   server is the one that compares the grant with its stored draft, as RAR intends.
 - **Execute (`mcp-payments`):** the caller's access token needs scope `transfers:execute`. Then check the
   step-up token (signature, issuer, `aud`, `exp`, `token_use`, scope `transfers:execute`), then that
-  `sub` is the caller and the draft id matches. Claim the `jti` before anything else can fail (single use,
-  so a double click is refused). Then the grant must equal the draft (amount, currency, beneficiary) and
-  the draft must be pending and unexpired. Execution runs in one transaction under the draft's row lock,
-  which re-checks status and expiry with the clock read after the lock is taken, so a call that waited on the
-  lock can't execute a draft that expired meanwhile (`draft_expired`); a second valid token for an executed
-  draft returns the same receipt without a second debit.
+  `sub` is the caller and the draft id matches. The grant must equal the draft (amount,
+  currency, beneficiary). Execution runs in one transaction under the draft's row lock, which checks status and
+  expiry with the clock read after the lock is taken, so a call that waited on the lock can't execute a draft that
+  expired meanwhile (`draft_expired`); a second valid token for an executed draft returns the same receipt without a
+  second debit. *(Amended by ADR 023: the `jti` is spent inside that transaction, not claimed first, and a replay is
+  answered from the record of what the token did.)*
 - **Resume needs its skill:** each run restores the skills loaded by earlier `load_skill` calls in its
   history. Otherwise the resumed `execute_transfer` would not be visible. Pre-loading grants no capability
   beyond the user's tokens and the policy. History becomes server-owned in Phase 7.

@@ -36,12 +36,22 @@ denied, and `spending_summary` needs a start date.
 `execute_transfer`'s `draft_id` must be a string naming the conversation's open draft: the latest draft a
 `prepare_transfer` result created, in the run's messages (stored history included) or in a delegate tool's evidence
 record when the payments subagent prepared it, that no `execute_transfer` result has decided yet: a receipt, the
-customer's denial or cancel, the bank's answer about the draft (a failed result such as `draft_expired`), or a result
-Pydantic AI synthesized for a cut-off call. An error in `UNSENT_ERRORS` decides nothing: a refusal the bot raised before anything was sent
-(`policy_denied`, a cap or input verdict included, and the `service_unavailable` an approved call returns when its
-token or session can't be set up). Every answer from the bank decides the draft, `token_already_used` included, because
-`mcp-payments` can answer it after money moved (a double click, an executed draft with no receipt row); the customer
-prepares again. A `retried` call decides nothing either, so the customer can ask again. A newer
+customer's denial or cancel, the bank's answer about the draft (`CLOSING_BANK_ERRORS`: `draft_expired`,
+`draft_not_pending`, `draft_not_found`, `insufficient_funds`, `not_authorised`), or a result Pydantic AI synthesized for
+a cut-off call. The list names what **closes** a draft (ADR 023); every other error code leaves it open, whoever raised
+it: the bot's `policy_denied` and `service_unavailable`, the gateway's `rate_limited`, `insufficient_scope` and
+`unknown_tool`, `token_already_used` (spent with nothing moved on a pending draft), `account_busy` (another call
+holds the account, nothing spent, nothing in flight for the draft), `execution_in_progress` (another call holds the
+draft), `not_executed` (nothing ran: the deadline,
+a connection or the step-up check), `upstream_error` and `internal_error` (the outcome is unknown and a fresh confirmation is answered from the
+record), a code not invented yet, and a failed result with no readable code. The draft stays open, so asking again
+raises a new interrupt and the approval sends a fresh step-up token, never the spent one. After `execution_in_progress`,
+`upstream_error` and `internal_error` the first execution may still be running, so `PolicyToolset`
+refuses a repeat `execute_transfer` for that draft inside the same run (`held_drafts`, `HOLDING_ERRORS`, read from the
+messages of the current `run_id`) as a `policy_denied`; the customer confirms again on their next message. Two
+`execute_transfer` calls for one draft in the same model response are checked before either has a result, so only the
+first goes on and `PolicyToolset` refuses the rest as `policy_denied` (`repeats_call_in_response`): one PIN card.
+A `retried` call decides nothing either, so the customer can ask again. A newer
 draft supersedes the older ones. An interrupt nobody answered decides nothing, so the failed-resume recovery (ADR 013:
 ask again, approve again) still pauses on it. `PolicyToolset` reads it from `ctx.messages`; otherwise the call is denied
 before any interrupt, on the first call and on the resume alike. Each agent has its own `PolicyToolset` over its own
