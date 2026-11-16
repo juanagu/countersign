@@ -13,9 +13,14 @@ class GateOverrides(BaseModel):
     judge_averages: dict[str, float] = {}
 
 
+class Consistency(BaseModel):
+    min_trials_passing: dict[str, int] = {}  # Per group below 1.0: each journey's trials that must pass.
+
+
 class Thresholds(BaseModel):
     pass_rates: dict[str, float]
     judge_averages: dict[str, float]
+    consistency: Consistency = Consistency()
     backup_mode: GateOverrides = GateOverrides()
 
     def for_backup(self) -> "Thresholds":
@@ -23,6 +28,7 @@ class Thresholds(BaseModel):
         return Thresholds(
             pass_rates=self.pass_rates | self.backup_mode.pass_rates,
             judge_averages=self.judge_averages | self.backup_mode.judge_averages,
+            consistency=self.consistency,
         )
 
 

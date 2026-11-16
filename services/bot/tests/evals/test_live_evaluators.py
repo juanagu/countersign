@@ -1,17 +1,21 @@
 """The live-suite evaluators and gates fail on what they claim to catch (they gate `make eval`)."""
 
+import contextlib
 import json
+from collections.abc import AsyncIterator
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
 from pydantic_evals.otel._errors import SpanTreeRecordingError
 
 from evals.agui_client import RunTrace
 from evals.bank_db import Ledger
+from evals.delegation import Delegated
 from evals.golden import build_dataset, month_range
-from evals.live import LiveInput, LiveOutput, ResumeCheck
+from evals.live import FLOWS, LiveInput, LiveOutput, ResumeCheck, run_live
 from evals.live_evaluators import AnswersInText, CalledTool, Cites, Contains, SpendingMatches
 from evals.run import Gate
 from evals.scenario_evaluators import MovedMoneyOnce, ResumedIntact
@@ -122,3 +126,35 @@ def test_month_ranges_and_dataset_groups() -> None:
     groups = {(case.metadata or {}).get("group") for case in build_dataset("test", date(2026, 11, 13)).cases}
     assert groups == {"scenario", "kb_grounding", "tool_selection"}
     assert not Gate("redteam", 0.94, 0.95, "").ok
+
+
+async def test_run_live_reads_the_spans_of_every_run_of_the_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The two-run transfer case: the resume run's spans are only there if every run is waited for."""
+    seen: list[int] = []
+
+    @contextlib.asynccontextmanager
+    async def client() -> AsyncIterator[None]:
+        yield None
+
+    class Session:
+        thread_id = "t"
+
+        @classmethod
+        async def login(cls, _http: object, _user: str) -> "Session":
+            return cls()
+
+    async def flow(_session: object, _case: LiveInput) -> LiveOutput:
+        return LiveOutput([RunTrace([]), RunTrace([])])
+
+    async def read(_thread: str, _since: object, _cards: object, runs: int) -> Delegated:
+        seen.append(runs)
+        return Delegated([])
+
+    monkeypatch.setattr("evals.live.bff_client", client)
+    monkeypatch.setattr("evals.live.BffSession", Session)
+    monkeypatch.setitem(FLOWS, "chat", flow)
+    monkeypatch.setattr("evals.live.read_delegated", read)
+
+    await run_live(LiveInput(turns=["hola"], reads_trace=True))
+
+    assert seen == [2]

@@ -498,3 +498,6 @@ In `services/bot/tests/subagents/` unless named, on `FunctionModel` fakes for bo
 - **Model settings fail at startup.** A subagent file without `<name>_agent_model` and `<name>_agent_model_fallbacks`
   fields in `Settings` stops `create_app`, instead of running silently on the orchestrator's chain. An empty value
   still means the orchestrator's models, chosen explicitly.
+- **"Payments" names the whole money-out domain.** The user decided the subagent keeps the name `payments`: transfers
+  today, with bill pay as its natural next tool inside the same subagent. It is not renamed to "transfers" (the root
+  skill that holds `execute_transfer` is the one called `transfers`).

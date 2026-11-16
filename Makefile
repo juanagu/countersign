@@ -6,7 +6,7 @@ export TEST_DATABASE_URL ?= postgres://bank:bank@localhost:$(POSTGRES_HOST_PORT)
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 BOT := uv run --directory services/bot
 
-.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval eval-backup failover-demo redteam pii-scan metrics lint format
+.PHONY: help install set-key up down logs contracts contracts-check seed ingest test eval cuj eval-backup failover-demo redteam pii-scan metrics lint format
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -52,6 +52,9 @@ BOT_ENV := cd services/bot && set -a && . ../../.env && set +a &&
 
 eval: seed ## Live golden scenarios, KB grounding, tool selection, LLM judge and red team, gated by evals/thresholds.yaml (needs ANTHROPIC_API_KEY, make up, make ingest)
 	$(BOT_ENV) uv run python -m evals.run $(EVAL_ARGS)
+
+cuj: seed ## Critical user journeys (ADR 022) through the BFF, trials per journey, gated by evals/thresholds.yaml (needs ANTHROPIC_API_KEY, make up)
+	$(BOT_ENV) uv run python -m evals.cuj_runner $(CUJ_ARGS)
 
 # ADR 018. The fault reaches the container through the bot's `LLM_FAULT_INJECTION` in infra/docker-compose.yml.
 FAULT ?= orchestrator:overloaded

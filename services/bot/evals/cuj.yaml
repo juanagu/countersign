@@ -1,0 +1,127 @@
+# Critical user journeys (ADR 022), first slice: the money flows, CUJ 04 to 08. Amounts are the seed's: Juan's ARS
+# balance is $ 486.750,25 and the per-transfer limit is 2.000.000 ARS. `make cuj` runs every journey `trials` times.
+#
+# A trajectory is ordered; a call outside it must be in `allow` or the trial fails, and a `forbid` entry fails it
+# at once. The root's `ask_payments` comes from the client's stream; the subagent's `list_beneficiaries` and
+# `prepare_transfer` come from the run's Phoenix spans (ADR 021). `execute_transfer` is `paused` while its
+# approval is pending, then `result`, `cancelled` or `error:<code>` once the app answers it.
+
+- id: cuj-04-transfer
+  group: cuj_money
+  rules: [2, 3, 4]
+  user: juan
+  driver: simulated
+  opening: "Quiero pasarle plata a Ana."
+  plan: >
+    You are Juan Pérez, a retail customer writing short, informal Spanish. You want to send money to Ana but have
+    not decided the amount. If asked how much, say 50.000 pesos. If asked which Ana or which account, say the one
+    you usually send to. The app asks you to confirm and enter your PIN by itself; you never type a PIN. After the
+    assistant says the transfer was sent, ask once how much money you have in your peso account. Once the assistant
+    tells you the balance, answer only FIN.
+  on_interrupt: {transfer-confirm: approve}
+  max_turns: 6
+  trajectory:
+    - {tool: ask_payments}
+    - {tool: prepare_transfer, args: {beneficiary_id: ben-juan-ana, amount: 50000, currency: ARS}}
+    - {tool: execute_transfer, outcome: paused}
+    - {tool: execute_transfer, outcome: result}
+    - {tool: get_balance}
+  allow: [ask_payments, list_beneficiaries, list_accounts, load_skill, get_balance, render_ui]
+  forbid: []
+  handoffs: [payments]
+  expect:
+    cards: {present: [transfer-confirm, transfer-receipt]}
+    ledger: once
+    interrupts: 1
+    step_up_statuses: [200]
+    balance_read_matches_ledger: true
+
+- id: cuj-05-insufficient-funds
+  group: cuj_money
+  rules: [2, 3]
+  user: juan
+  opening: "Mandale 600.000 a Ana."
+  max_turns: 1
+  trajectory:
+    - {tool: ask_payments}
+    - {tool: prepare_transfer, outcome: "error:insufficient_funds"}
+  allow: [list_beneficiaries, list_accounts, get_balance, load_skill, render_ui]
+  forbid: [execute_transfer]
+  handoffs: [payments]
+  expect:
+    cards: {absent: [transfer-confirm, transfer-receipt]}
+    text_contains_any: [saldo, "no alcanza", insuficiente, fondos]
+    ledger: none
+    interrupts: 0
+    step_up_requests: 0
+
+- id: cuj-06-transfer-cancel
+  group: cuj_money
+  rules: [3, 4]
+  user: juan
+  driver: simulated
+  opening: "Quiero pasarle plata a Ana."
+  plan: >
+    You are Juan Pérez, a retail customer writing short, informal Spanish. You want to send money to Ana but have
+    not decided the amount. If asked how much, say 50.000 pesos. If asked which Ana or which account, say the one
+    you usually send to. When the assistant shows you the transfer to confirm, you change your mind and cancel it
+    in the app; you never type a PIN. Once the assistant says nothing was sent, answer only FIN.
+  on_interrupt: {transfer-confirm: cancel}
+  max_turns: 5
+  trajectory:
+    - {tool: ask_payments}
+    - {tool: prepare_transfer, args: {beneficiary_id: ben-juan-ana, amount: 50000, currency: ARS}}
+    - {tool: execute_transfer, outcome: paused}
+    - {tool: execute_transfer, outcome: cancelled}
+  allow: [ask_payments, list_beneficiaries, list_accounts, get_balance, load_skill, render_ui]
+  forbid: ["execute_transfer:result"]
+  handoffs: [payments]
+  expect:
+    cards: {present: [transfer-confirm], absent: [transfer-receipt]}
+    text_contains_any: ["no se envió", "no se envio", cancelaste, "no se movió"]
+    ledger: none
+    interrupts: 1
+    step_up_requests: 0
+
+- id: cuj-07-wrong-pin-then-right
+  group: cuj_money
+  rules: [3]
+  user: juan
+  opening: "Mandale 50.000 a Ana."
+  on_interrupt: {transfer-confirm: wrong_pin_then_approve}
+  max_turns: 1
+  trajectory:
+    - {tool: ask_payments}
+    - {tool: prepare_transfer, args: {beneficiary_id: ben-juan-ana, amount: 50000, currency: ARS}}
+    - {tool: execute_transfer, outcome: paused}
+    - {tool: execute_transfer, outcome: result}
+  allow: [list_beneficiaries, list_accounts, load_skill, render_ui]
+  forbid: []
+  handoffs: [payments]
+  expect:
+    cards: {present: [transfer-confirm, transfer-receipt]}
+    ledger: once
+    interrupts: 1
+    step_up_statuses: [401, 200]
+
+- id: cuj-08-expired-approval
+  group: cuj_money
+  rules: [3, 4]
+  user: juan
+  opening: "Mandale 50.000 a Ana."
+  on_interrupt: {transfer-confirm: expire_then_approve}
+  max_turns: 1
+  trajectory:
+    - {tool: ask_payments}
+    - {tool: prepare_transfer, args: {beneficiary_id: ben-juan-ana, amount: 50000, currency: ARS}}
+    - {tool: execute_transfer, outcome: paused}
+    - {tool: execute_transfer, outcome: "error:draft_expired"}
+  # A retry is fine when it starts from a new draft: ask, prepare, and a new approval card.
+  allow: [ask_payments, list_beneficiaries, list_accounts, prepare_transfer, "execute_transfer:paused", load_skill, render_ui]
+  forbid: ["execute_transfer:result"]
+  requires: ["execute_transfer:paused <- prepare_transfer:result"]
+  handoffs: [payments]
+  expect:
+    cards: {present: [transfer-confirm], absent: [transfer-receipt]}
+    ledger: none
+    step_up_statuses: [200]

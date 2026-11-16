@@ -14,7 +14,8 @@ from pydantic import BaseModel
 
 from evals.agui_client import BffSession, Event, RunTrace, bff_client
 from evals.bank_db import Ledger, read_ledger
-from evals.delegation import read_delegated
+from evals.calls import POLICY_DENIED, ObservedCall, client_calls, with_delegated
+from evals.delegation import CONFIRM_TEMPLATE, read_delegated
 
 STEP_UP_PIN = "123456"  # The mock IdP's synthetic PIN (AGENTS.md, rule 3).
 KNOWLEDGE_TOOL = "search_knowledge"
@@ -41,13 +42,33 @@ class ResumeCheck:
     second_replay: RunTrace
 
 
+@dataclass(frozen=True)
+class DiscardedAttempt:
+    """A CUJ attempt thrown away as inconclusive (the gateway's rate limit, or missing traces): why, what it did and
+    its thread."""
+
+    thread_id: str
+    verdict: str
+    calls: list[str]
+
+
 @dataclass
 class LiveOutput:
     traces: list[RunTrace]
     ledger_change: Ledger | None = None
     resume: ResumeCheck | None = None
     notes: list[str] = field(default_factory=list)
-    delegated: list[tuple[str, dict[str, Any]]] = field(default_factory=list)  # From the trace, not the client.
+    trace_gap: str = ""  # Runs whose spans never reached Phoenix: the delegated calls may be incomplete.
+    delegated: list[ObservedCall] = field(default_factory=list)  # From the trace, not the client.
+    # A CUJ's extras: the ledger after the journey and each step-up request's HTTP status.
+    ledger_after: Ledger | None = None
+    step_up_statuses: list[int] = field(default_factory=list)
+    thread_id: str = ""
+    turns: int = 0
+    attempts: int = 1  # A CUJ trial run again because the gateway refused its writes (rate limit).
+    discarded: list["DiscardedAttempt"] = field(default_factory=list)  # The attempts that came before this one.
+    start_ns: int = 0  # A CUJ trial's wall-clock span, first attempt's start to last attempt's end.
+    end_ns: int = 0
 
     @property
     def text(self) -> str:
@@ -61,7 +82,18 @@ class LiveOutput:
 
     @property
     def tools(self) -> list[tuple[str, dict[str, Any]]]:
-        return [call for trace in self.traces for call in trace.tool_args] + self.delegated
+        return [call for trace in self.traces for call in trace.tool_args] + [(c.name, c.args) for c in self.delegated]
+
+    @property
+    def calls(self) -> list[ObservedCall]:
+        """Every call in order with its outcome, the subagent's included."""
+        return with_delegated(
+            client_calls(self.traces, frozenset().union(*(t.cancelled for t in self.traces))), self.delegated
+        )
+
+    @property
+    def handoffs(self) -> set[str]:
+        return {c.name for c in self.delegated if c.is_handoff}
 
     @property
     def components(self) -> list[dict[str, Any]]:
@@ -77,6 +109,10 @@ class LiveOutput:
     @property
     def errors(self) -> list[str]:
         return [error for trace in self.traces for error in trace.errors]
+
+    @property
+    def policy_refused(self) -> int:
+        return sum(call.outcome == POLICY_DENIED for call in self.calls)
 
     def for_judge(self) -> dict[str, Any]:
         """What the LLM judge sees: the answer, what it cited and the passages it was given."""
@@ -101,7 +137,7 @@ async def _transfer(session: BffSession, case: LiveInput) -> LiveOutput:
     account = case.source_account or ""
     before = await read_ledger(account)
     first = await session.say(case.turns[0])
-    confirm = [c for c in first.cards if c.get("template") == "transfer-confirm"]
+    confirm = [c for c in first.cards if c.get("template") == CONFIRM_TEMPLATE]
     if not (first.interrupts and confirm):
         return LiveOutput([first], notes=["no interrupt or confirm card"])
     token = await session.step_up(confirm[0], STEP_UP_PIN)
@@ -127,13 +163,18 @@ async def _resume(session: BffSession, case: LiveInput) -> LiveOutput:
 FLOWS = {"chat": _chat, "transfer": _transfer, "resume": _resume}
 
 
+async def attach_delegated(output: LiveOutput, thread_id: str, since: datetime) -> None:
+    """Reads the subagents' calls from the thread's Phoenix spans into `output`, noting any run with no trace."""
+    delegated = await read_delegated(thread_id, since, output.cards, runs=len(output.traces))
+    output.delegated = delegated.calls
+    output.trace_gap = delegated.note
+
+
 async def run_live(case: LiveInput) -> LiveOutput:
     since = datetime.now(UTC)
     async with bff_client() as http:
         session = await BffSession.login(http, case.user)
         output = await FLOWS[case.flow](session, case)
     if case.reads_trace:
-        delegated = await read_delegated(session.thread_id, since, output.cards)
-        output.delegated = delegated or []
-        output.notes += [] if delegated is not None else ["no trace for the thread in Phoenix"]
+        await attach_delegated(output, session.thread_id, since)
     return output

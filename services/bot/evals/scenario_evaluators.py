@@ -13,7 +13,8 @@ from evals.live_evaluators import Ctx, reason_for
 @dataclass
 class NoRunErrors(Evaluator[LiveInput, LiveOutput, Meta]):
     def evaluate(self, ctx: Ctx) -> EvaluationReason:
-        problems = ctx.output.errors + ctx.output.notes
+        gap = [f"traces missing: {ctx.output.trace_gap}"] if ctx.output.trace_gap else []
+        problems = ctx.output.errors + ctx.output.notes + gap
         return reason_for(not problems, "; ".join(problems))
 
 
