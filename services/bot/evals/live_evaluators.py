@@ -136,12 +136,24 @@ def _amounts(text: str) -> set[Decimal]:
     return {value for token in AMOUNT.findall(text) for value in number_candidates(token)}
 
 
-def _spending_totals(output: LiveOutput) -> dict[str, list[Decimal]]:
+def _spending_totals(results: list[str]) -> dict[str, list[Decimal]]:
     totals: dict[str, list[Decimal]] = {}
-    for content in output.results_of(SPENDING_TOOL):
+    for content in results:
         for row in json.loads(content).get("untrusted_data", {}).get("categories", []):
             totals.setdefault(row["currency"], []).append(Decimal(row["total"]))
     return totals
+
+
+def spending_chart_matches(spending_results: list[str], components: list[dict[str, Any]]) -> EvaluationReason:
+    totals = _spending_totals(spending_results)
+    charts = [c for c in components if c.get("component") == "BarChart"]
+    lists = [c for c in components if c.get("component") == "List"]
+    if not totals or not charts:
+        return reason_for(False, f"totals {bool(totals)}, charts {len(charts)}")
+    chart = charts[0]
+    bars = sorted(Decimal(str(bar["value"])) for bar in chart.get("bars", []))
+    expected = sorted(totals.get(chart.get("currency", "ARS"), []))
+    return reason_for(bars == expected and not lists, f"bars {bars} vs totals {expected}; lists {len(lists)}")
 
 
 @dataclass
@@ -149,15 +161,7 @@ class SpendingMatches(Evaluator[LiveInput, LiveOutput, Meta]):
     """The BarChart's bars are exactly the totals spending_summary returned, with no List repeating them (F31)."""
 
     def evaluate(self, ctx: Ctx) -> EvaluationReason:
-        totals = _spending_totals(ctx.output)
-        charts = [c for c in ctx.output.components if c.get("component") == "BarChart"]
-        lists = [c for c in ctx.output.components if c.get("component") == "List"]
-        if not totals or not charts:
-            return reason_for(False, f"totals {bool(totals)}, charts {len(charts)}")
-        chart = charts[0]
-        bars = sorted(Decimal(str(bar["value"])) for bar in chart.get("bars", []))
-        expected = sorted(totals.get(chart.get("currency", "ARS"), []))
-        return reason_for(bars == expected and not lists, f"bars {bars} vs totals {expected}; lists {len(lists)}")
+        return spending_chart_matches(ctx.output.results_of(SPENDING_TOOL), ctx.output.components)
 
 
 # Phrases that send the customer to a card instead of answering (F28).

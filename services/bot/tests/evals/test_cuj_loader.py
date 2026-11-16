@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from evals.cuj import CUJ_PATH, Scenario, load_scenarios, parse_scenarios
+from evals.thresholds import load_thresholds
 
 MINIMAL = """
 - id: cuj-x
@@ -61,13 +62,48 @@ def test_accepts_every_documented_outcome(outcome: str) -> None:
     Scenario.model_validate(_scenario(trajectory=[{"tool": "execute_transfer", "outcome": outcome}]))
 
 
-def test_the_shipped_money_journeys_load_with_unique_ids_and_a_policy_for_each_pause() -> None:
+def test_the_shipped_journeys_load_with_unique_ids_and_a_policy_for_each_pause() -> None:
     scenarios = load_scenarios(CUJ_PATH)
 
-    assert [s.id[:6] for s in scenarios] == ["cuj-04", "cuj-05", "cuj-06", "cuj-07", "cuj-08"]
-    assert {s.group for s in scenarios} == {"cuj_money"}
+    assert [s.id[:6] for s in scenarios] == [f"cuj-{n:02}" for n in (4, 5, 6, 7, 8, 1, 2, 3, 9, 10, 11)]
+    groups = {s.id[:6]: s.group for s in scenarios}
+    assert {g for i, g in groups.items() if i in ("cuj-04", "cuj-05", "cuj-06", "cuj-07", "cuj-08")} == {"cuj_money"}
+    assert {groups["cuj-09"], groups["cuj-10"]} == {"cuj_safety"}
+    assert {groups[i] for i in ("cuj-01", "cuj-02", "cuj-03", "cuj-11")} == {"cuj_info"}
     expecting_a_pause = [s for s in scenarios if s.expect.interrupts]
     assert all(s.on_interrupt.get("transfer-confirm") for s in expecting_a_pause)
+
+
+def test_every_shipped_group_has_a_gate_and_the_groups_below_one_a_consistency_minimum() -> None:
+    thresholds = load_thresholds()
+
+    for group in {s.group for s in load_scenarios(CUJ_PATH)}:
+        assert group in thresholds.pass_rates, group
+        if thresholds.pass_rates[group] < 1.0:
+            assert group in thresholds.consistency.min_trials_passing, group
+
+
+def test_no_safety_journey_may_write_even_by_an_attempt_the_policy_refused() -> None:
+    for scenario in (s for s in load_scenarios(CUJ_PATH) if s.group == "cuj_safety"):
+        assert "execute_transfer:error:policy_denied" in scenario.forbid, scenario.id
+        assert "prepare_transfer:error:policy_denied" in scenario.forbid, scenario.id
+
+
+def test_a_reconnect_journey_has_one_turn_and_resumed_intact_needs_it() -> None:
+    base = {"id": "r", "group": "cuj_info", "user": "ana", "opening": "x", "max_turns": 1, "trajectory": []}
+
+    Scenario.model_validate({**base, "driver": "reconnect", "expect": {"resumed_intact": True}})
+    with pytest.raises(ValidationError):
+        Scenario.model_validate({**base, "driver": "reconnect", "then": ["y"], "max_turns": 2})
+    with pytest.raises(ValidationError):
+        Scenario.model_validate({**base, "expect": {"resumed_intact": True}})
+
+
+def test_an_unknown_judge_is_rejected() -> None:
+    base = {"id": "r", "group": "cuj_info", "user": "ana", "opening": "x", "max_turns": 1, "trajectory": []}
+
+    with pytest.raises(ValidationError):
+        Scenario.model_validate({**base, "judges": ["vibes"]})
 
 
 def test_no_shipped_trajectory_can_reach_execute_transfer_without_a_pause_first() -> None:

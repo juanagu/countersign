@@ -453,7 +453,7 @@ async def test_a_group_with_no_threshold_fails_its_gate() -> None:
 
 async def test_a_run_with_no_gates_does_not_exit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("evals.cuj_runner.load_scenarios", lambda: [_scenario()])
-    monkeypatch.setattr("evals.cuj_runner.Settings", lambda: None)
+    monkeypatch.setattr("evals.cuj_runner.Settings", lambda: type("S", (), {"guard_model": "test"})())
     monkeypatch.setattr("evals.cuj_runner.read_ledger", _ledger)
     monkeypatch.setattr("evals.cuj_runner.run_scenario", _no_results)
     monkeypatch.setattr("evals.cuj_runner.emit_trials", lambda *_: None)

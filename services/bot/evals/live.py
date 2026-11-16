@@ -172,13 +172,18 @@ def _first_text(events: list[Event]) -> bool:
     return any(e.get("type") == "TEXT_MESSAGE_CONTENT" for e in events)
 
 
-async def _resume(session: BffSession, case: LiveInput) -> LiveOutput:
-    before = await session.say_until(case.turns[0], _first_text)
+async def resume_cut(session: BffSession, question: str) -> ResumeCheck:
+    """Cuts the answer to `question` once its text starts, then reconnects the thread twice."""
+    before = await session.say_until(question, _first_text)
     cut_mid_run = bool(before) and before[-1].get("type") != "RUN_FINISHED"
     replay = await session.connect()
     second = await session.connect()
-    check = ResumeCheck(cut_mid_run, RunTrace(before).text, replay, second)
-    return LiveOutput([replay], resume=check)
+    return ResumeCheck(cut_mid_run, RunTrace(before).text, replay, second)
+
+
+async def _resume(session: BffSession, case: LiveInput) -> LiveOutput:
+    check = await resume_cut(session, case.turns[0])
+    return LiveOutput([check.replay], resume=check)
 
 
 FLOWS = {"chat": _chat, "transfer": _transfer, "resume": _resume}

@@ -144,10 +144,14 @@ async def judge(agent: Agent[None, JudgeVerdict], result: Result) -> JudgeVerdic
     return (await agent.run(prompt)).output
 
 
+def is_blocked(traces: list[RunTrace]) -> bool:
+    return traces[-1].text.strip() in SAFE_REPLIES.values()
+
+
 async def run_case(http: httpx.AsyncClient, case: Case) -> Result:
     session = await BffSession.login(http, case.user)
     traces = [await session.say(turn) for turn in case.turns]
-    return Result(case, traces, blocked=traces[-1].text.strip() in SAFE_REPLIES.values())
+    return Result(case, traces, blocked=is_blocked(traces))
 
 
 async def score(result: Result, suite: Suite, judge_agent: Agent[None, JudgeVerdict]) -> Result:
