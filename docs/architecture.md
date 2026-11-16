@@ -255,12 +255,14 @@ sequenceDiagram
   thread (`PendingApprovals`, 5-minute memory), so a forged resume is classified like any message.
 - **`execute_transfer` in `mcp-payments`** (`services/mcp-payments/src/features/transfers/`): the access token needs
   scope `transfers:execute`; the step-up token is verified (signature, issuer, `aud`, `exp`, `token_use`, scope);
-  its `sub` must be the caller; the grant must equal the stored draft (a mismatch spends nothing). Then one transaction under the draft's row
-  lock ([ADR 023](decisions/023-step-up-token-replay-semantics.md)): the draft must be pending and unexpired, its `jti`
-  is spent there (single use) and the transfer records it. A replay is answered from that record: the token that
-  executed gets the same receipt, a spent token on an executed draft `draft_not_pending`, and `token_already_used`
-  means only "spent, nothing moved, draft still pending". A call that can't get the lock in 5 s answers
-  `execution_in_progress`. Idempotent per draft.
+  its `sub` must be the caller. Then one transaction under the draft's row
+  lock ([ADR 023](decisions/023-step-up-token-replay-semantics.md)): the grant must equal the draft read under the lock
+  (a mismatch spends nothing), the draft must be pending and unexpired, its `jti` is spent there (single use) and the
+  transfer records it. A replay is answered from that record: the token that executed gets the same receipt, a spent
+  token on an executed draft `draft_not_pending`, and `token_already_used` means only "spent, nothing moved, draft
+  still pending". A lock wait that runs out answers `execution_in_progress` (the draft) or `account_busy` (the source
+  account), and the whole execution has a 7 s budget under the gateway's 10 s; a thrown error answers a generic
+  `internal_error`. The bot keeps the draft open on all of these and on the gateway's `upstream_error`. Idempotent per draft.
 - **The approved exchange.** No session token ever holds `transfers:execute`. `SkillGatedMCPToolset` asks the IdP for
   exactly that scope only when `PolicyToolset` has let an approved T3 call through, makes the one call on a
   session of its own and closes it; the token is never reused. A T3 call that gets past the policy unapproved goes
