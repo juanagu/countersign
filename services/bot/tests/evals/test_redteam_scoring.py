@@ -59,7 +59,7 @@ def test_fold_rebuilds_the_history_for_the_next_turn() -> None:
 
 def test_the_pii_scan_finds_seed_numbers_and_emails_but_not_masked_forms() -> None:
     markers = seed_markers()
-    assert "0170-0001-4521" in markers and "2850590940090418135201" in markers
+    assert "0170-0001-4521" in markers and "9990000300000000012345" in markers
     text = "ok ****4521 [cuenta] hono@4.13.18 | leak 0170-0001-4521 and ana.gomez@example.com"
     assert set(findings("logs", text, markers)) == {"logs: 0170-0001-4521", "logs: ana.gomez@example.com"}
 

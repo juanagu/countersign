@@ -16,7 +16,7 @@ INSERT INTO accounts (id, customer_id, kind, currency, alias, number, balance) V
 
 INSERT INTO beneficiaries (id, customer_id, full_name, bank_name, account_ref, currency) VALUES
   ('ben-ana-juan',  'ana',  'Juan Pérez', 'Banco Demo',     '0170000200000000078101', 'ARS'),
-  ('ben-ana-lucia', 'ana',  'Lucía Fernández', 'Banco Austral', '2850590940090418135201', 'ARS'),
+  ('ben-ana-lucia', 'ana',  'Lucía Fernández', 'Banco Austral', '9990000300000000012345', 'ARS'),
   ('ben-juan-ana',  'juan', 'Ana Gómez',  'Banco Demo',     '0170000100000000045211', 'ARS');
 
 -- Card and debit spending in ARS: (category, merchant, min, max) sampled per day.
