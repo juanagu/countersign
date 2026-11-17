@@ -6,7 +6,7 @@ meant to be typed as written. All data is synthetic.
 
 ## 1. Setup from a clean clone
 
-Prerequisites: Node 22+, pnpm 12, uv 0.13+, Docker with Compose v2 (see the [README](../README.md)).
+Prerequisites: Node 26+, pnpm 12, uv 0.13+, Docker with Compose v2 (see the [README](../README.md)).
 
 ```sh
 git clone https://github.com/juanagu/countersign.git && cd countersign
