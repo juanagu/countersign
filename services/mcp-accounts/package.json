@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch --conditions=@poc/source --import @poc/mcp-kit/telemetry src/server.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node --import @poc/mcp-kit/telemetry dist/server.js",
+    "start": "node --disable-warning=DEP0205 --import @poc/mcp-kit/telemetry dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

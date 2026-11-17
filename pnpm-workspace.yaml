@@ -13,8 +13,6 @@ allowBuilds:
 overrides:
   'undici@<6.29.1': ^6.29.1
   'graphql-scalars@<2.0.1': ^2.0.1
-  # One Node types major across the graph (ADR 025): CopilotKit's express-family @types pull in 22 otherwise.
-  '@types/node': ^26.6.6
 
 # Accepted, not patched: zod 3's memory-exhaustion advisory. CopilotKit's A2UI renderer (@a2ui/web_core
 # 0.15) needs zod 3 internals and no patched zod 3 exists. The BFF caps run bodies to contain it.
