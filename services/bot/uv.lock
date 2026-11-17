@@ -247,7 +247,7 @@ dev = [
     { name = "mypy", specifier = ">=2.4.1" },
     { name = "pydantic-evals", specifier = ">=2.68.0" },
     { name = "pytest", specifier = ">=9.2.0" },
-    { name = "pytest-asyncio", specifier = ">=1.3" },
+    { name = "pytest-asyncio", specifier = ">=1.5" },
     { name = "ruff", specifier = ">=0.17.5" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20261113" },
 ]
