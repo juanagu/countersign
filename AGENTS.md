@@ -65,10 +65,10 @@ its own process, IdP client and gateway audience, under its own ADR. No A2A in t
 | Part | Path | Tech |
 | --- | --- | --- |
 | Web | `apps/web` | React + Vite + TypeScript, CopilotKit v2 (`@copilotkit/react-core/v2`), A2UI renderer via CopilotKit |
-| BFF | `apps/bff` | Node 22 + TypeScript + Hono, CopilotKit runtime v2 with `HttpAgent` → bot, `jose` for JWT |
+| BFF | `apps/bff` | Node 26 + TypeScript + Hono, CopilotKit runtime v2 with `HttpAgent` → bot, `jose` for JWT |
 | Bot | `services/bot` | Python 3.12, uv, FastAPI, `pydantic-ai-slim[ag-ui,anthropic,mcp]`, served with `AGUIAdapter` |
-| MCP servers | `services/mcp-accounts`, `services/mcp-payments` | Node 22 + TypeScript, `@modelcontextprotocol/sdk`, streamable HTTP transport |
-| MCP gateway | `services/mcp-gateway` | Node 22 + TypeScript + Hono, `@modelcontextprotocol/sdk` (ADR 017) |
+| MCP servers | `services/mcp-accounts`, `services/mcp-payments` | Node 26 + TypeScript, `@modelcontextprotocol/sdk`, streamable HTTP transport |
+| MCP gateway | `services/mcp-gateway` | Node 26 + TypeScript + Hono, `@modelcontextprotocol/sdk` (ADR 017) |
 | Contracts | `packages/contracts` | JSON Schema as source of truth → TS types (json-schema-to-typescript) and Pydantic models (datamodel-code-generator) |
 | Data | `data/kb`, `data/seed` | Synthetic markdown knowledge base; SQL seed for mock accounts, transactions, beneficiaries |
 | Infra | `infra/docker-compose.yml` | Postgres 16 + pgvector, Redis 7, Arize Phoenix |

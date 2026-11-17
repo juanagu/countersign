@@ -1,5 +1,5 @@
 # Build context is the repo root (see infra/docker-compose.yml).
-FROM node:22-slim AS build
+FROM node:26-slim AS build
 RUN npm install -g pnpm@12.18.0
 WORKDIR /repo
 COPY . .

@@ -7,7 +7,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0e5a66" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/MCP-gateway%20%2B%202%20servers-0e5a66" alt="MCP">
   <img src="https://img.shields.io/badge/Python-3.12-0e5a66" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Node-22-0e5a66" alt="Node 22">
+  <img src="https://img.shields.io/badge/Node-26-0e5a66" alt="Node 26">
 </p>
 
 <p align="center">
@@ -101,7 +101,7 @@ every service exports OpenTelemetry traces to Phoenix. The full picture is in
 
 ## Quick start
 
-Prerequisites: Node 22+ and pnpm 12, uv 0.13+ (it installs Python 3.12 for the bot), Docker with Compose v2, and an
+Prerequisites: Node 26+ and pnpm 12, uv 0.13+ (it installs Python 3.12 for the bot), Docker with Compose v2, and an
 Anthropic API key (the bot calls Claude models, so running the demo spends paid tokens).
 
 ```sh
