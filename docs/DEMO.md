@@ -184,7 +184,8 @@ The system's shape, token chain, flows and ADR index are in [`architecture.md`](
   A2UI cards (F34).
 - The payments subagent runs in the bot's process and shares its IdP client: its separate token guards against
   mistakes, not against a compromised bot process (ADR 021).
-- The mock IdP is stateless: logout doesn't revoke a session (F2), and step-up has a fixed PIN.
+- Logout revokes the session at once by its `sid` (ADR 024), but tokens already minted from it stay valid for the
+  rest of their lifetime, at most 5 minutes. Step-up has a fixed PIN.
 - The daily transfer limit the KB states is not enforced by `mcp-payments` yet (F4, F12).
 - The full list of follow-ups is in [`backlog.md`](backlog.md).
 

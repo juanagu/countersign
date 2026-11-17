@@ -19,5 +19,7 @@ that runs without its risk tier being enforced, a transfer that executes without
 token, a token accepted by the wrong MCP server, or PII reaching logs or traces.
 
 Out of scope: the mock IdP's known shortcuts (anyone can sign in as a demo customer, the step-up PIN is fixed,
-logout does not revoke a session) and the other limitations listed in [`docs/DEMO.md`](docs/DEMO.md) and
-[`docs/backlog.md`](docs/backlog.md).
+tokens minted before a logout stay valid for the rest of their lifetime, at most 5 minutes) and the other
+limitations listed in [`docs/DEMO.md`](docs/DEMO.md) and [`docs/backlog.md`](docs/backlog.md).
+
+Already known: the availability leads from the last audit, tracked in the backlog as F76 to F78.

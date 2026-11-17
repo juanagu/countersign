@@ -57,7 +57,8 @@ async def database() -> AsyncIterator[psycopg.AsyncConnection]:
     if not os.environ.get("TEST_DATABASE_URL"):
         pytest.skip("needs the seeded compose Postgres (TEST_DATABASE_URL)")
     try:
-        conn = await psycopg.AsyncConnection.connect(database_url(), autocommit=True)
+        # A short timeout: on Windows a refused connect is only seen when psycopg's 130 s default runs out.
+        conn = await psycopg.AsyncConnection.connect(database_url(), autocommit=True, connect_timeout=2)
     except psycopg.OperationalError:
         pytest.skip("Postgres is not reachable")
     async with conn:

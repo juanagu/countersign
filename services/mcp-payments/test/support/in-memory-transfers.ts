@@ -62,7 +62,7 @@ const BENEFICIARIES: Beneficiary[] = [
     customerId: 'ana',
     fullName: 'Lucía Fernández',
     bankName: 'Banco Austral',
-    accountRef: '2850590940090418135201',
+    accountRef: '9990000300000000012345',
     currency: 'ARS',
   },
 ];

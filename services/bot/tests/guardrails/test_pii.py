@@ -9,7 +9,7 @@ from app.guardrails.verdict import Action
     [
         ("Mi tarjeta es 4532 0151 1283 0366", "tarjeta"),
         ("tarjeta 4532-0151-1283-0366", "tarjeta"),
-        ("CBU 2850590940090418135201", "cbu"),
+        ("CBU 9990000300000000012345", "cbu"),
         ("la cuenta 0170-0002-7810", "cuenta"),
         ("CUIL 20-12345678-6", "cuil"),
         ("mi DNI es 30.123.456", "dni"),
@@ -65,7 +65,7 @@ def test_input_check_allows_clean_text() -> None:
 
 
 def test_redacts_nested_values() -> None:
-    value = {"a": ["CBU 2850590940090418135201", 3], "b": ("ana@example.com",), "c": None}
+    value = {"a": ["CBU 9990000300000000012345", 3], "b": ("ana@example.com",), "c": None}
     assert redact_value(value) == {"a": ["CBU [cbu]", 3], "b": ("[email]",), "c": None}
 
 

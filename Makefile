@@ -1,7 +1,8 @@
 -include .env
 POSTGRES_HOST_PORT ?= 5432
-# Repository tests run against the seeded compose Postgres when it is up, and skip otherwise.
-export TEST_DATABASE_URL ?= postgres://bank:bank@localhost:$(POSTGRES_HOST_PORT)/bank
+# Repository tests run against the seeded compose Postgres when it is up, and skip otherwise. 127.0.0.1, not
+# localhost: on Windows an async psycopg connect to an unanswered ::1 waits out its 130 s timeout.
+export TEST_DATABASE_URL ?= postgres://bank:bank@127.0.0.1:$(POSTGRES_HOST_PORT)/bank
 
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 BOT := uv run --directory services/bot

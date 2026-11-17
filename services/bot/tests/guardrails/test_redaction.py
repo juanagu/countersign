@@ -26,7 +26,7 @@ def test_log_messages_args_and_extra_fields_are_redacted() -> None:
     record = logging.makeLogRecord(
         {
             "msg": "transfer to %s by %s",
-            "args": ("2850590940090418135201", "ana@example.com"),
+            "args": ("9990000300000000012345", "ana@example.com"),
             "token": f"Bearer {JWT}",
             "detail": {"account": "0170-0002-7810", "amount": "1254300.50"},
         }
@@ -96,14 +96,14 @@ def test_spans_are_redacted_before_export() -> None:
     provider.add_span_processor(SimpleSpanProcessor(RedactingSpanExporter(memory)))
     tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("chat") as span:
-        span.set_attribute("gen_ai.input.messages", json.dumps([{"content": "mi CBU es 2850590940090418135201"}]))
+        span.set_attribute("gen_ai.input.messages", json.dumps([{"content": "mi CBU es 9990000300000000012345"}]))
         span.set_attribute("tags", ["ana@example.com", "ok"])
         span.set_attribute("count", 3)
         span.add_event("tool", {"result": "cuenta 0170-0001-4521"})
 
     [exported] = memory.get_finished_spans()
     assert exported.attributes is not None
-    assert "2850590940090418135201" not in str(exported.attributes["gen_ai.input.messages"])
+    assert "9990000300000000012345" not in str(exported.attributes["gen_ai.input.messages"])
     assert exported.attributes["tags"] == ("[email]", "ok")
     assert exported.attributes["count"] == 3
     assert exported.events[0].attributes == {"result": "cuenta [cuenta]"}
@@ -119,7 +119,7 @@ def test_a_failed_spans_status_and_its_link_attributes_are_redacted() -> None:
         pass
     link = Link(earlier.get_span_context(), {"note": "pedido de ana@example.com"})
     with contextlib.suppress(ValueError), tracer.start_as_current_span("chat", links=[link]):
-        raise ValueError("no hay CBU 2850590940090418135201 para ana@example.com")
+        raise ValueError("no hay CBU 9990000300000000012345 para ana@example.com")
 
     exported = next(span for span in memory.get_finished_spans() if span.name == "chat")
     assert exported.status.status_code is StatusCode.ERROR
