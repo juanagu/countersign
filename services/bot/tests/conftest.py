@@ -1,4 +1,6 @@
+import asyncio
 import json
+import sys
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
@@ -31,6 +33,11 @@ TEST_CLIENT_SECRET = "test-bot-client-secret"
 # approval and template mechanism tests run on it, apart from the subagent's.
 TEST_SKILLS_DIR = Path(__file__).resolve().parent / "fixtures" / "skills"
 NO_SUBAGENTS_DIR = TEST_SKILLS_DIR.parent / "no-subagents"  # Missing on purpose: its payments skill would clash.
+
+if sys.platform == "win32":
+    # psycopg's async mode refuses Windows' default Proactor loop. Defined only here: the hook may not return None.
+    def pytest_asyncio_loop_factories(config: pytest.Config, item: pytest.Item) -> dict[str, Any]:
+        return {"selector": asyncio.SelectorEventLoop}
 
 
 async def allow_input(text: str, user_id: str) -> Verdict:
