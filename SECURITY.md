@@ -19,5 +19,10 @@ that runs without its risk tier being enforced, a transfer that executes without
 token, a token accepted by the wrong MCP server, or PII reaching logs or traces.
 
 Out of scope: the mock IdP's known shortcuts (anyone can sign in as a demo customer, the step-up PIN is fixed,
-logout does not revoke a session) and the other limitations listed in [`docs/DEMO.md`](docs/DEMO.md) and
-[`docs/backlog.md`](docs/backlog.md).
+tokens minted before a logout stay valid for the rest of their 5 minutes) and the other limitations listed in
+[`docs/DEMO.md`](docs/DEMO.md) and [`docs/backlog.md`](docs/backlog.md).
+
+Already known, not yet validated: the last whole-repo audit left three availability leads open, which are tracked in
+the backlog (F76 to F78). An oversized chat message can drive slow regex work on the bot's event loop. Padded run
+inputs grow the Redis thread log without bound. One customer's slow prompts can open the shared model breakers and
+move everyone onto the fallback model. A report that confirms one of them, with a reproduction, is still welcome.
